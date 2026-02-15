@@ -2,7 +2,7 @@
 // Processes all slash commands (/session, /resume, /fork, /model, /abort, etc.)
 // and manages autocomplete, select menu interactions for the bot.
 
-import { Events, type Client, type GuildMember, type Interaction } from 'discord.js'
+import { Events, MessageFlags, type Client, type GuildMember, type Interaction } from 'discord.js'
 import { handleSessionCommand, handleSessionAutocomplete } from './commands/session.js'
 import { handleNewWorktreeCommand } from './commands/worktree.js'
 import { handleMergeWorktreeCommand } from './commands/merge-worktree.js'
@@ -110,7 +110,7 @@ export function registerInteractionHandler({
         if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
           await interaction.reply({
             content: `You don't have permission to use this command.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           return
         }
@@ -248,7 +248,7 @@ export function registerInteractionHandler({
         if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           return
         }
@@ -280,7 +280,7 @@ export function registerInteractionHandler({
         if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           return
         }
@@ -340,7 +340,7 @@ export function registerInteractionHandler({
         if (!hasKimakiBotPermission(interaction.member as GuildMember | null)) {
           await interaction.reply({
             content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
           return
         }
@@ -369,7 +369,7 @@ export function registerInteractionHandler({
         if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
           await interaction.reply({
             content: 'An error occurred processing this command.',
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           })
         }
       } catch (replyError) {

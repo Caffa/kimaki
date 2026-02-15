@@ -28,6 +28,11 @@ export function hasKimakiBotPermission(member: GuildMember | null): boolean {
   if (!member) {
     return false
   }
+  // interaction.member can be an APIInteractionGuildMember (plain object)
+  // instead of a hydrated GuildMember class instance, so roles.cache may not exist
+  if (!member.roles?.cache) {
+    return false
+  }
   const hasNoKimakiRole = member.roles.cache.some(
     (role) => role.name.toLowerCase() === 'no-kimaki',
   )
@@ -48,7 +53,7 @@ export function hasKimakiBotPermission(member: GuildMember | null): boolean {
  * Separate from hasKimakiBotPermission so callers can show a specific error message.
  */
 export function hasNoKimakiRole(member: GuildMember | null): boolean {
-  if (!member) {
+  if (!member?.roles?.cache) {
     return false
   }
   return member.roles.cache.some(
