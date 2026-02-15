@@ -8,6 +8,7 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import {
@@ -194,7 +195,7 @@ export async function handleModelCommand({
   modelLogger.log('[MODEL] handleModelCommand called')
 
   // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   modelLogger.log('[MODEL] Deferred reply')
 
   const channel = interaction.channel

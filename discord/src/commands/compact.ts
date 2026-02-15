@@ -1,6 +1,6 @@
 // /compact command - Trigger context compaction (summarization) for the current session.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
@@ -15,8 +15,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -30,8 +29,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -41,8 +39,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -54,8 +51,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -65,8 +61,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to compact: ${getClient.message}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -75,8 +70,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!clientV2) {
     await command.reply({
       content: 'Failed to get OpenCode client',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }

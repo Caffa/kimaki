@@ -2,7 +2,7 @@
 // Allows per-channel opt-in for automatic worktree creation,
 // as an alternative to the global --use-worktrees CLI flag.
 
-import { ChatInputCommandInteraction, ChannelType, type TextChannel } from 'discord.js'
+import { ChatInputCommandInteraction, MessageFlags, ChannelType, type TextChannel } from 'discord.js'
 import { getChannelWorktreesEnabled, setChannelWorktreesEnabled } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -27,7 +27,7 @@ export async function handleToggleWorktreesCommand({
   if (!channel || channel.type !== ChannelType.GuildText) {
     await command.reply({
       content: 'This command can only be used in text channels (not threads).',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -38,7 +38,7 @@ export async function handleToggleWorktreesCommand({
   if (metadata.channelAppId && metadata.channelAppId !== appId) {
     await command.reply({
       content: 'This channel is configured for a different bot.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -47,7 +47,7 @@ export async function handleToggleWorktreesCommand({
     await command.reply({
       content:
         'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -66,6 +66,6 @@ export async function handleToggleWorktreesCommand({
     content: nextEnabled
       ? `Worktrees **enabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will now automatically create git worktrees.\n\nNew setting for **#${textChannel.name}**: **enabled**.`
       : `Worktrees **disabled** for this channel.\n\nNew sessions started from messages in **#${textChannel.name}** will use the main project directory.\n\nNew setting for **#${textChannel.name}**: **disabled**.`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   })
 }

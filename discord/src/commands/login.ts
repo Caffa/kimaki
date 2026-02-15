@@ -13,6 +13,7 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -54,7 +55,7 @@ export async function handleLoginCommand({
   loginLogger.log('[LOGIN] handleLoginCommand called')
 
   // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   loginLogger.log('[LOGIN] Deferred reply')
 
   const channel = interaction.channel
@@ -558,7 +559,7 @@ export async function handleApiKeyModalSubmit(
     return
   }
 
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const contextHash = customId.replace('login_apikey:', '')
   const context = pendingLoginContexts.get(contextHash)

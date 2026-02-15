@@ -2,7 +2,7 @@
 // Used for resolving opencode state issues, internal bugs, refreshing auth state, plugins, etc.
 // Aborts all in-progress sessions in this channel before restarting to avoid orphaned requests.
 
-import { ChannelType, type ThreadChannel, type TextChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type ThreadChannel, type TextChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory, restartOpencodeServer } from '../opencode.js'
 import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -19,8 +19,7 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -36,8 +35,7 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
   if (!isThread && !isTextChannel) {
     await command.reply({
       content: 'This command can only be used in text channels or threads',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -47,8 +45,7 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -58,8 +55,7 @@ export async function handleRestartOpencodeServerCommand({ command, appId }: Com
   if (channelAppId && channelAppId !== appId) {
     await command.reply({
       content: 'This channel is not configured for this bot',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }

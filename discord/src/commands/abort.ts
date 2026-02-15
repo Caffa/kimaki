@@ -1,6 +1,6 @@
 // /abort command - Abort the current OpenCode request in this thread.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -16,8 +16,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -31,8 +30,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -42,8 +40,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -55,8 +52,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -72,8 +68,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to abort: ${getClient.message}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -93,8 +88,7 @@ export async function handleAbortCommand({ command }: CommandContext): Promise<v
     logger.error('[ABORT] Error:', error)
     await command.reply({
       content: `Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
   }
 }

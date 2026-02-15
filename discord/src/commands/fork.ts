@@ -8,6 +8,7 @@ import {
   ChannelType,
   ThreadAutoArchiveDuration,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import { getThreadSession, setThreadSession, setPartMessagesBatch } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -25,7 +26,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   if (!channel) {
     await interaction.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -39,7 +40,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   if (!isThread) {
     await interaction.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -49,7 +50,7 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   if (!resolved) {
     await interaction.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -61,13 +62,13 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
   if (!sessionId) {
     await interaction.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
 
   // Defer reply before API calls to avoid 3-second timeout
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
@@ -150,7 +151,7 @@ export async function handleForkSelectMenu(
   if (!sessionId) {
     await interaction.reply({
       content: 'Invalid selection data',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -159,7 +160,7 @@ export async function handleForkSelectMenu(
   if (!selectedMessageId) {
     await interaction.reply({
       content: 'No message selected',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }

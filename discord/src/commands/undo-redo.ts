@@ -1,6 +1,6 @@
 // Undo/Redo commands - /undo, /redo
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -15,8 +15,7 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -30,8 +29,7 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -41,8 +39,7 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -54,8 +51,7 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -119,8 +115,7 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -134,8 +129,7 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -145,8 +139,7 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -158,8 +151,7 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }

@@ -9,6 +9,7 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, getSessionAgent, getChannelAgent } from '../database.js'
@@ -178,7 +179,7 @@ export async function handleAgentCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const context = await resolveAgentCommandContext({ interaction, appId })
   if (!context) {
@@ -333,7 +334,7 @@ export async function handleQuickAgentCommand({
   // Extract agent name from command: "plan-agent" → "plan"
   const sanitizedAgentName = command.commandName.replace(/-agent$/, '')
 
-  await command.deferReply({ ephemeral: true })
+  await command.deferReply({ flags: MessageFlags.Ephemeral })
 
   const context = await resolveAgentCommandContext({ interaction: command, appId })
   if (!context) {

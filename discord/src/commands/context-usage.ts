@@ -1,6 +1,6 @@
 // /context-usage command - Show token usage and context window percentage for the current session.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -30,8 +30,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -45,8 +44,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -56,8 +54,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -69,8 +66,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -79,8 +75,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to get context usage: ${getClient.message}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }

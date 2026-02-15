@@ -20,6 +20,7 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -187,7 +188,7 @@ export async function handleFileUploadButton(interaction: ButtonInteraction): Pr
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -227,13 +228,13 @@ export async function handleFileUploadModalSubmit(
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
 
   try {
-    await interaction.deferReply({ ephemeral: true })
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
     // File upload data is nested in the LabelModalData -> FileUploadModalData
     const fileField = interaction.fields.getField('uploaded_files', ComponentType.FileUpload)

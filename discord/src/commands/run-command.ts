@@ -3,7 +3,7 @@
 // Also used by the ! prefix shortcut in discord messages (e.g. "!ls -la").
 // Messages starting with ! are intercepted before session handling and routed here.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -41,8 +41,7 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel.',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -58,8 +57,7 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
   if (!isThread && !isTextChannel) {
     await command.reply({
       content: 'This command can only be used in a text channel or thread.',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -69,8 +67,7 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel.',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }

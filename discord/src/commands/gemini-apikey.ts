@@ -5,6 +5,7 @@ import {
   ModalSubmitInteraction,
   TextInputBuilder,
   TextInputStyle,
+  MessageFlags,
 } from 'discord.js'
 import { setGeminiApiKey } from '../database.js'
 
@@ -20,7 +21,7 @@ export async function handleGeminiApiKeyButton(
   if (!appId) {
     await interaction.reply({
       content: 'Missing app id for Gemini API key setup.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -50,7 +51,7 @@ export async function handleGeminiApiKeyModalSubmit(
     return
   }
 
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const appId = customId.replace('gemini_apikey_modal:', '').trim()
   if (!appId) {

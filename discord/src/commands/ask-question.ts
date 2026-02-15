@@ -7,6 +7,7 @@ import {
   StringSelectMenuInteraction,
   ActionRowBuilder,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -138,7 +139,7 @@ export async function handleAskQuestionSelectMenu(
   if (!contextHash) {
     await interaction.reply({
       content: 'Invalid selection.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -148,7 +149,7 @@ export async function handleAskQuestionSelectMenu(
   if (!context) {
     await interaction.reply({
       content: 'This question has expired. Please ask the AI again.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }

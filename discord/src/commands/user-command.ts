@@ -2,7 +2,7 @@
 // Handles slash commands that map to user-configured commands in opencode.json.
 
 import type { CommandContext, CommandHandler } from './types.js'
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -38,7 +38,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
   if (!channel || (!isTextChannel && !isThread)) {
     await command.reply({
       content: 'This command can only be used in text channels or threads',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -60,7 +60,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
       await command.reply({
         content:
           'This thread does not have an active session. Use this command in a project channel to create a new thread.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       })
       return
     }
@@ -82,7 +82,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
   if (channelAppId && channelAppId !== appId) {
     await command.reply({
       content: 'This channel is not configured for this bot',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -90,7 +90,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
   if (!projectDirectory) {
     await command.reply({
       content: 'This channel is not configured with a project directory',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -98,7 +98,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
   if (!fs.existsSync(projectDirectory)) {
     await command.reply({
       content: `Directory does not exist: ${projectDirectory}`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -169,7 +169,7 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
     } else {
       await command.reply({
         content: `Failed to execute /${commandName}: ${errorMessage}`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       })
     }
   }

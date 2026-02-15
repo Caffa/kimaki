@@ -1,6 +1,6 @@
 // /diff command - Show git diff as a shareable URL.
 
-import { ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, EmbedBuilder, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
 import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -16,8 +16,7 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -33,8 +32,7 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
   if (!isThread && !isTextChannel) {
     await command.reply({
       content: 'This command can only be used in a text channel or thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -44,8 +42,7 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
