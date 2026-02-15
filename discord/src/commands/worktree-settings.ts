@@ -2,7 +2,12 @@
 // Allows per-channel opt-in for automatic worktree creation,
 // as an alternative to the global --use-worktrees CLI flag.
 
-import { ChatInputCommandInteraction, MessageFlags, ChannelType, type TextChannel } from 'discord.js'
+import {
+  ChatInputCommandInteraction,
+  MessageFlags,
+  ChannelType,
+  type TextChannel,
+} from 'discord.js'
 import { getChannelWorktreesEnabled, setChannelWorktreesEnabled } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'

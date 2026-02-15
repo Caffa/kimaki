@@ -3,7 +3,12 @@
 // When enabled, bot only responds to messages that @mention it.
 // Messages in threads are not affected - they always work without mentions.
 
-import { ChatInputCommandInteraction, MessageFlags, ChannelType, type TextChannel } from 'discord.js'
+import {
+  ChatInputCommandInteraction,
+  MessageFlags,
+  ChannelType,
+  type TextChannel,
+} from 'discord.js'
 import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'

@@ -124,9 +124,14 @@ export async function getCurrentModelInfo({
   }
 
   // 2. Check agent's configured model
-  const effectiveAgent = agentPreference ?? (sessionId
-    ? (await getSessionAgent(sessionId)) || (channelId ? await getChannelAgent(channelId) : undefined)
-    : (channelId ? await getChannelAgent(channelId) : undefined))
+  const effectiveAgent =
+    agentPreference ??
+    (sessionId
+      ? (await getSessionAgent(sessionId)) ||
+        (channelId ? await getChannelAgent(channelId) : undefined)
+      : channelId
+        ? await getChannelAgent(channelId)
+        : undefined)
   if (effectiveAgent) {
     const agentsResponse = await getClient().app.agents({})
     if (agentsResponse.data) {
@@ -547,7 +552,9 @@ export async function handleModelSelectMenu(
     // Check if model has variants (thinking levels) - if so, show variant picker first
     const getClient = await initializeOpencodeForDirectory(context.dir)
     if (!(getClient instanceof Error)) {
-      const providersResponse = await getClient().provider.list({ query: { directory: context.dir } })
+      const providersResponse = await getClient().provider.list({
+        query: { directory: context.dir },
+      })
       if (providersResponse.data) {
         const variants = getThinkingValuesForModel({
           providers: providersResponse.data.all,
@@ -559,7 +566,11 @@ export async function handleModelSelectMenu(
           pendingModelContexts.set(contextHash, context)
 
           const variantOptions = [
-            { label: 'None (default)', value: '__none__', description: 'Use the model without a specific thinking level' },
+            {
+              label: 'None (default)',
+              value: '__none__',
+              description: 'Use the model without a specific thinking level',
+            },
             ...variants.slice(0, 24).map((v: string) => ({
               label: v.slice(0, 100),
               value: v,
@@ -572,7 +583,9 @@ export async function handleModelSelectMenu(
             .setPlaceholder('Select a thinking level')
             .addOptions(variantOptions)
 
-          const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+          const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+            selectMenu,
+          )
 
           await interaction.editReply({
             content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nSelect a thinking level:`,
@@ -614,7 +627,10 @@ export async function handleModelVariantSelectMenu(
   const context = pendingModelContexts.get(contextHash)
 
   if (!context || !context.selectedModelId) {
-    await interaction.editReply({ content: 'Selection expired. Please run /model again.', components: [] })
+    await interaction.editReply({
+      content: 'Selection expired. Please run /model again.',
+      components: [],
+    })
     return
   }
 
@@ -630,7 +646,11 @@ export async function handleModelVariantSelectMenu(
   await showScopeMenu({ interaction, contextHash, context })
 }
 
-async function showScopeMenu({ interaction, contextHash, context }: {
+async function showScopeMenu({
+  interaction,
+  contextHash,
+  context,
+}: {
   interaction: StringSelectMenuInteraction
   contextHash: string
   context: NonNullable<ReturnType<typeof pendingModelContexts.get>>
@@ -641,10 +661,20 @@ async function showScopeMenu({ interaction, contextHash, context }: {
 
   const scopeOptions = [
     ...(context.isThread && context.sessionId
-      ? [{ label: 'This session only', value: 'session', description: 'Override for this session only' }]
+      ? [
+          {
+            label: 'This session only',
+            value: 'session',
+            description: 'Override for this session only',
+          },
+        ]
       : []),
     { label: 'This channel only', value: 'channel', description: 'Override for this channel only' },
-    { label: 'Global default', value: 'global', description: 'Set for this channel and as default for all others' },
+    {
+      label: 'Global default',
+      value: 'global',
+      description: 'Set for this channel and as default for all others',
+    },
   ]
 
   const selectMenu = new StringSelectMenuBuilder()
@@ -700,14 +730,16 @@ export async function handleModelScopeSelectMenu(
   const modelDisplay = modelId.split('/')[1] || modelId
   const variant = context.selectedVariant ?? null
   const variantSuffix = variant ? ` (${variant})` : ''
-  const agentTip = '\n_Tip: create [agent .md files](https://github.com/remorses/kimaki/blob/main/docs/model-switching.md) in .opencode/agent/ for one-command model switching_'
+  const agentTip =
+    '\n_Tip: create [agent .md files](https://github.com/remorses/kimaki/blob/main/docs/model-switching.md) in .opencode/agent/ for one-command model switching_'
 
   try {
     if (selectedScope === 'session') {
       if (!context.sessionId) {
         pendingModelContexts.delete(contextHash)
         await interaction.editReply({
-          content: 'No active session in this thread. Please run /model in a thread with a session.',
+          content:
+            'No active session in this thread. Please run /model in a thread with a session.',
           components: [],
         })
         return
@@ -741,7 +773,9 @@ export async function handleModelScopeSelectMenu(
       }
       await setGlobalModel({ appId: context.appId, modelId, variant })
       await setChannelModel({ channelId: context.channelId, modelId, variant })
-      modelLogger.log(`Set global model ${modelId}${variantSuffix} for app ${context.appId} and channel ${context.channelId}`)
+      modelLogger.log(
+        `Set global model ${modelId}${variantSuffix} for app ${context.appId} and channel ${context.channelId}`,
+      )
 
       await interaction.editReply({
         content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).${agentTip}`,

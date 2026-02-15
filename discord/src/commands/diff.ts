@@ -1,12 +1,17 @@
 // /diff command - Show git diff as a shareable URL.
 
-import { ChannelType, EmbedBuilder, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  EmbedBuilder,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
 import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
-
 
 const logger = createLogger(LogPrefix.DIFF)
 
@@ -37,7 +42,9 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({
