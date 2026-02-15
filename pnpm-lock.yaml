@@ -176,9 +176,9 @@ importers:
 
   traforo:
     dependencies:
-      '@xmorse/cac':
-        specifier: ^6.0.7
-        version: 6.0.7
+      goke:
+        specifier: ^6.1.2
+        version: 6.1.2
       string-dedent:
         specifier: ^3.0.2
         version: 3.0.2
@@ -1280,10 +1280,6 @@ packages:
   '@vladfrangu/async_event_emitter@2.4.7':
     resolution: {integrity: sha512-Xfe6rpCTxSxfbswi/W/Pz7zp1WWSNn4A0eW4mLkQUewCrXXtMj31lCg+iQyTkh/CkusZSq9eDflu7tjEDXUY6g==}
     engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
-
-  '@xmorse/cac@6.0.7':
-    resolution: {integrity: sha512-eCKgJIn0Yswt4JreHNXUslyuOe8amDK6gE+wVgG8/Tu1HmCxuxAUOGPQRoma4mFO77759/YYE5opAbmaU6+Gxg==}
-    engines: {node: '>=8'}
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
@@ -3523,6 +3519,14 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
+  '@vitest/mocker@3.2.4(vite@7.1.4(@types/node@22.19.7)(jiti@2.5.1)(tsx@4.20.5))':
+    dependencies:
+      '@vitest/spy': 3.2.4
+      estree-walker: 3.0.3
+      magic-string: 0.30.18
+    optionalDependencies:
+      vite: 7.1.4(@types/node@22.19.7)(jiti@2.5.1)(tsx@4.20.5)
+
   '@vitest/mocker@3.2.4(vite@7.1.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5))':
     dependencies:
       '@vitest/spy': 3.2.4
@@ -3558,8 +3562,6 @@ snapshots:
       tinyrainbow: 2.0.0
 
   '@vladfrangu/async_event_emitter@2.4.7': {}
-
-  '@xmorse/cac@6.0.7': {}
 
   abbrev@1.1.1:
     optional: true
@@ -4955,7 +4957,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.2
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.1.4(@types/node@24.3.0)(jiti@2.5.1)(tsx@4.20.5))
+      '@vitest/mocker': 3.2.4(vite@7.1.4(@types/node@22.19.7)(jiti@2.5.1)(tsx@4.20.5))
       '@vitest/pretty-format': 3.2.4
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
