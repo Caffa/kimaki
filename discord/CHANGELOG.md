@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.65
+
+### Patch Changes
+
+- feat: **store model variant** in model tables with session/channel/global cascade for thinking level preferences
+- perf: **parallelize session-handler** async operations for faster session initialization
+- fix: **guard against non-hydrated guild members** in permission check to prevent crashes
+- fix: **parallelization bugs** in session-handler affecting concurrent operations
+- fix: **keep /fork customId under 100 chars** to comply with Discord's custom_id length limit
+- fix: **remove decimal digits** from session duration in footer for cleaner display
+- refactor: **replace deprecated ephemeral: true** with MessageFlags.Ephemeral
+- style: **run oxfmt formatter** across src for consistent code style
+- docs: add **tool permissions section** to README
+- docs: clarify **--thread vs --session** usage
+- docs: document **long --wait timeout** + fallback behavior
+- docs: warn about **Discord custom_id length limit** in agents instructions
+
 ## 0.4.64
 
 ### Patch Changes
