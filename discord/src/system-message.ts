@@ -309,18 +309,18 @@ To send a task to another project:
 
 \`\`\`bash
 # Send to a specific channel
-kimaki send --channel <channel_id> --prompt "Update the API client to v2"
+kimaki send --channel <channel_id> --prompt "Plan how to update the API client to v2"
 
 # Or use --project to resolve from directory
-kimaki send --project /path/to/other-repo --prompt "Bump version to 1.2.0"
+kimaki send --project /path/to/other-repo --prompt "Plan how to bump version to 1.2.0"
 \`\`\`
+
+When sending prompts to other projects, always ask the agent to plan first, never build upfront. The prompt should start with "Plan how to ..." so the user can review before greenlighting implementation.
 
 Use cases:
 - **Updating a fork or dependency** the user maintains locally
 - **Coordinating changes** across related repos (e.g., SDK + docs)
 - **Delegating subtasks** to isolated sessions in other projects
-
-Prefer combining investigation and fix into a single \`kimaki send\` call rather than splitting across multiple sessions.
 
 ## waiting for a session to finish
 
