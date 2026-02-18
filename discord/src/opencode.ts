@@ -30,6 +30,9 @@ type Config = Omit<SdkConfig, 'permission'> & {
     webfetch?: PermissionRule
     [key: string]: PermissionRule | undefined
   }
+  skills?: {
+    paths?: string[]
+  }
 }
 import {
   createOpencodeClient as createOpencodeClientV2,
@@ -183,6 +186,9 @@ export async function initializeOpencodeForDirectory(
           bash: 'allow',
           external_directory: externalDirectoryPermissions,
           webfetch: 'allow',
+        },
+        skills: {
+          paths: [path.resolve(__dirname, '..', 'skills')],
         },
       } satisfies Config),
       OPENCODE_PORT: port.toString(),

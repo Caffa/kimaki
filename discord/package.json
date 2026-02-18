@@ -22,6 +22,7 @@
   "files": [
     "dist",
     "src",
+    "skills",
     "schema.prisma",
     "bin.js"
   ],
