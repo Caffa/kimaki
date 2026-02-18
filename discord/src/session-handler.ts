@@ -63,7 +63,6 @@ const NON_ESSENTIAL_TOOLS = new Set([
   'glob',
   'grep',
   'todoread',
-  'skill',
   'question',
   'webfetch',
 ])
