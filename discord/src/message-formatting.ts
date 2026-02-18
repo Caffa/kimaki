@@ -263,6 +263,8 @@ export async function getFileAttachments(message: Message): Promise<DiscordFileA
   return results.filter((r) => r !== null) as DiscordFileAttachment[]
 }
 
+const MAX_BASH_COMMAND_INLINE_LENGTH = 100
+
 export function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
 
@@ -465,7 +467,7 @@ export function formatPart(part: Part, prefix?: string): string {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
       const isSingleLine = !command.includes('\n')
-      if (isSingleLine && command.length <= 50) {
+      if (isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
         toolTitle = `_${escapeInlineMarkdown(command)}_`
       } else if (description) {
         toolTitle = `_${escapeInlineMarkdown(description)}_`
