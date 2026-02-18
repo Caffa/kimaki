@@ -1,3 +1,8 @@
+---
+name: jitter
+description: Control Jitter (jitter.video) for exporting animations, replacing assets, and modifying text programmatically via Playwright.
+---
+
 # Jitter Programmatic Control Skill
 
 Control Jitter (jitter.video) for exporting animations, replacing assets, and modifying text.
