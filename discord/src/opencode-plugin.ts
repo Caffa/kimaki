@@ -1,8 +1,10 @@
 // OpenCode plugin for Kimaki Discord bot.
 // Provides tools for Discord integration like listing users for mentions.
+// Also injects synthetic message parts for branch changes and idle-time awareness.
 
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
+import crypto from 'node:crypto'
 import { z } from 'zod'
 
 // Inlined from '@opencode-ai/plugin/tool' because the subpath value import
@@ -27,6 +29,7 @@ import * as errore from 'errore'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
+import { execAsync } from './worktree-utils.js'
 
 // Regex to match emoji characters (covers most common emojis)
 // Includes: emoji presentation sequences, skin tone modifiers, ZWJ sequences, regional indicators
@@ -37,7 +40,7 @@ function isEmoji(str: string): boolean {
   return EMOJI_REGEX.test(str)
 }
 
-const kimakiPlugin: Plugin = async () => {
+const kimakiPlugin: Plugin = async ({ directory }) => {
   const botToken = process.env.KIMAKI_BOT_TOKEN
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
@@ -55,6 +58,10 @@ const kimakiPlugin: Plugin = async () => {
         baseUrl: `http://127.0.0.1:${port}`,
       })
     : null
+
+  // Per-session state for synthetic part injection
+  const sessionBranches = new Map<string, string>()
+  const sessionLastMessageTime = new Map<string, number>()
 
   return {
     tool: {
@@ -276,6 +283,91 @@ const kimakiPlugin: Plugin = async () => {
           return 'Thread archived and session stopped'
         },
       }),
+    },
+
+    // Inject synthetic parts for branch changes and idle-time gaps.
+    // Synthetic parts are hidden from the TUI but sent to the model,
+    // keeping it aware of context changes without cluttering the UI.
+    'chat.message': async (input, output) => {
+      const now = Date.now()
+      const first = output.parts[0]
+      if (!first) return
+      const { sessionID } = input
+      const messageID = 'messageID' in first ? first.messageID : ''
+
+      // -- Branch detection --
+      // Runs `git branch --show-current` in the project directory.
+      // Only injects a part when the branch is first seen or changed mid-session.
+      try {
+        const { stdout } = await execAsync('git branch --show-current', { cwd: directory })
+        const branch = stdout.trim()
+        if (branch) {
+          const lastBranch = sessionBranches.get(sessionID)
+          if (lastBranch !== branch) {
+            const info = lastBranch
+              ? `[Branch changed: ${lastBranch} -> ${branch}]`
+              : `[Current branch: ${branch}]`
+            sessionBranches.set(sessionID, branch)
+            output.parts.push({
+              id: crypto.randomUUID(),
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: info,
+              synthetic: true,
+            })
+          }
+        }
+      } catch {
+        // Not in a git repo, git not available, or detached HEAD - skip silently
+      }
+
+      // -- Time since last message --
+      // If more than 10 minutes passed since the last user message in this session,
+      // inject current time context so the model is aware of the gap.
+      const lastTime = sessionLastMessageTime.get(sessionID)
+      sessionLastMessageTime.set(sessionID, now)
+
+      if (lastTime) {
+        const elapsed = now - lastTime
+        const TEN_MINUTES = 10 * 60 * 1000
+        if (elapsed >= TEN_MINUTES) {
+          const totalMinutes = Math.floor(elapsed / 60_000)
+          const hours = Math.floor(totalMinutes / 60)
+          const minutes = totalMinutes % 60
+          const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
+
+          const utcStr = new Date(now).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')
+          const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+          const localStr = new Date(now).toLocaleString('en-US', {
+            timeZone: localTz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })
+
+          output.parts.push({
+            id: crypto.randomUUID(),
+            sessionID,
+            messageID,
+            type: 'text' as const,
+            text: `[${elapsedStr} since last message | UTC: ${utcStr} | Local (${localTz}): ${localStr}]`,
+            synthetic: true,
+          })
+        }
+      }
+    },
+
+    // Clean up per-session tracking state when sessions are deleted
+    event: async ({ event }) => {
+      if (event.type === 'session.deleted') {
+        const id = event.properties.info.id
+        sessionBranches.delete(id)
+        sessionLastMessageTime.delete(id)
+      }
     },
   }
 }
