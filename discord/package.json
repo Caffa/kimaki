@@ -14,7 +14,8 @@
     "test": "vitest",
     "test:send": "tsx send-test-message.ts",
     "register-commands": "tsx scripts/register-commands.ts",
-    "format": "oxfmt src"
+    "format": "oxfmt src",
+    "sync-skills": "tsx scripts/sync-skills.ts"
   },
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",
