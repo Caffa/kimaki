@@ -27,6 +27,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/tuistory',
   'https://github.com/remorses/zele',
   'https://github.com/remorses/critique',
+  'https://github.com/remorses/errore',
 ]
 
 // Directories to skip during recursive SKILL.md search
@@ -49,6 +50,8 @@ interface SkillInfo {
   description: string
   /** Absolute path to the skill directory (parent of SKILL.md) */
   dirPath: string
+  /** True when SKILL.md is at the repo root (only copy the file, not the whole repo) */
+  isRepoRoot: boolean
 }
 
 interface ParsedSource {
@@ -144,7 +147,7 @@ async function discoverSkills(
   const skills: SkillInfo[] = []
   const seenNames = new Set<string>()
 
-  await walkForSkills(searchDir, skills, seenNames, 0)
+  await walkForSkills(searchDir, skills, seenNames, 0, 5, baseDir)
   return skills
 }
 
@@ -154,6 +157,7 @@ async function walkForSkills(
   seenNames: Set<string>,
   depth: number,
   maxDepth = 5,
+  repoRoot?: string,
 ): Promise<void> {
   if (depth > maxDepth) {
     return
@@ -164,7 +168,8 @@ async function walkForSkills(
     const content = fs.readFileSync(skillMdPath, 'utf-8')
     const meta = parseFrontmatter(content)
     if (meta && !seenNames.has(meta.name)) {
-      skills.push({ name: meta.name, description: meta.description, dirPath: dir })
+      const isRepoRoot = repoRoot ? path.resolve(dir) === path.resolve(repoRoot) : false
+      skills.push({ name: meta.name, description: meta.description, dirPath: dir, isRepoRoot })
       seenNames.add(meta.name)
     }
   }
@@ -187,6 +192,7 @@ async function walkForSkills(
       seenNames,
       depth + 1,
       maxDepth,
+      repoRoot,
     )
   }
 }
@@ -225,17 +231,22 @@ async function copySkill(skill: SkillInfo, outputDir: string): Promise<string> {
     fs.rmSync(targetDir, { recursive: true, force: true })
   }
 
-  fs.cpSync(skill.dirPath, targetDir, {
-    recursive: true,
-    filter: (src) => {
-      const basename = path.basename(src)
-      // Skip .git directories and node_modules inside skill dirs
-      if (basename === '.git' || basename === 'node_modules') {
-        return false
-      }
-      return true
-    },
-  })
+  if (skill.isRepoRoot) {
+    // SKILL.md at repo root: only copy the SKILL.md file, not the whole repo
+    fs.mkdirSync(targetDir, { recursive: true })
+    fs.copyFileSync(path.join(skill.dirPath, 'SKILL.md'), path.join(targetDir, 'SKILL.md'))
+  } else {
+    fs.cpSync(skill.dirPath, targetDir, {
+      recursive: true,
+      filter: (src) => {
+        const basename = path.basename(src)
+        if (basename === '.git' || basename === 'node_modules') {
+          return false
+        }
+        return true
+      },
+    })
+  }
 
   return targetDir
 }
