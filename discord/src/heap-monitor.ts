@@ -93,6 +93,10 @@ export function startHeapMonitor(): void {
     return
   }
 
+  // Ensure the snapshot directory exists so V8's --diagnostic-dir has a valid target.
+  // Also needed for our own writeHeapSnapshot() calls.
+  ensureSnapshotDir()
+
   const { usedMB, limitMB, ratio } = getHeapStats()
   logger.log(
     `Heap monitor started (${Math.round(usedMB)}MB / ${Math.round(limitMB)}MB, ${(ratio * 100).toFixed(1)}%) - ` +

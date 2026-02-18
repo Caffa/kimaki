@@ -903,7 +903,9 @@ export async function startDiscordBot({
       voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
     }
     const { spawn } = await import('node:child_process')
-    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js
+    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js.
+    // V8 heap flags are already in process.execArgv from the initial spawn, and bin.ts
+    // will re-inject them if missing, so no need to add them here.
     const env = { ...process.env }
     delete env.__KIMAKI_CHILD
     spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
