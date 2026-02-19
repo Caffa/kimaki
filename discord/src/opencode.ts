@@ -179,6 +179,26 @@ export async function initializeOpencodeForDirectory(
           external_directory: externalDirectoryPermissions,
           webfetch: 'allow',
         },
+        agent: {
+          explore: {
+            permission: {
+              '*': 'deny',
+              grep: 'allow',
+              glob: 'allow',
+              list: 'allow',
+              read: {
+                '*': 'allow',
+                '*.env': 'deny',
+                '*.env.*': 'deny',
+                '*.env.example': 'allow',
+              },
+              webfetch: 'allow',
+              websearch: 'allow',
+              codesearch: 'allow',
+              external_directory: externalDirectoryPermissions,
+            },
+          },
+        },
         skills: {
           paths: [path.resolve(__dirname, '..', 'skills')],
         },
