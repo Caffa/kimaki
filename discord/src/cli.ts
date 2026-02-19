@@ -38,6 +38,12 @@ import {
   getPrisma,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
+import {
+  parseSessionSearchPattern,
+  findFirstSessionSearchHit,
+  buildSessionSearchSnippet,
+  getPartSearchTexts,
+} from './session-search.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import type { ThreadStartMarker } from './system-message.js'
@@ -2712,6 +2718,207 @@ cli
 
       cliLogger.error(`Session ${sessionId} not found in any project`)
       process.exit(EXIT_NO_RESTART)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'session search <query>',
+    'Search past sessions for text or /regex/flags in the selected project',
+  )
+  .option('--project <path>', 'Project directory (defaults to cwd)')
+  .option('--channel <channelId>', 'Resolve project from a Discord channel ID')
+  .option('--limit <n>', 'Maximum matched sessions to return (default: 20)')
+  .option('--json', 'Output as JSON')
+  .action(async (query, options) => {
+    try {
+      await initDatabase()
+
+      if (options.project && options.channel) {
+        cliLogger.error('Use either --project or --channel, not both')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const limit = (() => {
+        const rawLimit = typeof options.limit === 'string' ? options.limit : '20'
+        const parsed = Number.parseInt(rawLimit, 10)
+        if (Number.isNaN(parsed) || parsed < 1) {
+          return new Error(`Invalid --limit value: ${rawLimit}`)
+        }
+        return parsed
+      })()
+
+      if (limit instanceof Error) {
+        cliLogger.error(limit.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const projectDirectoryResult = await (async (): Promise<string | Error> => {
+        if (options.channel) {
+          const channelConfig = await getChannelDirectory(options.channel)
+          if (!channelConfig) {
+            return new Error(`No project mapping found for channel: ${options.channel}`)
+          }
+          return path.resolve(channelConfig.directory)
+        }
+        return path.resolve(options.project || '.')
+      })()
+
+      if (projectDirectoryResult instanceof Error) {
+        cliLogger.error(projectDirectoryResult.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const projectDirectory = projectDirectoryResult
+      if (!fs.existsSync(projectDirectory)) {
+        cliLogger.error(`Directory does not exist: ${projectDirectory}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const searchPattern = parseSessionSearchPattern(query)
+      if (searchPattern instanceof Error) {
+        cliLogger.error(searchPattern.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log('Connecting to OpenCode server...')
+      const getClient = await initializeOpencodeForDirectory(projectDirectory)
+      if (getClient instanceof Error) {
+        cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const sessionsResponse = await getClient().session.list()
+      const sessions = sessionsResponse.data || []
+      if (sessions.length === 0) {
+        cliLogger.log('No sessions found')
+        process.exit(0)
+      }
+
+      const prisma = await getPrisma()
+      const threadSessions = await prisma.thread_sessions.findMany({
+        select: { thread_id: true, session_id: true },
+      })
+      const sessionToThread = new Map(
+        threadSessions
+          .filter((row) => row.session_id !== '')
+          .map((row) => [row.session_id, row.thread_id]),
+      )
+
+      const sortedSessions = [...sessions].sort((a, b) => {
+        return b.time.updated - a.time.updated
+      })
+
+      const matchedSessions: Array<{
+        id: string
+        title: string
+        directory: string
+        updated: string
+        source: 'kimaki' | 'opencode'
+        threadId: string | null
+        snippets: string[]
+      }> = []
+
+      let scannedSessions = 0
+
+      for (const session of sortedSessions) {
+        scannedSessions++
+        const messagesResponse = await getClient().session.messages({
+          sessionID: session.id,
+        })
+        const messages = messagesResponse.data || []
+
+        const snippets = messages
+          .flatMap((message) => {
+            const rolePrefix =
+              message.info.role === 'assistant'
+                ? 'assistant'
+                : message.info.role === 'user'
+                  ? 'user'
+                  : 'message'
+
+            return message.parts.flatMap((part) => {
+              return getPartSearchTexts(part).flatMap((text) => {
+                const hit = findFirstSessionSearchHit({
+                  text,
+                  searchPattern,
+                })
+                if (!hit) {
+                  return []
+                }
+                const snippet = buildSessionSearchSnippet({ text, hit })
+                if (!snippet) {
+                  return []
+                }
+                return [`${rolePrefix}: ${snippet}`]
+              })
+            })
+          })
+          .slice(0, 3)
+
+        if (snippets.length === 0) {
+          continue
+        }
+
+        const threadId = sessionToThread.get(session.id)
+        matchedSessions.push({
+          id: session.id,
+          title: session.title || 'Untitled Session',
+          directory: session.directory,
+          updated: new Date(session.time.updated).toISOString(),
+          source: threadId ? 'kimaki' : 'opencode',
+          threadId: threadId || null,
+          snippets,
+        })
+
+        if (matchedSessions.length >= limit) {
+          break
+        }
+      }
+
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              query: searchPattern.raw,
+              mode: searchPattern.mode,
+              projectDirectory,
+              scannedSessions,
+              matches: matchedSessions,
+            },
+            null,
+            2,
+          ),
+        )
+        process.exit(0)
+      }
+
+      if (matchedSessions.length === 0) {
+        cliLogger.log(
+          `No matches found for ${searchPattern.raw} in ${projectDirectory} (${scannedSessions} sessions scanned)`,
+        )
+        process.exit(0)
+      }
+
+      cliLogger.log(
+        `Found ${matchedSessions.length} matching session(s) for ${searchPattern.raw} in ${projectDirectory}`,
+      )
+
+      for (const match of matchedSessions) {
+        const threadInfo = match.threadId ? ` | thread: ${match.threadId}` : ''
+        console.log(
+          `${match.id} | ${match.title} | ${match.updated} | ${match.source}${threadInfo}`,
+        )
+        console.log(`  Directory: ${match.directory}`)
+        match.snippets.forEach((snippet) => {
+          console.log(`  - ${snippet}`)
+        })
+      }
+
+      process.exit(0)
     } catch (error) {
       cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
       process.exit(EXIT_NO_RESTART)

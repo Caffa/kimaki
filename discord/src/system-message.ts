@@ -280,6 +280,15 @@ kimaki session list --json  # machine-readable output
 kimaki session list --project /path/to/project  # specific project
 \`\`\`
 
+To search past sessions for this project (supports plain text or /regex/flags):
+
+\`\`\`bash
+kimaki session search "auth timeout"
+kimaki session search "/error\\s+42/i"
+kimaki session search "rate limit" --project /path/to/project
+kimaki session search "/panic|crash/i" --channel <channel_id>
+\`\`\`
+
 To read a session's full conversation as markdown, pipe to a file and grep it to avoid wasting context.
 Logs go to stderr, so redirect stderr to hide them:
 

@@ -12,6 +12,10 @@ function createCliForIdParsing() {
     .option('--session <sessionId>', 'Session ID')
 
   cli.command('session archive <threadId>', 'Archive a thread')
+  cli
+    .command('session search <query>', 'Search sessions')
+    .option('--channel <channelId>', 'Discord channel ID')
+    .option('--project <path>', 'Project path')
 
   cli
     .command('add-project', 'Add a project')
@@ -64,5 +68,23 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.args[0]).toBe(threadId)
     expect(typeof result.args[0]).toBe('string')
+  })
+
+  test('keeps session search regex and channel ID as strings', () => {
+    const cli = createCliForIdParsing()
+    const channelId = '0012345678901234567'
+    const query = '/error\\s+42/i'
+
+    const result = cli.parse(
+      ['node', 'kimaki', 'session', 'search', query, '--channel', channelId],
+      {
+        run: false,
+      },
+    )
+
+    expect(result.args[0]).toBe(query)
+    expect(typeof result.args[0]).toBe('string')
+    expect(result.options.channel).toBe(channelId)
+    expect(typeof result.options.channel).toBe('string')
   })
 })
