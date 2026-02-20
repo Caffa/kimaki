@@ -760,6 +760,7 @@ export async function handleModelScopeSelectMenu(
       const retryNote = retried ? '\n_Retrying current request with new model..._' : ''
       await interaction.editReply({
         content: `Model set for this session:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,
+        flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
     } else if (selectedScope === 'global') {
@@ -779,6 +780,7 @@ export async function handleModelScopeSelectMenu(
 
       await interaction.editReply({
         content: `Model set for this channel and as global default:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll channels will use this model (unless they have their own override).${agentTip}`,
+        flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
     } else {
@@ -788,6 +790,7 @@ export async function handleModelScopeSelectMenu(
 
       await interaction.editReply({
         content: `Model preference set for this channel:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this model.${agentTip}`,
+        flags: MessageFlags.SuppressEmbeds,
         components: [],
       })
     }
