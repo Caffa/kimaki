@@ -29,6 +29,7 @@ import * as errore from 'errore'
 import { getPrisma } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
+import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { execAsync } from './worktree-utils.js'
 
 // Regex to match emoji characters (covers most common emojis)
@@ -38,6 +39,28 @@ const EMOJI_REGEX =
 
 function isEmoji(str: string): boolean {
   return EMOJI_REGEX.test(str)
+}
+
+const logger = createLogger(LogPrefix.OPENCODE)
+const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
+const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
+
+type TimeoutSignalHandle = {
+  signal: AbortSignal
+  cleanup: () => void
+}
+
+function createTimeoutSignal({ timeoutMs }: { timeoutMs: number }): TimeoutSignalHandle {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort(new errore.AbortError(`Timed out after ${timeoutMs}ms`))
+  }, timeoutMs)
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout)
+    },
+  }
 }
 
 type GitState = {
@@ -235,10 +258,12 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
                   })
                 }
               },
-              catch: (e) => new Error('Failed to update session title', { cause: e }),
+              catch: (error) => {
+                return new Error('Failed to update session title', { cause: error })
+              },
             })
-            if (errore.isError(updateResult)) {
-              console.warn(`[kimaki_mark_thread] ${updateResult.message}`)
+            if (updateResult instanceof Error) {
+              logger.warn(`[kimaki_mark_thread] ${formatErrorWithStack(updateResult)}`)
             }
           }
 
@@ -279,37 +304,53 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             return 'Could not find thread for current session'
           }
 
-          let response: Response
-          try {
-            response = await fetch(`http://127.0.0.1:${lockPort}/file-upload`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                sessionId: context.sessionID,
-                threadId: row.thread_id,
-                directory: context.directory,
-                prompt,
-                maxFiles: maxFiles || 5,
-              }),
-              // 6 minute timeout - slightly longer than bot-side 5min TTL so
-              // the bot resolves first and we get a clean empty-array response
-              // instead of a network timeout error
-              signal: AbortSignal.timeout(6 * 60 * 1000),
-            })
-          } catch (err) {
-            if (err instanceof Error && err.name === 'TimeoutError') {
+          const timeout = createTimeoutSignal({ timeoutMs: FILE_UPLOAD_TIMEOUT_MS })
+          const responseResult = await errore.tryAsync({
+            try: async () => {
+              return fetch(`http://127.0.0.1:${lockPort}/file-upload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  sessionId: context.sessionID,
+                  threadId: row.thread_id,
+                  directory: context.directory,
+                  prompt,
+                  maxFiles: maxFiles || DEFAULT_FILE_UPLOAD_MAX_FILES,
+                }),
+                signal: timeout.signal,
+              })
+            },
+            catch: (error) => {
+              return new Error('File upload request failed', { cause: error })
+            },
+          })
+          timeout.cleanup()
+
+          if (responseResult instanceof Error) {
+            if (errore.isAbortError(responseResult)) {
               return 'File upload timed out - user did not upload files within the time limit'
             }
-            return `File upload failed: ${err instanceof Error ? err.message : String(err)}`
+            return `File upload failed: ${responseResult.message}`
           }
 
-          const result = (await response.json()) as { filePaths?: string[]; error?: string }
-
-          if (!response.ok || result.error) {
-            return `File upload failed: ${result.error || 'Unknown error'}`
+          const response = responseResult
+          const bodyResult = await errore.tryAsync({
+            try: async () => {
+              return (await response.json()) as { filePaths?: string[]; error?: string }
+            },
+            catch: (error) => {
+              return new Error('File upload service returned invalid JSON', { cause: error })
+            },
+          })
+          if (bodyResult instanceof Error) {
+            return `File upload failed: ${bodyResult.message}`
           }
 
-          const filePaths = result.filePaths || []
+          if (!response.ok || bodyResult.error) {
+            return `File upload failed: ${bodyResult.error || 'Unknown error'}`
+          }
+
+          const filePaths = bodyResult.filePaths || []
           if (filePaths.length === 0) {
             return 'No files were uploaded (user may have cancelled or sent a new message)'
           }
@@ -349,85 +390,118 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
     // Synthetic parts are hidden from the TUI but sent to the model,
     // keeping it aware of context changes without cluttering the UI.
     'chat.message': async (input, output) => {
-      const now = Date.now()
-      const first = output.parts[0]
-      if (!first) return
-      const { sessionID } = input
-      const messageID = 'messageID' in first ? first.messageID : ''
+      const hookResult = await errore.tryAsync({
+        try: async () => {
+          const now = Date.now()
+          const first = output.parts[0]
+          if (!first) {
+            return
+          }
 
-      // -- Branch / detached HEAD detection --
-      // Injects context when git state first appears or changes mid-session.
-      const gitState = await resolveGitState({ directory })
-      if (gitState) {
-        const previousState = sessionGitStates.get(sessionID)
-        if (!previousState || previousState.key !== gitState.key) {
-          const info = (() => {
-            if (gitState.warning) {
-              return gitState.warning
+          const { sessionID } = input
+          const messageID =
+            typeof first === 'object' && first !== null && 'messageID' in first ? first.messageID : ''
+
+          // -- Branch / detached HEAD detection --
+          // Injects context when git state first appears or changes mid-session.
+          const gitState = await resolveGitState({ directory })
+          if (gitState) {
+            const previousState = sessionGitStates.get(sessionID)
+            if (!previousState || previousState.key !== gitState.key) {
+              const info = (() => {
+                if (gitState.warning) {
+                  return gitState.warning
+                }
+                if (previousState?.kind === 'branch') {
+                  return `[Branch changed: ${previousState.label} -> ${gitState.label}]`
+                }
+                return `[Current branch: ${gitState.label}]`
+              })()
+
+              sessionGitStates.set(sessionID, gitState)
+              output.parts.push({
+                id: crypto.randomUUID(),
+                sessionID,
+                messageID,
+                type: 'text' as const,
+                text: info,
+                synthetic: true,
+              })
             }
-            if (previousState?.kind === 'branch') {
-              return `[Branch changed: ${previousState.label} -> ${gitState.label}]`
+          }
+
+          // -- Time since last message --
+          // If more than 10 minutes passed since the last user message in this session,
+          // inject current time context so the model is aware of the gap.
+          const lastTime = sessionLastMessageTime.get(sessionID)
+          sessionLastMessageTime.set(sessionID, now)
+
+          if (lastTime) {
+            const elapsed = now - lastTime
+            const TEN_MINUTES = 10 * 60 * 1000
+            if (elapsed >= TEN_MINUTES) {
+              const totalMinutes = Math.floor(elapsed / 60_000)
+              const hours = Math.floor(totalMinutes / 60)
+              const minutes = totalMinutes % 60
+              const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
+
+              const utcStr = new Date(now)
+                .toISOString()
+                .replace('T', ' ')
+                .replace(/\.\d+Z$/, ' UTC')
+              const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+              const localStr = new Date(now).toLocaleString('en-US', {
+                timeZone: localTz,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              })
+
+              output.parts.push({
+                id: crypto.randomUUID(),
+                sessionID,
+                messageID,
+                type: 'text' as const,
+                text: `[${elapsedStr} since last message | UTC: ${utcStr} | Local (${localTz}): ${localStr}]`,
+                synthetic: true,
+              })
             }
-            return `[Current branch: ${gitState.label}]`
-          })()
-
-          sessionGitStates.set(sessionID, gitState)
-          output.parts.push({
-            id: crypto.randomUUID(),
-            sessionID,
-            messageID,
-            type: 'text' as const,
-            text: info,
-            synthetic: true,
-          })
-        }
-      }
-
-      // -- Time since last message --
-      // If more than 10 minutes passed since the last user message in this session,
-      // inject current time context so the model is aware of the gap.
-      const lastTime = sessionLastMessageTime.get(sessionID)
-      sessionLastMessageTime.set(sessionID, now)
-
-      if (lastTime) {
-        const elapsed = now - lastTime
-        const TEN_MINUTES = 10 * 60 * 1000
-        if (elapsed >= TEN_MINUTES) {
-          const totalMinutes = Math.floor(elapsed / 60_000)
-          const hours = Math.floor(totalMinutes / 60)
-          const minutes = totalMinutes % 60
-          const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
-
-          const utcStr = new Date(now).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')
-          const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-          const localStr = new Date(now).toLocaleString('en-US', {
-            timeZone: localTz,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          })
-
-          output.parts.push({
-            id: crypto.randomUUID(),
-            sessionID,
-            messageID,
-            type: 'text' as const,
-            text: `[${elapsedStr} since last message | UTC: ${utcStr} | Local (${localTz}): ${localStr}]`,
-            synthetic: true,
-          })
-        }
+          }
+        },
+        catch: (error) => {
+          return new Error('chat.message hook failed', { cause: error })
+        },
+      })
+      if (hookResult instanceof Error) {
+        logger.warn(`[opencode-plugin chat.message] ${formatErrorWithStack(hookResult)}`)
       }
     },
 
     // Clean up per-session tracking state when sessions are deleted
     event: async ({ event }) => {
-      if (event.type === 'session.deleted') {
-        const id = event.properties.info.id
-        sessionGitStates.delete(id)
-        sessionLastMessageTime.delete(id)
+      const cleanupResult = await errore.tryAsync({
+        try: async () => {
+          if (event.type !== 'session.deleted') {
+            return
+          }
+
+          const id = event.properties?.info?.id
+          if (!id) {
+            return
+          }
+
+          sessionGitStates.delete(id)
+          sessionLastMessageTime.delete(id)
+        },
+        catch: (error) => {
+          return new Error('event hook failed', { cause: error })
+        },
+      })
+      if (cleanupResult instanceof Error) {
+        logger.warn(`[opencode-plugin event] ${formatErrorWithStack(cleanupResult)}`)
       }
     },
   }
