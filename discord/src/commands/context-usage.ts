@@ -153,7 +153,7 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
       const percentage = Math.round((totalTokens / contextLimit) * 100)
       const formattedLimit = contextLimit.toLocaleString('en-US')
       lines.push(
-        `**Context usage:** ${formattedTokens} / ${formattedLimit} tokens (${percentage}%)`,
+        `**Context usage:** ${percentage}%, ${formattedTokens} / ${formattedLimit} tokens`,
       )
     } else {
       lines.push(`**Context usage:** ${formattedTokens} tokens (context limit unavailable)`)
