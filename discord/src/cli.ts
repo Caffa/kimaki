@@ -797,6 +797,11 @@ async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('session-id')
+      .setDescription('Show current session ID and opencode attach command for this thread')
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('upgrade-and-restart')
       .setDescription('Upgrade kimaki to the latest version and restart the bot')
       .setDMPermission(false)

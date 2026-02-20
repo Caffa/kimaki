@@ -57,6 +57,7 @@ import { handleVerbosityCommand } from './commands/verbosity.js'
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
+import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
@@ -232,6 +233,10 @@ export function registerInteractionHandler({
 
           case 'context-usage':
             await handleContextUsageCommand({ command: interaction, appId })
+            return
+
+          case 'session-id':
+            await handleSessionIdCommand({ command: interaction, appId })
             return
 
           case 'upgrade-and-restart':

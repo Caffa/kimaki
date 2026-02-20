@@ -1632,7 +1632,6 @@ export async function handleOpencodeSession({
         const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime, {
           secondsDecimalDigits: 0,
         })
-        const attachCommand = port ? ` ⋅ ${session.id}` : ''
         const modelInfo = usedModel ? ` ⋅ ${usedModel}` : ''
         const agentInfo =
           usedAgent && usedAgent.toLowerCase() !== 'build' ? ` ⋅ **${usedAgent}**` : ''
@@ -1689,7 +1688,7 @@ export async function handleOpencodeSession({
         const projectInfo = branchName ? `${folderName} ⋅ ${branchName} ⋅ ` : `${folderName} ⋅ `
         await sendThreadMessage(
           thread,
-          `*${projectInfo}${sessionDuration}${contextInfo}${attachCommand}${modelInfo}${agentInfo}*`,
+          `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
         sessionLogger.log(
