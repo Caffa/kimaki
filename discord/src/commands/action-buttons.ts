@@ -347,7 +347,7 @@ export function cancelPendingActionButtons(threadId: string): boolean {
     if (!resolveContext(ctx)) {
       continue
     }
-    updateButtonMessage({ context: ctx, status: '_Dismissed_' })
+    updateButtonMessage({ context: ctx, status: '_Buttons dismissed._' })
     return true
   }
   return false

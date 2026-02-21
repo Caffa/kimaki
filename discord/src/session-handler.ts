@@ -1024,35 +1024,24 @@ export async function handleOpencodeSession({
       }
     }
 
-    const flushAllBufferedParts = async ({
-      force,
-      skipPartId,
-    }: {
-      force: boolean
-      skipPartId?: string
-    }) => {
-      const messageIDs = Array.from(partBuffer.keys())
-      for (const messageID of messageIDs) {
-        await flushBufferedParts({
-          messageID,
-          force,
-          skipPartId,
-        })
-      }
-    }
-
     const showInteractiveUi = async ({
       skipPartId,
+      flushMessageId,
       show,
     }: {
       skipPartId?: string
+      flushMessageId?: string
       show: () => Promise<void>
     }) => {
       stopTyping()
-      await flushAllBufferedParts({
-        force: true,
-        skipPartId,
-      })
+      const targetMessageId = flushMessageId || assistantMessageId
+      if (targetMessageId) {
+        await flushBufferedParts({
+          messageID: targetMessageId,
+          force: true,
+          skipPartId,
+        })
+      }
       await show()
     }
 
@@ -1208,6 +1197,7 @@ export async function handleOpencodeSession({
         if (part.tool.endsWith('kimaki_action_buttons')) {
           await showInteractiveUi({
             skipPartId: part.id,
+            flushMessageId: assistantMessageId || part.messageID,
             show: async () => {
               const request = await waitForQueuedActionButtonsRequest({
                 sessionId: session.id,
@@ -1534,6 +1524,7 @@ export async function handleOpencodeSession({
       )
 
       await showInteractiveUi({
+        flushMessageId: assistantMessageId,
         show: async () => {
           await showAskUserQuestionDropdowns({
             thread,
