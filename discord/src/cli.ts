@@ -2472,24 +2472,47 @@ cli
       orderBy: { created_at: 'desc' },
     })
 
+    if (channels.length === 0) {
+      cliLogger.log('No projects registered')
+      process.exit(0)
+    }
+
+    // Fetch Discord channel names via REST API
+    const botRow = await getBotToken()
+    const rest = botRow ? new REST().setToken(botRow.token) : null
+
+    const enriched = await Promise.all(
+      channels.map(async (ch) => {
+        let channelName = ''
+        if (rest) {
+          try {
+            const data = (await rest.get(Routes.channel(ch.channel_id))) as { name?: string }
+            channelName = data.name || ''
+          } catch {
+            // Channel may have been deleted from Discord
+          }
+        }
+        return { ...ch, channelName }
+      }),
+    )
+
     if (options.json) {
-      const output = channels.map((ch) => ({
+      const output = enriched.map((ch) => ({
         channel_id: ch.channel_id,
+        channel_name: ch.channelName,
         directory: ch.directory,
+        folder_name: path.basename(ch.directory),
         app_id: ch.app_id,
       }))
       console.log(JSON.stringify(output, null, 2))
       process.exit(0)
     }
 
-    if (channels.length === 0) {
-      cliLogger.log('No projects registered')
-      process.exit(0)
-    }
-
-    for (const ch of channels) {
-      const name = path.basename(ch.directory)
-      console.log(`\n📁 ${name}`)
+    for (const ch of enriched) {
+      const folderName = path.basename(ch.directory)
+      const channelLabel = ch.channelName ? `#${ch.channelName}` : ch.channel_id
+      console.log(`\n${channelLabel}`)
+      console.log(`   Folder: ${folderName}`)
       console.log(`   Directory: ${ch.directory}`)
       console.log(`   Channel ID: ${ch.channel_id}`)
       if (ch.app_id) {
