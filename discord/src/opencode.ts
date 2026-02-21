@@ -227,6 +227,7 @@ export async function initializeOpencodeForDirectory(
   const normalizedDirectory = directory.replaceAll('\\', '/')
 
   // Build external_directory permissions, optionally including original repo for worktrees
+  const memoryDir = path.join(getDataDir(), 'memory').replaceAll('\\', '/')
   const externalDirectoryPermissions: Record<string, PermissionAction> = {
     '*': 'ask',
     '/tmp': 'allow',
@@ -237,6 +238,8 @@ export async function initializeOpencodeForDirectory(
     [`${tmpdir}/*`]: 'allow',
     [normalizedDirectory]: 'allow',
     [`${normalizedDirectory}/*`]: 'allow',
+    [memoryDir]: 'allow',
+    [`${memoryDir}/*`]: 'allow',
   }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'

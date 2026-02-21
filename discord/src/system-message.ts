@@ -2,7 +2,8 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-import { getCritiqueEnabled } from './config.js'
+import path from 'node:path'
+import { getCritiqueEnabled, getDataDir } from './config.js'
 
 const CRITIQUE_INSTRUCTIONS = `
 ## showing diffs
@@ -117,6 +118,45 @@ tmux kill-session -t myapp-dev
 tmux list-sessions
 \`\`\`
 `
+
+function getMemoryDir() {
+  return path.join(getDataDir(), 'memory')
+}
+
+function getMemoryInstructions() {
+  const memoryDir = getMemoryDir()
+  return `
+## memory
+
+Persistent memory is stored in: \`${memoryDir}\`
+This directory contains markdown files that persist knowledge across sessions and projects.
+Use regular Read, Write, and Edit tools to manage memory files. No special memory tools are needed.
+
+### when to read memory
+Before answering questions about prior work, decisions, preferences, or project context, list existing memory files and read relevant ones first.
+At the start of complex tasks, check if there is prior context that could inform your approach.
+
+### when to write memory
+After making important decisions, completing significant tasks, or learning user-specific patterns and preferences, write or update the relevant memory file.
+Include enough context that a future session can understand the decision without the original conversation.
+
+### filename conventions
+Use kebab-case topic slugs as filenames. One file per topic. Examples:
+- \`auth-architecture.md\` - authentication design decisions
+- \`api-conventions.md\` - API naming patterns and preferences
+- \`deployment-setup.md\` - deployment configuration notes
+- \`user-preferences.md\` - coding style, tooling preferences
+- \`project-{name}-context.md\` - project-specific knowledge (use the actual project name)
+
+### collision prevention
+Multiple sessions may run concurrently against this memory directory.
+- **Always list existing files first** before creating a new one. If a file with a related topic already exists, append to it instead of creating a new file.
+- **Use the Edit tool to append**, never overwrite an existing file with Write unless you have read it first and are preserving all existing content.
+- **Never use session IDs, thread IDs, timestamps, or sequential numbers in filenames.** Use only descriptive topic slugs.
+- **Each file must have a unique topic scope** documented in its first line as a comment. Two files should never cover the same topic.
+- If you need to write about a subtopic of an existing file, add a section to that file rather than creating a separate file.
+`
+}
 
 export type WorktreeInfo = {
   /** The worktree directory path */
@@ -397,6 +437,7 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
   }
 ${getCritiqueEnabled() ? CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
+${getMemoryInstructions()}
 ## markdown formatting
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:
