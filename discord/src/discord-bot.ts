@@ -155,30 +155,38 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
-    for (const guild of c.guilds.cache.values()) {
-      discordLogger.log(`${guild.name} (${guild.id})`)
-
-      const channels = await getChannelsWithDescriptions(guild)
-      const kimakiChannels = channels.filter(
-        (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId),
-      )
-
-      if (kimakiChannels.length > 0) {
-        discordLogger.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
-        for (const channel of kimakiChannels) {
-          discordLogger.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
-        }
-      } else {
-        discordLogger.log(`  No channels for this bot`)
-      }
-    }
-
     voiceLogger.log(
       `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
     )
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+
+    // Channel logging is informational only; do it in background so startup stays responsive.
+    void (async () => {
+      for (const guild of c.guilds.cache.values()) {
+        discordLogger.log(`${guild.name} (${guild.id})`)
+
+        const channels = await getChannelsWithDescriptions(guild)
+        const kimakiChannels = channels.filter(
+          (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId),
+        )
+
+        if (kimakiChannels.length > 0) {
+          discordLogger.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
+          for (const channel of kimakiChannels) {
+            discordLogger.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
+          }
+          continue
+        }
+
+        discordLogger.log('  No channels for this bot')
+      }
+    })().catch((error) => {
+      discordLogger.warn(
+        `Background guild channel scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
   }
 
   // If client is already ready (was logged in before being passed to us),

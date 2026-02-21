@@ -986,6 +986,62 @@ async function registerCommands({
   }
 }
 
+async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
+  try {
+    const roles = await guild.roles.fetch()
+    const existingRole = roles.find((role) => role.name.toLowerCase() === 'kimaki')
+
+    if (existingRole) {
+      if (existingRole.position > 1) {
+        await existingRole.setPosition(1)
+        cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+      }
+      return
+    }
+
+    await guild.roles.create({
+      name: 'Kimaki',
+      position: 1,
+      reason:
+        'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
+    })
+    cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
+  } catch (error) {
+    cliLogger.warn(
+      `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+async function collectKimakiChannels({
+  guilds,
+  appId,
+  reconcileRoles,
+}: {
+  guilds: Guild[]
+  appId: string
+  reconcileRoles: boolean
+}): Promise<{ guild: Guild; channels: ChannelWithTags[] }[]> {
+  const guildResults = await Promise.all(
+    guilds.map(async (guild) => {
+      if (reconcileRoles) {
+        void reconcileKimakiRole({ guild })
+      }
+
+      const channels = await getChannelsWithDescriptions(guild)
+      const kimakiChans = channels.filter(
+        (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
+      )
+
+      return { guild, channels: kimakiChans }
+    }),
+  )
+
+  return guildResults.filter((result) => {
+    return result.channels.length > 0
+  })
+}
+
 /**
  * Store channel-directory mappings in the database.
  * Called after Discord login to persist channel configurations.
@@ -1178,6 +1234,7 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   const existingBot = await getBotToken()
 
   const shouldAddChannels = !existingBot?.token || forceSetup || Boolean(addChannels)
+  const isQuickStart = Boolean(existingBot && !forceSetup && !addChannels)
 
   if (existingBot && !forceSetup) {
     appId = existingBot.app_id
@@ -1311,54 +1368,21 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       discordClient.once(Events.ClientReady, async (c) => {
         guilds.push(...Array.from(c.guilds.cache.values()))
 
-        // Process all guilds in parallel for faster startup
-        const guildResults = await Promise.all(
-          guilds.map(async (guild) => {
-            // Create Kimaki role if it doesn't exist, or fix its position (fire-and-forget)
-            guild.roles
-              .fetch()
-              .then(async (roles) => {
-                const existingRole = roles.find((role) => role.name.toLowerCase() === 'kimaki')
-                if (existingRole) {
-                  // Move to bottom if not already there
-                  if (existingRole.position > 1) {
-                    await existingRole.setPosition(1)
-                    cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
-                  }
-                  return
-                }
-                return guild.roles.create({
-                  name: 'Kimaki',
-                  position: 1, // Place at bottom so anyone with Manage Roles can assign it
-                  reason:
-                    'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
-                })
-              })
-              .then((role) => {
-                if (role) {
-                  cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
-                }
-              })
-              .catch((error) => {
-                cliLogger.warn(
-                  `Could not create Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
-                )
-              })
+        if (isQuickStart) {
+          resolve(null)
+          return
+        }
 
-            const channels = await getChannelsWithDescriptions(guild)
-            const kimakiChans = channels.filter(
-              (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === appId),
-            )
-
-            return { guild, channels: kimakiChans }
-          }),
-        )
+        // Process guild metadata when setup flow needs channel prompts.
+        const guildResults = await collectKimakiChannels({
+          guilds,
+          appId,
+          reconcileRoles: true,
+        })
 
         // Collect results
         for (const result of guildResults) {
-          if (result.channels.length > 0) {
-            kimakiChannels.push(result)
-          }
+          kimakiChannels.push(result)
         }
 
         resolve(null)
@@ -1378,6 +1402,40 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   }
   await setBotToken(appId, token)
 
+  // Quick start: start the bot first, then defer channel sync/role reconciliation.
+  if (isQuickStart) {
+    cliLogger.log('Starting Discord bot...')
+    await startDiscordBot({ token, appId, discordClient, useWorktrees })
+    cliLogger.log('Discord bot is running!')
+
+    // Background channel sync + role reconciliation should never block ready state.
+    void (async () => {
+      try {
+        const backgroundChannels = await collectKimakiChannels({
+          guilds,
+          appId,
+          reconcileRoles: true,
+        })
+        await storeChannelDirectories({ kimakiChannels: backgroundChannels })
+        cliLogger.log(
+          `Background channel sync completed for ${backgroundChannels.length} guild(s)`,
+        )
+      } catch (error) {
+        cliLogger.warn(
+          'Background channel sync failed:',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    })()
+
+    // Background: OpenCode init + slash command registration (non-blocking)
+    void backgroundInit({ currentDir, token, appId })
+
+    showReadyMessage({ kimakiChannels: [], createdChannels, appId })
+    outro('✨ Bot ready! Listening for messages...')
+    return
+  }
+
   // Store channel-directory mappings
   await storeChannelDirectories({ kimakiChannels })
 
@@ -1393,21 +1451,6 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
       .join('\n')
 
     note(channelList, 'Existing Kimaki Channels')
-  }
-
-  // Quick start: if setup is already done, start bot immediately and background the rest
-  const isQuickStart = existingBot && !forceSetup && !addChannels
-  if (isQuickStart) {
-    cliLogger.log('Starting Discord bot...')
-    await startDiscordBot({ token, appId, discordClient, useWorktrees })
-    cliLogger.log('Discord bot is running!')
-
-    // Background: OpenCode init + slash command registration (non-blocking)
-    void backgroundInit({ currentDir, token, appId })
-
-    showReadyMessage({ kimakiChannels, createdChannels, appId })
-    outro('✨ Bot ready! Listening for messages...')
-    return
   }
 
   // Full setup path: wait for OpenCode, show prompts, create channels if needed
