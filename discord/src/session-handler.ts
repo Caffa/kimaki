@@ -45,6 +45,7 @@ import {
   arePatternsCoveredBy,
 } from './commands/permissions.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
+import { cancelPendingActionButtons } from './commands/action-buttons.js'
 import { getThinkingValuesForModel, matchThinkingValue } from './thinking-utils.js'
 import { execAsync } from './worktree-utils.js'
 import * as errore from 'errore'
@@ -647,6 +648,12 @@ export async function handleOpencodeSession({
   const fileUploadCancelled = await cancelPendingFileUpload(thread.id)
   if (fileUploadCancelled) {
     sessionLogger.log(`[FILE-UPLOAD] Cancelled pending file upload due to new message`)
+  }
+
+  // Dismiss any pending action buttons (user sent a new message instead of clicking)
+  const actionButtonsDismissed = cancelPendingActionButtons(thread.id)
+  if (actionButtonsDismissed) {
+    sessionLogger.log(`[ACTION] Dismissed pending action buttons due to new message`)
   }
 
   // Snapshot model+agent early so user changes (e.g. /agent) during the async gap

@@ -289,3 +289,21 @@ export async function handleActionButton(interaction: ButtonInteraction): Promis
     )
   }
 }
+
+/**
+ * Dismiss pending action buttons for a thread (e.g. user sent a new message).
+ * Removes buttons from the message and cleans up context.
+ */
+export function cancelPendingActionButtons(threadId: string): boolean {
+  for (const [, ctx] of pendingActionButtonContexts) {
+    if (ctx.thread.id !== threadId) {
+      continue
+    }
+    if (!resolveContext(ctx)) {
+      continue
+    }
+    updateButtonMessage({ context: ctx, status: '_Dismissed_' })
+    return true
+  }
+  return false
+}
