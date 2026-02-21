@@ -82,6 +82,7 @@ import { showFileUploadButton, type FileUploadRequest } from './commands/file-up
 import { queueActionButtonsRequest, type ActionButtonsRequest } from './commands/action-buttons.js'
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
+import { startConfiguredForumSync } from './forum-sync.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -1431,6 +1432,14 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({ currentDir, token, appId })
 
+    // Background: forum <-> markdown sync (if configured in ~/.kimaki/forum-sync.json)
+    void startConfiguredForumSync({ discordClient, appId }).then((result) => {
+      if (!result) {
+        return
+      }
+      cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+    })
+
     showReadyMessage({ kimakiChannels: [], createdChannels, appId })
     outro('✨ Bot ready! Listening for messages...')
     return
@@ -1628,6 +1637,13 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   cliLogger.log('Starting Discord bot...')
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
+
+  void startConfiguredForumSync({ discordClient, appId }).then((result) => {
+    if (!result) {
+      return
+    }
+    cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+  })
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro('✨ Setup complete! Listening for new messages... do not close this process.')
