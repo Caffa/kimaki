@@ -787,12 +787,14 @@ export async function handleOpencodeSession({
   const previousHandler = activeEventHandlers.get(thread.id)
   if (previousHandler) {
     sessionLogger.log(`[EVENT] Waiting for previous handler to finish`)
-    await Promise.race([
-      previousHandler,
-      new Promise((resolve) => {
-        setTimeout(resolve, 2500)
-      }),
-    ])
+    const previousHandlerResult = await errore.tryAsync(() => {
+      return previousHandler
+    })
+    if (previousHandlerResult instanceof Error) {
+      sessionLogger.warn(
+        `[EVENT] Previous handler exited with error while waiting: ${previousHandlerResult.message}`,
+      )
+    }
   }
 
   const eventClient = getOpencodeClient(directory)
@@ -951,16 +953,21 @@ export async function handleOpencodeSession({
     if (sentPartIds.has(part.id)) {
       return
     }
+    // Mark as sent BEFORE the async send to prevent concurrent flushes
+    // (from message.updated, step-finish, finally block) from sending the
+    // same part while this await is in-flight. If the send fails we remove
+    // the id so a retry can pick it up.
+    sentPartIds.add(part.id)
 
     const sendResult = await errore.tryAsync(() => {
       return sendThreadMessage(thread, content)
     })
     if (sendResult instanceof Error) {
+      sentPartIds.delete(part.id)
       discordLogger.error(`ERROR: Failed to send part ${part.id}:`, sendResult)
       return
     }
     hasSentParts = true
-    sentPartIds.add(part.id)
     await setPartMessage(part.id, sendResult.id, thread.id)
   }
 
@@ -1710,20 +1717,26 @@ export async function handleOpencodeSession({
       throw e
     } finally {
       handlerClosed = true
-      abortControllers.delete(session.id)
-      const finalMessageId = assistantMessageId
-      if (finalMessageId) {
-        const parts = getBufferedParts(finalMessageId)
-        for (const part of parts) {
-          if (!sentPartIds.has(part.id)) {
-            await sendPartMessage(part)
+      const activeController = abortControllers.get(session.id)
+      if (activeController === abortController) {
+        abortControllers.delete(session.id)
+      }
+      const abortReason = (abortController.signal.reason as Error)?.message
+      const shouldFlushFinalParts = !abortController.signal.aborted || abortReason === 'finished'
+      if (shouldFlushFinalParts) {
+        const finalMessageId = assistantMessageId
+        if (finalMessageId) {
+          const parts = getBufferedParts(finalMessageId)
+          for (const part of parts) {
+            if (!sentPartIds.has(part.id)) {
+              await sendPartMessage(part)
+            }
           }
         }
       }
 
       stopTyping()
 
-      const abortReason = (abortController.signal.reason as Error)?.message
       if (!abortController.signal.aborted || abortReason === 'finished') {
         const sessionDuration = prettyMilliseconds(Date.now() - sessionStartTime, {
           secondsDecimalDigits: 0,
