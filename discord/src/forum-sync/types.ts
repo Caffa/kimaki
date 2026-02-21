@@ -80,6 +80,8 @@ export type ForumMarkdownFrontmatter = {
   lastMessageId: string | null
   lastSyncedAt: string
   messageCount: number
+  project?: string
+  projectChannelId?: string
 }
 
 export type ParsedMarkdownFile = {
@@ -91,6 +93,8 @@ export type ExistingForumFile = {
   filePath: string
   threadId: string
   frontmatter: Record<string, unknown>
+  /** Relative subfolder path from outputDir (e.g. channelId) */
+  subfolder?: string
 }
 
 export type ForumSyncResult = {

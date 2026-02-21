@@ -19,6 +19,33 @@ import {
 
 const forumLogger = createLogger('FORUM')
 
+// Fields managed by forum sync that should not be set by external writers (e.g. AI model).
+// If a file has never been synced (no lastSyncedAt), these fields are stripped to prevent
+// model-invented values from causing sync errors (e.g. fake threadId -> fetch fails,
+// future lastSyncedAt -> file permanently skipped).
+const SYSTEM_MANAGED_FIELDS = [
+  'threadId', 'forumChannelId', 'lastSyncedAt', 'lastMessageId',
+  'messageCount', 'author', 'authorId', 'createdAt', 'lastUpdated',
+  'project', 'projectChannelId',
+] as const
+
+function stripSystemFieldsFromUnsyncedFile({
+  frontmatter,
+}: {
+  frontmatter: Record<string, unknown>
+}): Record<string, unknown> {
+  if (frontmatter.lastSyncedAt) return frontmatter
+  const cleaned = { ...frontmatter }
+  for (const field of SYSTEM_MANAGED_FIELDS) {
+    delete cleaned[field]
+  }
+  return cleaned
+}
+
+function isValidDiscordSnowflake({ value }: { value: string }) {
+  return /^\d{17,20}$/.test(value)
+}
+
 function resolveTagIds({
   forumChannel,
   tagNames,
@@ -38,11 +65,17 @@ async function upsertThreadFromFile({
   forumChannel,
   filePath,
   runtimeState,
+  subfolder,
+  project,
+  projectChannelId,
 }: {
   discordClient: Client
   forumChannel: ForumChannel
   filePath: string
   runtimeState?: ForumRuntimeState
+  subfolder?: string
+  project?: string
+  projectChannelId?: string
 }): Promise<'created' | 'updated' | 'skipped' | ForumSyncOperationError> {
   if (!fs.existsSync(filePath)) return 'skipped'
 
@@ -56,9 +89,13 @@ async function upsertThreadFromFile({
   if (content instanceof Error) return content
 
   const parsed = parseFrontmatter({ markdown: content })
-  const threadId = getStringValue({ value: parsed.frontmatter.threadId })
-  const title = getStringValue({ value: parsed.frontmatter.title }) || path.basename(filePath, '.md')
-  const tags = toStringArray({ value: parsed.frontmatter.tags })
+  const frontmatter = stripSystemFieldsFromUnsyncedFile({ frontmatter: parsed.frontmatter })
+  const rawThreadId = getStringValue({ value: frontmatter.threadId })
+  const threadId = rawThreadId && isValidDiscordSnowflake({ value: rawThreadId }) ? rawThreadId : ''
+  const title = getStringValue({ value: frontmatter.title }) || path.basename(filePath, '.md')
+  const tags = toStringArray({ value: frontmatter.tags })
+  // Add project name as a forum tag if derived from subfolder
+  const allTags = project && !tags.includes(project) ? [...tags, project] : tags
   const starterContent = extractStarterContent({ body: parsed.body })
   const safeStarterContent = starterContent || title || 'Untitled post'
 
@@ -72,10 +109,10 @@ async function upsertThreadFromFile({
   if (stat instanceof Error) return stat
 
   // Skip if file hasn't been modified since last sync
-  const lastSyncedAt = Date.parse(getStringValue({ value: parsed.frontmatter.lastSyncedAt }))
+  const lastSyncedAt = Date.parse(getStringValue({ value: frontmatter.lastSyncedAt }))
   if (Number.isFinite(lastSyncedAt) && stat.mtimeMs <= lastSyncedAt) return 'skipped'
 
-  const tagIds = resolveTagIds({ forumChannel, tagNames: tags })
+  const tagIds = resolveTagIds({ forumChannel, tagNames: allTags })
 
   // No threadId in frontmatter -> create a new thread
   if (!threadId) {
@@ -86,6 +123,9 @@ async function upsertThreadFromFile({
       safeStarterContent,
       tagIds,
       runtimeState,
+      subfolder,
+      project,
+      projectChannelId,
     })
   }
 
@@ -99,6 +139,9 @@ async function upsertThreadFromFile({
     safeStarterContent,
     tagIds,
     runtimeState,
+    subfolder,
+    project,
+    projectChannelId,
   })
 }
 
@@ -109,6 +152,9 @@ async function createNewThread({
   safeStarterContent,
   tagIds,
   runtimeState,
+  subfolder,
+  project,
+  projectChannelId,
 }: {
   forumChannel: ForumChannel
   filePath: string
@@ -116,6 +162,9 @@ async function createNewThread({
   safeStarterContent: string
   tagIds: string[]
   runtimeState?: ForumRuntimeState
+  subfolder?: string
+  project?: string
+  projectChannelId?: string
 }): Promise<'created' | ForumSyncOperationError> {
   const created = await forumChannel.threads
     .create({
@@ -132,13 +181,17 @@ async function createNewThread({
     )
   if (created instanceof Error) return created
 
-  // Re-sync the file to get the new threadId in frontmatter
+  // Re-sync the file to get the new threadId in frontmatter.
+  // outputDir is path.dirname(filePath) which already includes the subfolder,
+  // so we don't pass subfolder again to avoid double-nesting.
   const syncResult = await syncSingleThreadToFile({
     thread: created,
     forumChannel,
     outputDir: path.dirname(filePath),
     runtimeState,
     previousFilePath: filePath,
+    project,
+    projectChannelId,
   })
   if (syncResult instanceof Error) return syncResult
   return 'created'
@@ -153,6 +206,9 @@ async function updateExistingThread({
   safeStarterContent,
   tagIds,
   runtimeState,
+  subfolder,
+  project,
+  projectChannelId,
 }: {
   discordClient: Client
   forumChannel: ForumChannel
@@ -162,6 +218,9 @@ async function updateExistingThread({
   safeStarterContent: string
   tagIds: string[]
   runtimeState?: ForumRuntimeState
+  subfolder?: string
+  project?: string
+  projectChannelId?: string
 }): Promise<'updated' | ForumSyncOperationError> {
   const fetchedChannel = await discordClient.channels
     .fetch(threadId)
@@ -217,12 +276,15 @@ async function updateExistingThread({
     if (editResult instanceof Error) return editResult
   }
 
-  // Re-sync the file to update frontmatter with latest state
+  // Re-sync the file to update frontmatter with latest state.
+  // outputDir is path.dirname(filePath) which already includes the subfolder.
   const syncResult = await syncSingleThreadToFile({
     thread: fetchedChannel,
     forumChannel,
     outputDir: path.dirname(filePath),
     runtimeState,
+    project,
+    projectChannelId,
   })
   if (syncResult instanceof Error) return syncResult
   return 'updated'
@@ -279,23 +341,56 @@ export async function syncFilesToForum({
   const forumChannel = await resolveForumChannel({ discordClient, forumChannelId })
   if (forumChannel instanceof Error) return forumChannel
 
-  const changedPaths = changedFilePaths ||
-    (await loadExistingForumFiles({ outputDir })).map((existing) => existing.filePath)
+  // Load existing files (with subfolder info) when no explicit paths given.
+  // When changedFilePaths is provided (from file watcher), derive subfolder from path.
+  const existingFiles = changedFilePaths
+    ? undefined
+    : await loadExistingForumFiles({ outputDir })
+  const changedEntries: Array<{ filePath: string; subfolder?: string }> = changedFilePaths
+    ? changedFilePaths.map((filePath) => {
+        const rel = path.relative(outputDir, path.dirname(filePath))
+        const subfolder = rel && rel !== '.' ? rel : undefined
+        return { filePath, subfolder }
+      })
+    : (existingFiles || []).map((existing) => ({
+        filePath: existing.filePath,
+        subfolder: existing.subfolder,
+      }))
+
+  // Resolve channel names for subfolders (each subfolder name is a Discord channel ID).
+  // Cache resolutions to avoid redundant API calls.
+  const channelNameCache = new Map<string, string | null>()
+  const resolveChannelName = async (channelId: string): Promise<string | null> => {
+    if (channelNameCache.has(channelId)) return channelNameCache.get(channelId)!
+    const channel = await discordClient.channels.fetch(channelId).catch(() => null)
+    const name = channel && 'name' in channel && typeof channel.name === 'string' ? channel.name : null
+    channelNameCache.set(channelId, name)
+    return name
+  }
 
   const result: ForumFileSyncResult = { created: 0, updated: 0, skipped: 0, deleted: 0 }
 
-  for (const filePath of changedPaths) {
+  for (const { filePath, subfolder } of changedEntries) {
     if (!filePath.endsWith('.md')) continue
     if (runtimeState && shouldIgnorePath({ runtimeState, filePath })) {
       result.skipped += 1
       continue
     }
 
+    // Derive project info from subfolder (subfolder name is the channel ID)
+    const projectChannelId = subfolder || undefined
+    const project = projectChannelId
+      ? (await resolveChannelName(projectChannelId)) || undefined
+      : undefined
+
     const upsertResult = await upsertThreadFromFile({
       discordClient,
       forumChannel,
       filePath,
       runtimeState,
+      subfolder,
+      project,
+      projectChannelId,
     })
     if (upsertResult instanceof Error) return upsertResult
 

@@ -119,12 +119,9 @@ tmux list-sessions
 \`\`\`
 `
 
-function getMemoryDir() {
-  return path.join(getDataDir(), 'memory')
-}
-
-function getMemoryInstructions() {
-  const memoryDir = getMemoryDir()
+function getMemoryInstructions({ channelId }: { channelId?: string }) {
+  if (!channelId) return ''
+  const memoryDir = path.join(getDataDir(), 'memory', channelId)
   return `
 ## memory
 
@@ -147,6 +144,19 @@ Use kebab-case topic slugs as filenames. One file per topic. Examples:
 - \`deployment-setup.md\` - deployment configuration notes
 - \`user-preferences.md\` - coding style, tooling preferences
 - \`project-{name}-context.md\` - project-specific knowledge (use the actual project name)
+
+### frontmatter format
+When creating a NEW memory file, use only these frontmatter fields:
+\`\`\`
+---
+title: Short topic title
+tags:
+  - optional-tag
+---
+\`\`\`
+NEVER write these fields in frontmatter - they are system-managed and will cause sync errors:
+threadId, forumChannelId, lastSyncedAt, lastMessageId, messageCount, author, authorId, createdAt, lastUpdated, project, projectChannelId.
+When editing an EXISTING memory file that already has system frontmatter, only modify the body content below the closing \`---\`. Never touch the frontmatter block.
 
 ### collision prevention
 Multiple sessions may run concurrently against this memory directory.
@@ -437,7 +447,7 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
   }
 ${getCritiqueEnabled() ? CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
-${getMemoryInstructions()}
+${getMemoryInstructions({ channelId })}
 ## markdown formatting
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:

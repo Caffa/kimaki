@@ -406,7 +406,7 @@ export async function startDiscordBot({
 
         if (projectDirectory) {
           try {
-            const getClient = await initializeOpencodeForDirectory(projectDirectory)
+            const getClient = await initializeOpencodeForDirectory(projectDirectory, { channelId: parent?.id })
             if (getClient instanceof Error) {
               voiceLogger.error(
                 `[SESSION] Failed to initialize OpenCode client:`,

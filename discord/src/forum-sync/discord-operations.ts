@@ -20,10 +20,15 @@ const forumLogger = createLogger('FORUM')
 export function getCanonicalThreadFilePath({
   outputDir,
   threadId,
+  subfolder,
 }: {
   outputDir: string
   threadId: string
+  subfolder?: string
 }) {
+  if (subfolder) {
+    return path.join(outputDir, subfolder, `${threadId}.md`)
+  }
   return path.join(outputDir, `${threadId}.md`)
 }
 
@@ -147,20 +152,46 @@ export async function fetchThreadMessages({
   return Array.from(byId.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp)
 }
 
+/**
+ * Recursively walks a directory collecting all .md files with their relative subfolder path.
+ */
+async function collectMarkdownFiles({
+  dir,
+  outputDir,
+}: {
+  dir: string
+  outputDir: string
+}): Promise<Array<{ filePath: string; subfolder?: string }>> {
+  if (!fs.existsSync(dir)) return []
+
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+  const relativeSub = path.relative(outputDir, dir)
+  const subfolder = relativeSub && relativeSub !== '.' ? relativeSub : undefined
+
+  const mdFiles: Array<{ filePath: string; subfolder?: string }> = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => ({ filePath: path.join(dir, entry.name), subfolder }))
+
+  const subdirs = entries.filter((entry) => entry.isDirectory())
+  const nestedResults = await Promise.all(
+    subdirs.map((subdir) => collectMarkdownFiles({
+      dir: path.join(dir, subdir.name),
+      outputDir,
+    })),
+  )
+
+  return [...mdFiles, ...nestedResults.flat()]
+}
+
 export async function loadExistingForumFiles({
   outputDir,
 }: {
   outputDir: string
 }): Promise<ExistingForumFile[]> {
-  if (!fs.existsSync(outputDir)) return []
-
-  const entries = await fs.promises.readdir(outputDir, { withFileTypes: true })
-  const markdownFiles = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) => path.join(outputDir, entry.name))
+  const markdownEntries = await collectMarkdownFiles({ dir: outputDir, outputDir })
 
   const loaded = await Promise.all(
-    markdownFiles.map(async (filePath) => {
+    markdownEntries.map(async ({ filePath, subfolder }) => {
       const content = await fs.promises.readFile(filePath, 'utf8').catch((cause) => {
         forumLogger.warn(`Failed to read forum file ${filePath}:`, cause)
         return null
@@ -173,7 +204,8 @@ export async function loadExistingForumFiles({
       const threadId = threadIdFromFrontmatter || (/^\d+$/.test(threadIdFromFilename) ? threadIdFromFilename : '')
       if (!threadId) return null
 
-      return { filePath, threadId, frontmatter: parsed.frontmatter }
+      const result: ExistingForumFile = { filePath, threadId, frontmatter: parsed.frontmatter, subfolder }
+      return result
     }),
   )
 

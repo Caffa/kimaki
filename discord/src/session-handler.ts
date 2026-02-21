@@ -533,7 +533,7 @@ export async function handleOpencodeSession({
   }
 
   const originalRepoDirectory = worktreeDirectory ? worktreeInfo?.project_directory : undefined
-  const getClient = await initializeOpencodeForDirectory(directory, { originalRepoDirectory })
+  const getClient = await initializeOpencodeForDirectory(directory, { originalRepoDirectory, channelId })
   if (getClient instanceof Error) {
     await sendThreadMessage(thread, `✗ ${getClient.message}`)
     return

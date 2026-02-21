@@ -3,6 +3,7 @@
 // Handles incremental sync (skip unchanged threads) and stale file cleanup.
 
 import fs from 'node:fs'
+import path from 'node:path'
 import type { ForumChannel, ThreadChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
 import { buildMessageSections, formatMessageSection, getStringValue, stringifyFrontmatter } from './markdown.js'
@@ -47,10 +48,14 @@ function buildFrontmatter({
   thread,
   forumChannel,
   sections,
+  project,
+  projectChannelId,
 }: {
   thread: ThreadChannel
   forumChannel: ForumChannel
   sections: ForumMessageSection[]
+  project?: string
+  projectChannelId?: string
 }): ForumMarkdownFrontmatter {
   const firstSection = sections[0]
   const createdTimestamp = thread.createdTimestamp ?? Date.now()
@@ -73,6 +78,8 @@ function buildFrontmatter({
     lastMessageId: thread.lastMessageId,
     lastSyncedAt: new Date().toISOString(),
     messageCount: sections.length,
+    ...(project && { project }),
+    ...(projectChannelId && { projectChannelId }),
   }
 }
 
@@ -82,21 +89,34 @@ export async function syncSingleThreadToFile({
   outputDir,
   runtimeState,
   previousFilePath,
+  subfolder,
+  project,
+  projectChannelId,
 }: {
   thread: ThreadChannel
   forumChannel: ForumChannel
   outputDir: string
   runtimeState?: ForumRuntimeState
   previousFilePath?: string
+  subfolder?: string
+  project?: string
+  projectChannelId?: string
 }): Promise<void | ForumSyncOperationError> {
   const messages = await fetchThreadMessages({ thread })
   if (messages instanceof Error) return messages
 
+  // Ensure subfolder directory exists when writing into a nested path
+  if (subfolder) {
+    const subDir = path.join(outputDir, subfolder)
+    const ensureResult = await ensureDirectory({ directory: subDir })
+    if (ensureResult instanceof Error) return ensureResult
+  }
+
   const sections = buildMessageSections({ messages })
   const body = sections.map((section) => formatMessageSection({ section })).join('\n\n---\n\n')
-  const frontmatter = buildFrontmatter({ thread, forumChannel, sections })
+  const frontmatter = buildFrontmatter({ thread, forumChannel, sections, project, projectChannelId })
   const markdown = stringifyFrontmatter({ frontmatter, body })
-  const targetPath = getCanonicalThreadFilePath({ outputDir, threadId: thread.id })
+  const targetPath = getCanonicalThreadFilePath({ outputDir, threadId: thread.id, subfolder })
 
   addIgnoredPath({ runtimeState, filePath: targetPath })
   const writeResult = await fs.promises.writeFile(targetPath, markdown, 'utf8').catch((cause) => {

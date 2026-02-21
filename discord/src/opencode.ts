@@ -187,10 +187,11 @@ async function waitForServer({
  * Initialize OpenCode server for a directory.
  * @param directory - The directory to run the server in (cwd)
  * @param options.originalRepoDirectory - For worktrees: the original repo directory to allow access to
+ * @param options.channelId - Discord channel ID, used to scope memory permissions to ~/.kimaki/memory/{channelId}/
  */
 export async function initializeOpencodeForDirectory(
   directory: string,
-  options?: { originalRepoDirectory?: string },
+  options?: { originalRepoDirectory?: string; channelId?: string },
 ): Promise<OpenCodeErrors | (() => OpencodeClient)> {
   const existing = opencodeServers.get(directory)
   if (existing && !existing.process.killed) {
@@ -226,8 +227,8 @@ export async function initializeOpencodeForDirectory(
   const originalRepo = options?.originalRepoDirectory?.replaceAll('\\', '/')
   const normalizedDirectory = directory.replaceAll('\\', '/')
 
-  // Build external_directory permissions, optionally including original repo for worktrees
-  const memoryDir = path.join(getDataDir(), 'memory').replaceAll('\\', '/')
+  // Build external_directory permissions, optionally including original repo for worktrees.
+  // Memory permissions are scoped to ~/.kimaki/memory/{channelId}/ when channelId is available.
   const externalDirectoryPermissions: Record<string, PermissionAction> = {
     '*': 'ask',
     '/tmp': 'allow',
@@ -238,8 +239,11 @@ export async function initializeOpencodeForDirectory(
     [`${tmpdir}/*`]: 'allow',
     [normalizedDirectory]: 'allow',
     [`${normalizedDirectory}/*`]: 'allow',
-    [memoryDir]: 'allow',
-    [`${memoryDir}/*`]: 'allow',
+  }
+  if (options?.channelId) {
+    const scopedMemoryDir = path.join(getDataDir(), 'memory', options.channelId).replaceAll('\\', '/')
+    externalDirectoryPermissions[scopedMemoryDir] = 'allow'
+    externalDirectoryPermissions[`${scopedMemoryDir}/*`] = 'allow'
   }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
