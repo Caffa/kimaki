@@ -371,8 +371,15 @@ export async function startDiscordBot({
             )
             return null
           })
-          if (starterMessage?.content && starterMessage.content !== message.content) {
-            prompt = `Context from thread:\n${resolveMentions(starterMessage)}\n\nUser request:\n${prompt}`
+          if (starterMessage && starterMessage.content !== message.content) {
+            const starterTextAttachments = await getTextAttachments(starterMessage)
+            const starterContent = resolveMentions(starterMessage)
+            const starterText = starterTextAttachments
+              ? `${starterContent}\n\n${starterTextAttachments}`
+              : starterContent
+            if (starterText) {
+              prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
+            }
           }
 
           await handleOpencodeSession({
@@ -697,7 +704,11 @@ export async function startDiscordBot({
 
       discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
 
-      const prompt = resolveMentions(starterMessage).trim()
+      const textAttachmentsContent = await getTextAttachments(starterMessage)
+      const messageText = resolveMentions(starterMessage).trim()
+      const prompt = textAttachmentsContent
+        ? `${messageText}\n\n${textAttachmentsContent}`
+        : messageText
       if (!prompt) {
         discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
         return
