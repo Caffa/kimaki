@@ -82,7 +82,7 @@ import { showFileUploadButton, type FileUploadRequest } from './commands/file-up
 import { queueActionButtonsRequest, type ActionButtonsRequest } from './commands/action-buttons.js'
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
-import { startConfiguredForumSync } from './forum-sync.js'
+import { startConfiguredForumSync } from './forum-sync/index.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
