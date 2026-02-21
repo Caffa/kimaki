@@ -110,36 +110,44 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
     await sendThreadMessage(
       thread,
-      `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
     )
 
-    const { partIds, content, skippedCount } = collectLastAssistantParts({
-      messages,
-    })
+    try {
+      const { partIds, content, skippedCount } = collectLastAssistantParts({
+        messages,
+      })
 
-    if (skippedCount > 0) {
-      await sendThreadMessage(thread, `*Skipped ${skippedCount} older assistant parts...*`)
-    }
+      if (skippedCount > 0) {
+        await sendThreadMessage(thread, `*Skipped ${skippedCount} older assistant parts...*`)
+      }
 
-    if (content.trim()) {
-      const discordMessage = await sendThreadMessage(thread, content)
+      if (content.trim()) {
+        const discordMessage = await sendThreadMessage(thread, content)
 
-      // Store part-message mappings atomically
-      await setPartMessagesBatch(
-        partIds.map((partId) => ({
-          partId,
-          messageId: discordMessage.id,
-          threadId: thread.id,
-        })),
+        // Store part-message mappings atomically
+        await setPartMessagesBatch(
+          partIds.map((partId) => ({
+            partId,
+            messageId: discordMessage.id,
+            threadId: thread.id,
+          })),
+        )
+      }
+
+      const messageCount = messages.length
+
+      await sendThreadMessage(
+        thread,
+        `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+      )
+    } catch (sendError) {
+      logger.error('[RESUME] Error sending messages to thread:', sendError)
+      await sendThreadMessage(
+        thread,
+        `Failed to load message history, but session is connected. You can still send new messages.`,
       )
     }
-
-    const messageCount = messages.length
-
-    await sendThreadMessage(
-      thread,
-      `✅ **Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
-    )
   } catch (error) {
     logger.error('[RESUME] Error:', error)
     await command.editReply(

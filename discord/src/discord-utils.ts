@@ -327,11 +327,14 @@ export function splitMarkdownForDiscord({
   const closingFence = '```\n'
 
   for (const line of lines) {
+    // openingFenceSize accounts for the fence text when starting a fresh chunk
     const openingFenceSize =
       currentChunk.length === 0 && (line.inCodeBlock || line.isOpeningFence)
         ? ('```' + line.lang + '\n').length
         : 0
-    const lineLength = line.isOpeningFence ? 0 : line.text.length
+    // When opening fence starts a fresh chunk, its size is in openingFenceSize.
+    // Otherwise count it normally so the overflow check doesn't miss the fence text.
+    const lineLength = line.isOpeningFence && currentChunk.length === 0 ? 0 : line.text.length
     const activeFenceOverhead =
       currentLang !== null || openingFenceSize > 0 ? closingFence.length : 0
     const wouldExceed =
@@ -489,9 +492,13 @@ export async function sendThreadMessage(
       discordLogger.log(`MESSAGE: Splitting ${text.length} chars into ${chunks.length} messages`)
     }
 
-    for (const chunk of chunks) {
+    for (let chunk of chunks) {
       if (!chunk) {
         continue
+      }
+      // Safety net: hard-truncate if splitting still produced an oversized chunk
+      if (chunk.length > MAX_LENGTH) {
+        chunk = chunk.slice(0, MAX_LENGTH - 4) + '...'
       }
       const message = await thread.send({ content: chunk, flags: sendFlags })
       if (!firstMessage) {
