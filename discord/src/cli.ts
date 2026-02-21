@@ -25,6 +25,7 @@ import {
   initializeOpencodeForDirectory,
   ensureKimakiCategory,
   createProjectChannels,
+  ensureMemoryForumChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -36,6 +37,7 @@ import {
   getThreadSession,
   getThreadIdBySessionId,
   getPrisma,
+  upsertForumSyncConfig,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -1132,6 +1134,35 @@ function showReadyMessage({
 }
 
 /**
+ * Ensure the memory forum channel exists and register it for forum sync.
+ * Runs in background -- errors are logged but don't block startup.
+ */
+async function ensureMemoryForumSync({
+  guilds,
+  appId,
+  botName,
+}: {
+  guilds: Guild[]
+  appId: string
+  botName?: string
+}) {
+  const guild = guilds[0]
+  if (!guild) {
+    cliLogger.warn('No guild available, skipping memory forum setup')
+    return
+  }
+  const forumChannel = await ensureMemoryForumChannel({ guild, botName })
+  const memoryDir = path.join(getDataDir(), 'memory')
+  await upsertForumSyncConfig({
+    appId,
+    forumChannelId: forumChannel.id,
+    outputDir: memoryDir,
+    direction: 'bidirectional',
+  })
+  cliLogger.log(`Memory forum sync configured: #${forumChannel.name} (${forumChannel.id})`)
+}
+
+/**
  * Background initialization for quick start mode.
  * Starts OpenCode server and registers slash commands without blocking bot startup.
  */
@@ -1432,13 +1463,16 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({ currentDir, token, appId })
 
-    // Background: forum <-> markdown sync (if configured in ~/.kimaki/forum-sync.json)
-    void startConfiguredForumSync({ discordClient, appId }).then((result) => {
-      if (!result) {
-        return
-      }
-      cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-    })
+    // Background: create memory forum channel + start forum sync
+    void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
+      .then(() => startConfiguredForumSync({ discordClient, appId }))
+      .then((result) => {
+        if (!result) return
+        cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+      })
+      .catch((error) => {
+        cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
+      })
 
     showReadyMessage({ kimakiChannels: [], createdChannels, appId })
     outro('✨ Bot ready! Listening for messages...')
@@ -1638,12 +1672,16 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
 
-  void startConfiguredForumSync({ discordClient, appId }).then((result) => {
-    if (!result) {
-      return
-    }
-    cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-  })
+  // Background: create memory forum channel + start forum sync
+  void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
+    .then(() => startConfiguredForumSync({ discordClient, appId }))
+    .then((result) => {
+      if (!result) return
+      cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+    })
+    .catch((error) => {
+      cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
+    })
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro('✨ Setup complete! Listening for new messages... do not close this process.')

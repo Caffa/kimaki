@@ -9,7 +9,6 @@ import type { Client } from 'discord.js'
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const FORUM_SYNC_CONFIG_FILE = 'forum-sync.json'
 export const DEFAULT_DEBOUNCE_MS = 800
 export const DEFAULT_RATE_LIMIT_DELAY_MS = 250
 export const WRITE_IGNORE_TTL_MS = 2_000
@@ -17,16 +16,6 @@ export const WRITE_IGNORE_TTL_MS = 2_000
 // ═══════════════════════════════════════════════════════════════════════════
 // TAGGED ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
-
-export class ForumSyncConfigReadError extends errore.createTaggedError({
-  name: 'ForumSyncConfigReadError',
-  message: 'Failed to read forum sync config at $configPath',
-}) {}
-
-export class ForumSyncConfigValidationError extends errore.createTaggedError({
-  name: 'ForumSyncConfigValidationError',
-  message: 'Invalid forum sync config: $reason',
-}) {}
 
 export class ForumChannelResolveError extends errore.createTaggedError({
   name: 'ForumChannelResolveError',
@@ -53,10 +42,6 @@ export type ForumSyncEntry = {
   forumChannelId: string
   outputDir: string
   direction: ForumSyncDirection
-}
-
-export type ForumSyncConfigFile = {
-  forums: ForumSyncEntry[]
 }
 
 export type ForumMessageSection = {

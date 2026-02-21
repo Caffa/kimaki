@@ -95,3 +95,14 @@ CREATE TABLE IF NOT EXISTS "global_models" (
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "global_models_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "app_id" TEXT NOT NULL,
+    "forum_channel_id" TEXT NOT NULL,
+    "output_dir" TEXT NOT NULL,
+    "direction" TEXT NOT NULL DEFAULT 'bidirectional',
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE sqlite_sequence(name,seq);
+CREATE UNIQUE INDEX "forum_sync_configs_app_id_forum_channel_id_key" ON "forum_sync_configs"("app_id", "forum_channel_id");

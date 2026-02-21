@@ -828,3 +828,61 @@ export async function findTextChannelByVoiceChannel(
   })
   return textChannel?.channel_id
 }
+
+// ============================================================================
+// Forum Sync Config Functions
+// ============================================================================
+
+export type ForumSyncConfigRow = {
+  appId: string
+  forumChannelId: string
+  outputDir: string
+  direction: string
+}
+
+export async function getForumSyncConfigs({ appId }: { appId: string }): Promise<ForumSyncConfigRow[]> {
+  const prisma = await getPrisma()
+  const rows = await prisma.forum_sync_configs.findMany({
+    where: { app_id: appId },
+  })
+  return rows.map((row) => ({
+    appId: row.app_id,
+    forumChannelId: row.forum_channel_id,
+    outputDir: row.output_dir,
+    direction: row.direction,
+  }))
+}
+
+export async function upsertForumSyncConfig({
+  appId,
+  forumChannelId,
+  outputDir,
+  direction = 'bidirectional',
+}: {
+  appId: string
+  forumChannelId: string
+  outputDir: string
+  direction?: string
+}) {
+  const prisma = await getPrisma()
+  await prisma.forum_sync_configs.upsert({
+    where: {
+      app_id_forum_channel_id: { app_id: appId, forum_channel_id: forumChannelId },
+    },
+    update: { output_dir: outputDir, direction },
+    create: { app_id: appId, forum_channel_id: forumChannelId, output_dir: outputDir, direction },
+  })
+}
+
+export async function deleteForumSyncConfig({
+  appId,
+  forumChannelId,
+}: {
+  appId: string
+  forumChannelId: string
+}) {
+  const prisma = await getPrisma()
+  await prisma.forum_sync_configs.deleteMany({
+    where: { app_id: appId, forum_channel_id: forumChannelId },
+  })
+}

@@ -2,7 +2,7 @@
 // Creates and manages Kimaki project channels (text + voice pairs),
 // extracts channel metadata from topic tags, and ensures category structure.
 
-import { ChannelType, type CategoryChannel, type Guild, type TextChannel } from 'discord.js'
+import { ChannelType, type CategoryChannel, type ForumChannel, type Guild, type TextChannel } from 'discord.js'
 import path from 'node:path'
 import { getChannelDirectory, setChannelDirectory } from './database.js'
 
@@ -119,6 +119,35 @@ export async function createProjectChannels({
     voiceChannelId,
     channelName,
   }
+}
+
+/**
+ * Ensure a forum channel named "{botName}-memory" exists in the Kimaki category.
+ * Creates it if missing. Returns the forum channel ID.
+ */
+export async function ensureMemoryForumChannel({
+  guild,
+  botName,
+}: {
+  guild: Guild
+  botName?: string
+}): Promise<ForumChannel> {
+  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
+  const forumName = botName && !isKimakiBot ? `${botName}-memory` : 'kimaki-memory'
+
+  const existing = guild.channels.cache.find((channel): channel is ForumChannel => {
+    if (channel.type !== ChannelType.GuildForum) return false
+    return channel.name.toLowerCase() === forumName.toLowerCase()
+  })
+  if (existing) return existing
+
+  const kimakiCategory = await ensureKimakiCategory(guild, botName)
+  return guild.channels.create({
+    name: forumName,
+    type: ChannelType.GuildForum,
+    parent: kimakiCategory,
+    topic: 'Persistent memory files synced from ~/.kimaki/memory/',
+  })
 }
 
 export type ChannelWithTags = {

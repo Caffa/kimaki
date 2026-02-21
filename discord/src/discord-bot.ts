@@ -59,6 +59,7 @@ export {
   ensureKimakiAudioCategory,
   createProjectChannels,
   getChannelsWithDescriptions,
+  ensureMemoryForumChannel,
 } from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
 

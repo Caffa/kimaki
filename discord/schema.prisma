@@ -139,3 +139,15 @@ model global_models {
 
   bot bot_tokens @relation(fields: [app_id], references: [app_id])
 }
+
+model forum_sync_configs {
+  id               Int       @id @default(autoincrement())
+  app_id           String
+  forum_channel_id String
+  output_dir       String
+  direction        String    @default("bidirectional")
+  created_at       DateTime? @default(now())
+  updated_at       DateTime? @default(now()) @updatedAt
+
+  @@unique([app_id, forum_channel_id])
+}

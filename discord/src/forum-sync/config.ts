@@ -1,94 +1,83 @@
-// Forum sync configuration reading and validation.
-// Reads the forum-sync.json config file from the data directory,
-// validates its structure, and normalizes entries.
+// Forum sync configuration from SQLite database.
+// Reads forum_sync_configs table and resolves relative output dirs.
+// On first run, migrates any existing forum-sync.json into the DB.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import yaml from 'js-yaml'
-import * as errore from 'errore'
 import { getDataDir } from '../config.js'
-import {
-  FORUM_SYNC_CONFIG_FILE,
-  ForumSyncConfigReadError,
-  ForumSyncConfigValidationError,
-  type ForumSyncConfigFile,
-  type ForumSyncDirection,
-  type LoadedForumConfig,
-} from './types.js'
+import { getForumSyncConfigs, upsertForumSyncConfig } from '../database.js'
+import { createLogger } from '../logger.js'
+import type { ForumSyncDirection, LoadedForumConfig } from './types.js'
 
-function getConfigPath() {
-  return path.join(getDataDir(), FORUM_SYNC_CONFIG_FILE)
-}
+const forumLogger = createLogger('FORUM')
+
+const LEGACY_CONFIG_FILE = 'forum-sync.json'
 
 function isForumSyncDirection(value: unknown): value is ForumSyncDirection {
   return value === 'discord-to-files' || value === 'bidirectional'
 }
 
-function normalizeForumConfig({
-  raw,
-  appId,
-}: {
-  raw: unknown
-  appId?: string
-}): ForumSyncConfigValidationError | LoadedForumConfig[] {
-  if (!raw || typeof raw !== 'object') {
-    return new ForumSyncConfigValidationError({ reason: 'config root must be an object' })
+function resolveOutputDir(outputDir: string): string {
+  if (path.isAbsolute(outputDir)) return outputDir
+  return path.resolve(getDataDir(), outputDir)
+}
+
+/**
+ * One-time migration: if the legacy forum-sync.json exists, import its entries
+ * into the DB and rename the file so it's not re-imported on next startup.
+ */
+async function migrateLegacyConfig({ appId }: { appId: string }) {
+  const configPath = path.join(getDataDir(), LEGACY_CONFIG_FILE)
+  if (!fs.existsSync(configPath)) return
+
+  forumLogger.log(`Migrating legacy ${LEGACY_CONFIG_FILE} into database...`)
+
+  const raw = fs.readFileSync(configPath, 'utf8')
+  let parsed: unknown
+  try {
+    parsed = yaml.load(raw)
+  } catch {
+    forumLogger.warn(`Failed to parse legacy ${LEGACY_CONFIG_FILE}, skipping migration`)
+    return
   }
 
-  const forums = (raw as Record<string, unknown>).forums
-  if (!Array.isArray(forums)) {
-    return new ForumSyncConfigValidationError({ reason: 'config requires a forums array' })
-  }
+  if (!parsed || typeof parsed !== 'object') return
+  const forums = (parsed as Record<string, unknown>).forums
+  if (!Array.isArray(forums)) return
 
-  return forums.reduce<LoadedForumConfig[]>((acc, item) => {
-    if (!item || typeof item !== 'object') return acc
-
+  for (const item of forums) {
+    if (!item || typeof item !== 'object') continue
     const entry = item as Record<string, unknown>
-    const itemAppId = typeof entry.appId === 'string' ? entry.appId : undefined
-    if (appId && itemAppId && itemAppId !== appId) return acc
-
     const forumChannelId = typeof entry.forumChannelId === 'string' ? entry.forumChannelId : ''
     const outputDir = typeof entry.outputDir === 'string' ? entry.outputDir : ''
     const direction = isForumSyncDirection(entry.direction) ? entry.direction : 'bidirectional'
+    if (!forumChannelId || !outputDir) continue
 
-    if (!forumChannelId || !outputDir) return acc
+    await upsertForumSyncConfig({
+      appId,
+      forumChannelId,
+      outputDir: resolveOutputDir(outputDir),
+      direction,
+    })
+  }
 
-    const resolvedOutputDir = path.isAbsolute(outputDir)
-      ? outputDir
-      : path.resolve(getDataDir(), outputDir)
-
-    acc.push({ forumChannelId, outputDir: resolvedOutputDir, direction })
-    return acc
-  }, [])
+  // Rename so we don't re-import next time
+  const backupPath = configPath + '.migrated'
+  fs.renameSync(configPath, backupPath)
+  forumLogger.log(`Legacy config migrated and renamed to ${path.basename(backupPath)}`)
 }
 
 export async function readForumSyncConfig({ appId }: { appId?: string }) {
-  const configPath = getConfigPath()
+  if (!appId) return []
 
-  if (!fs.existsSync(configPath)) return []
+  // Migrate legacy JSON file on first run
+  await migrateLegacyConfig({ appId })
 
-  const rawConfig = await fs.promises
-    .readFile(configPath, 'utf8')
-    .catch((cause) => new ForumSyncConfigReadError({ configPath, cause }))
-  if (rawConfig instanceof Error) return rawConfig
-
-  const parsed = errore.try({
-    try: () => yaml.load(rawConfig),
-    catch: (cause) => new ForumSyncConfigValidationError({ reason: 'yaml parse failed', cause }),
-  })
-  if (parsed instanceof Error) return parsed
-
-  return normalizeForumConfig({ raw: parsed, appId })
-}
-
-export function getForumSyncConfigExample(): ForumSyncConfigFile {
-  return {
-    forums: [
-      {
-        forumChannelId: '123456789012345678',
-        outputDir: 'forums/123456789012345678',
-        direction: 'bidirectional',
-      },
-    ],
-  }
+  const rows = await getForumSyncConfigs({ appId })
+  return rows.map<LoadedForumConfig>((row) => ({
+    forumChannelId: row.forumChannelId,
+    outputDir: resolveOutputDir(row.outputDir),
+    direction: isForumSyncDirection(row.direction) ? row.direction : 'bidirectional',
+  }))
 }
