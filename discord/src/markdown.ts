@@ -15,7 +15,7 @@ import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
 // Generic error for unexpected exceptions in async operations
 class UnexpectedError extends createTaggedError({
   name: 'UnexpectedError',
-  message: '$message',
+
 }) {}
 
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)

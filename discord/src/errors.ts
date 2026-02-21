@@ -44,7 +44,7 @@ export class SessionNotFoundError extends createTaggedError({
 
 export class SessionCreateError extends createTaggedError({
   name: 'SessionCreateError',
-  message: '$message',
+
 }) {}
 
 export class MessagesNotFoundError extends createTaggedError({
