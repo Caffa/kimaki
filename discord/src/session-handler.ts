@@ -45,7 +45,11 @@ import {
   arePatternsCoveredBy,
 } from './commands/permissions.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
-import { cancelPendingActionButtons } from './commands/action-buttons.js'
+import {
+  cancelPendingActionButtons,
+  showActionButtons,
+  waitForQueuedActionButtonsRequest,
+} from './commands/action-buttons.js'
 import { getThinkingValuesForModel, matchThinkingValue } from './thinking-utils.js'
 import { execAsync } from './worktree-utils.js'
 import * as errore from 'errore'
@@ -65,6 +69,7 @@ const NON_ESSENTIAL_TOOLS = new Set([
   'grep',
   'todoread',
   'question',
+  'kimaki_action_buttons',
   'webfetch',
 ])
 
@@ -1019,6 +1024,38 @@ export async function handleOpencodeSession({
       }
     }
 
+    const flushAllBufferedParts = async ({
+      force,
+      skipPartId,
+    }: {
+      force: boolean
+      skipPartId?: string
+    }) => {
+      const messageIDs = Array.from(partBuffer.keys())
+      for (const messageID of messageIDs) {
+        await flushBufferedParts({
+          messageID,
+          force,
+          skipPartId,
+        })
+      }
+    }
+
+    const showInteractiveUi = async ({
+      skipPartId,
+      show,
+    }: {
+      skipPartId?: string
+      show: () => Promise<void>
+    }) => {
+      stopTyping()
+      await flushAllBufferedParts({
+        force: true,
+        skipPartId,
+      })
+      await show()
+    }
+
     const ensureModelContextLimit = async () => {
       if (!usedProviderID || !usedModel) {
         return
@@ -1168,6 +1205,49 @@ export async function handleOpencodeSession({
 
       // Show large output notifications for tools that are visible in current verbosity mode
       if (part.type === 'tool' && part.state.status === 'completed') {
+        if (part.tool.endsWith('kimaki_action_buttons')) {
+          await showInteractiveUi({
+            skipPartId: part.id,
+            show: async () => {
+              const request = await waitForQueuedActionButtonsRequest({
+                sessionId: session.id,
+                timeoutMs: 1500,
+              })
+              if (!request) {
+                sessionLogger.warn(
+                  `[ACTION] No queued action-buttons request found for session ${session.id}`,
+                )
+                return
+              }
+              if (request.threadId !== thread.id) {
+                sessionLogger.warn(
+                  `[ACTION] Ignoring queued action-buttons for different thread (expected: ${thread.id}, got: ${request.threadId})`,
+                )
+                return
+              }
+
+              const showButtonsResult = await errore.tryAsync(() => {
+                return showActionButtons({
+                  thread,
+                  sessionId: request.sessionId,
+                  directory: request.directory,
+                  buttons: request.buttons,
+                })
+              })
+              if (!(showButtonsResult instanceof Error)) {
+                return
+              }
+
+              sessionLogger.error('[ACTION] Failed to show action buttons:', showButtonsResult)
+              await sendThreadMessage(
+                thread,
+                `Failed to show action buttons: ${showButtonsResult.message}`,
+              )
+            },
+          })
+          return
+        }
+
         const showLargeOutput = await (async () => {
           const verbosity = await getVerbosity()
           if (verbosity === 'text-only') {
@@ -1453,19 +1533,16 @@ export async function handleOpencodeSession({
         `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
       )
 
-      stopTyping()
-
-      await flushBufferedParts({
-        messageID: assistantMessageId || '',
-        force: true,
-      })
-
-      await showAskUserQuestionDropdowns({
-        thread,
-        sessionId: session.id,
-        directory,
-        requestId: questionRequest.id,
-        input: { questions: questionRequest.questions },
+      await showInteractiveUi({
+        show: async () => {
+          await showAskUserQuestionDropdowns({
+            thread,
+            sessionId: session.id,
+            directory,
+            requestId: questionRequest.id,
+            input: { questions: questionRequest.questions },
+          })
+        },
       })
 
       const queue = messageQueue.get(thread.id)

@@ -447,6 +447,11 @@ export function formatPart(part: Part, prefix?: string): string {
       return ''
     }
 
+    // Action buttons tool is handled via Discord buttons, not text
+    if (part.tool.endsWith('kimaki_action_buttons')) {
+      return ''
+    }
+
     // Task tool display is handled in session-handler with proper label
     if (part.tool === 'task') {
       return ''

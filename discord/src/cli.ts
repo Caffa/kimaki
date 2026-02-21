@@ -79,7 +79,7 @@ import {
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import { showFileUploadButton, type FileUploadRequest } from './commands/file-upload.js'
-import { showActionButtons, type ActionButtonsRequest } from './commands/action-buttons.js'
+import { queueActionButtonsRequest, type ActionButtonsRequest } from './commands/action-buttons.js'
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
 
@@ -495,7 +495,7 @@ async function startLockServer(): Promise<void> {
         return
       }
 
-      // POST /action-buttons - show action buttons for plugin tool clicks
+      // POST /action-buttons - queue action buttons for session-handler to render
       if (req.method === 'POST' && req.url === '/action-buttons') {
         if (!discordClientRef) {
           res.writeHead(503, { 'Content-Type': 'application/json' })
@@ -586,12 +586,7 @@ async function startLockServer(): Promise<void> {
               return
             }
 
-            await showActionButtons({
-              thread,
-              sessionId: request.sessionId,
-              directory: request.directory,
-              buttons: request.buttons,
-            })
+            queueActionButtonsRequest(request)
 
             if (clientDisconnected) {
               return

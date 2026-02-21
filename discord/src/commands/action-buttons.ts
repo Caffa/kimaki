@@ -45,6 +45,51 @@ type PendingActionButtonsContext = {
 }
 
 export const pendingActionButtonContexts = new Map<string, PendingActionButtonsContext>()
+const pendingActionButtonRequests = new Map<string, ActionButtonsRequest>()
+const pendingActionButtonRequestWaiters = new Map<string, (request: ActionButtonsRequest) => void>()
+
+export function queueActionButtonsRequest(request: ActionButtonsRequest): void {
+  pendingActionButtonRequests.set(request.sessionId, request)
+  const waiter = pendingActionButtonRequestWaiters.get(request.sessionId)
+  if (!waiter) {
+    return
+  }
+  pendingActionButtonRequestWaiters.delete(request.sessionId)
+  waiter(request)
+}
+
+export async function waitForQueuedActionButtonsRequest({
+  sessionId,
+  timeoutMs,
+}: {
+  sessionId: string
+  timeoutMs: number
+}): Promise<ActionButtonsRequest | undefined> {
+  const queued = pendingActionButtonRequests.get(sessionId)
+  if (queued) {
+    pendingActionButtonRequests.delete(sessionId)
+    return queued
+  }
+
+  return await new Promise<ActionButtonsRequest | undefined>((resolve) => {
+    const timeout = setTimeout(() => {
+      const currentWaiter = pendingActionButtonRequestWaiters.get(sessionId)
+      if (!currentWaiter || currentWaiter !== onRequest) {
+        return
+      }
+      pendingActionButtonRequestWaiters.delete(sessionId)
+      resolve(undefined)
+    }, timeoutMs)
+
+    const onRequest = (request: ActionButtonsRequest) => {
+      clearTimeout(timeout)
+      pendingActionButtonRequests.delete(sessionId)
+      resolve(request)
+    }
+
+    pendingActionButtonRequestWaiters.set(sessionId, onRequest)
+  })
+}
 
 function toButtonStyle(color?: ActionButtonColor): ButtonStyle {
   if (color === 'blue') {
