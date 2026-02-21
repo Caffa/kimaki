@@ -43,6 +43,81 @@ import {
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
+const STARTUP_STDERR_TAIL_LIMIT = 30
+const STARTUP_STDERR_LINE_MAX_LENGTH = 120
+const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
+const ANSI_ESCAPE_REGEX =
+  /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g
+
+function truncateWithEllipsis({ value, maxLength }: { value: string; maxLength: number }): string {
+  if (maxLength <= 3) {
+    return value.slice(0, maxLength)
+  }
+  if (value.length <= maxLength) {
+    return value
+  }
+  return `${value.slice(0, maxLength - 3)}...`
+}
+
+function stripAnsiCodes(value: string): string {
+  return value.replaceAll(ANSI_ESCAPE_REGEX, '')
+}
+
+function splitOutputChunkLines(chunk: string): string[] {
+  return chunk
+    .split(/\r?\n/g)
+    .map((line) => stripAnsiCodes(line).trim())
+    .filter((line) => line.length > 0)
+}
+
+function sanitizeForCodeFence(line: string): string {
+  return line.replaceAll('```', '`\u200b``')
+}
+
+function pushStartupStderrTail({ stderrTail, chunk }: { stderrTail: string[]; chunk: string }): void {
+  const incomingLines = splitOutputChunkLines(chunk)
+  const truncatedLines = incomingLines.map((line) => {
+    const sanitizedLine = sanitizeForCodeFence(line)
+    return truncateWithEllipsis({ value: sanitizedLine, maxLength: STARTUP_STDERR_LINE_MAX_LENGTH })
+  })
+  stderrTail.push(...truncatedLines)
+  if (stderrTail.length > STARTUP_STDERR_TAIL_LIMIT) {
+    stderrTail.splice(0, stderrTail.length - STARTUP_STDERR_TAIL_LIMIT)
+  }
+}
+
+function buildStartupTimeoutReason({
+  maxAttempts,
+  stderrTail,
+}: {
+  maxAttempts: number
+  stderrTail: string[]
+}): string {
+  const baseReason = `Server did not start after ${maxAttempts} seconds`
+  if (stderrTail.length === 0) {
+    return baseReason
+  }
+
+  const formatReason = ({ lines, omitted }: { lines: string[]; omitted: number }): string => {
+    const omittedLine =
+      omitted > 0 ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n` : ''
+    const stderrCodeBlock = `${omittedLine}${lines.join('\n')}`
+    return `${baseReason}\nLast opencode stderr lines:\n\`\`\`text\n${stderrCodeBlock}\n\`\`\``
+  }
+
+  let lines = [...stderrTail]
+  let omitted = 0
+  let formattedReason = formatReason({ lines, omitted })
+
+  while (formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH && lines.length > 0) {
+    lines = lines.slice(1)
+    omitted += 1
+    formattedReason = formatReason({ lines, omitted })
+  }
+
+  return truncateWithEllipsis({ value: formattedReason, maxLength: STARTUP_ERROR_REASON_MAX_LENGTH })
+}
+
 const opencodeServers = new Map<
   string,
   {
@@ -72,7 +147,15 @@ async function getOpenPort(): Promise<number> {
   })
 }
 
-async function waitForServer(port: number, maxAttempts = 30): Promise<ServerStartError | true> {
+async function waitForServer({
+  port,
+  maxAttempts = 30,
+  startupStderrTail,
+}: {
+  port: number
+  maxAttempts?: number
+  startupStderrTail: string[]
+}): Promise<ServerStartError | true> {
   const endpoint = `http://127.0.0.1:${port}/api/health`
   for (let i = 0; i < maxAttempts; i++) {
     const response = await errore.tryAsync({
@@ -94,7 +177,10 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<ServerStar
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
-  return new ServerStartError({ port, reason: `Server did not start after ${maxAttempts} seconds` })
+  return new ServerStartError({
+    port,
+    reason: buildStartupTimeoutReason({ maxAttempts, stderrTail: startupStderrTail }),
+  })
 }
 
 /**
@@ -213,6 +299,7 @@ export async function initializeOpencodeForDirectory(
   // Buffer logs until we know if server started successfully.
   // Once ready, switch to forwarding if --verbose-opencode-server is set.
   const logBuffer: string[] = []
+  const startupStderrTail: string[] = []
   let serverReady = false
   const shortDir = path.basename(directory)
 
@@ -221,24 +308,39 @@ export async function initializeOpencodeForDirectory(
   )
 
   serverProcess.stdout?.on('data', (data) => {
-    const line = data.toString().trim()
-    if (!serverReady) {
-      logBuffer.push(`[stdout] ${line}`)
-      return
-    }
-    if (getVerboseOpencodeServer()) {
-      opencodeLogger.log(`[${shortDir}:${port}] ${line}`)
+    try {
+      const chunk = data.toString()
+      const lines = splitOutputChunkLines(chunk)
+      if (!serverReady) {
+        logBuffer.push(...lines.map((line) => `[stdout] ${line}`))
+        return
+      }
+      if (getVerboseOpencodeServer()) {
+        for (const line of lines) {
+          opencodeLogger.log(`[${shortDir}:${port}] ${line}`)
+        }
+      }
+    } catch (error) {
+      logBuffer.push(`Failed to process stdout startup logs: ${error}`)
     }
   })
 
   serverProcess.stderr?.on('data', (data) => {
-    const line = data.toString().trim()
-    if (!serverReady) {
-      logBuffer.push(`[stderr] ${line}`)
-      return
-    }
-    if (getVerboseOpencodeServer()) {
-      opencodeLogger.error(`[${shortDir}:${port}] ${line}`)
+    try {
+      const chunk = data.toString()
+      const lines = splitOutputChunkLines(chunk)
+      if (!serverReady) {
+        logBuffer.push(...lines.map((line) => `[stderr] ${line}`))
+        pushStartupStderrTail({ stderrTail: startupStderrTail, chunk })
+        return
+      }
+      if (getVerboseOpencodeServer()) {
+        for (const line of lines) {
+          opencodeLogger.error(`[${shortDir}:${port}] ${line}`)
+        }
+      }
+    } catch (error) {
+      logBuffer.push(`Failed to process stderr startup logs: ${error}`)
     }
   })
 
@@ -269,7 +371,10 @@ export async function initializeOpencodeForDirectory(
     }
   })
 
-  const waitResult = await waitForServer(port)
+  const waitResult = await waitForServer({
+    port,
+    startupStderrTail,
+  })
   if (waitResult instanceof Error) {
     // Dump buffered logs on failure
     opencodeLogger.error(`Server failed to start for ${directory}:`)
