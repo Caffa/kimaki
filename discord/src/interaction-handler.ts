@@ -45,6 +45,7 @@ import {
 } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import { handleFileUploadButton, handleFileUploadModalSubmit } from './commands/file-upload.js'
+import { handleActionButton } from './commands/action-buttons.js'
 import {
   handleQueueCommand,
   handleClearQueueCommand,
@@ -285,6 +286,11 @@ export function registerInteractionHandler({
 
         if (customId.startsWith('file_upload_btn:')) {
           await handleFileUploadButton(interaction)
+          return
+        }
+
+        if (customId.startsWith('action_button:')) {
+          await handleActionButton(interaction)
           return
         }
         return

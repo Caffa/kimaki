@@ -79,6 +79,7 @@ import {
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
 import { showFileUploadButton, type FileUploadRequest } from './commands/file-upload.js'
+import { showActionButtons, type ActionButtonsRequest } from './commands/action-buttons.js'
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
 
@@ -484,6 +485,123 @@ async function startLockServer(): Promise<void> {
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err)
             cliLogger.error('[FILE-UPLOAD] Error handling request:', message)
+            if (clientDisconnected) {
+              return
+            }
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: message }))
+          }
+        })
+        return
+      }
+
+      // POST /action-buttons - show action buttons for plugin tool clicks
+      if (req.method === 'POST' && req.url === '/action-buttons') {
+        if (!discordClientRef) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Discord client not ready' }))
+          return
+        }
+
+        let body = ''
+        req.on('data', (chunk: Buffer) => {
+          body += chunk.toString()
+        })
+
+        let clientDisconnected = false
+        res.on('close', () => {
+          if (!res.writableFinished) {
+            clientDisconnected = true
+          }
+        })
+
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body) as {
+              sessionId?: unknown
+              threadId?: unknown
+              directory?: unknown
+              buttons?: unknown
+            }
+
+            const parsedButtons = Array.isArray(parsed.buttons)
+              ? parsed.buttons
+                  .map((value) => {
+                    if (!value || typeof value !== 'object') {
+                      return null
+                    }
+                    const maybeLabel =
+                      'label' in value && typeof value.label === 'string' ? value.label : ''
+                    const maybeColor =
+                      'color' in value && typeof value.color === 'string' ? value.color : undefined
+                    const safeColor =
+                      maybeColor === 'white' ||
+                      maybeColor === 'blue' ||
+                      maybeColor === 'green' ||
+                      maybeColor === 'red'
+                        ? maybeColor
+                        : undefined
+                    const label = maybeLabel.trim().slice(0, 80)
+                    if (!label) {
+                      return null
+                    }
+                    return {
+                      label,
+                      color: safeColor,
+                    }
+                  })
+                  .filter((value) => {
+                    return value !== null
+                  })
+                  .slice(0, 3)
+              : []
+
+            const request: ActionButtonsRequest = {
+              sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
+              threadId: typeof parsed.threadId === 'string' ? parsed.threadId : '',
+              directory: typeof parsed.directory === 'string' ? parsed.directory : '',
+              buttons: parsedButtons,
+            }
+
+            if (!request.sessionId || !request.threadId || !request.directory) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(
+                JSON.stringify({
+                  error: 'Missing required fields: sessionId, threadId, directory',
+                }),
+              )
+              return
+            }
+
+            if (request.buttons.length === 0) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'At least one valid button is required' }))
+              return
+            }
+
+            const thread = await discordClientRef!.channels.fetch(request.threadId)
+            if (!thread || !thread.isThread()) {
+              res.writeHead(404, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Thread not found' }))
+              return
+            }
+
+            await showActionButtons({
+              thread,
+              sessionId: request.sessionId,
+              directory: request.directory,
+              buttons: request.buttons,
+            })
+
+            if (clientDisconnected) {
+              return
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: true }))
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            cliLogger.error('[ACTION-BUTTONS] Error handling request:', message)
             if (clientDisconnected) {
               return
             }

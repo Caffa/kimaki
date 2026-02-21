@@ -5,6 +5,7 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
+import dedent from 'string-dedent'
 import { z } from 'zod'
 
 // Inlined from '@opencode-ai/plugin/tool' because the subpath value import
@@ -44,6 +45,7 @@ function isEmoji(str: string): boolean {
 const logger = createLogger(LogPrefix.OPENCODE)
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
+const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
 
 type TimeoutSignalHandle = {
   signal: AbortSignal
@@ -326,10 +328,10 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           })
           timeout.cleanup()
 
+          if (errore.isAbortError(responseResult)) {
+            return 'File upload timed out - user did not upload files within the time limit'
+          }
           if (responseResult instanceof Error) {
-            if (errore.isAbortError(responseResult)) {
-              return 'File upload timed out - user did not upload files within the time limit'
-            }
             return `File upload failed: ${responseResult.message}`
           }
 
@@ -356,6 +358,97 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           }
 
           return `Files uploaded successfully:\n${filePaths.join('\n')}`
+        },
+      }),
+      kimaki_action_buttons: tool({
+        description: dedent`
+          Show action buttons in the current Discord thread for quick confirmations.
+          Use this when the user can respond by clicking one of up to 3 buttons.
+          Prefer a single button whenever possible.
+          Default color is white (same visual style as permission deny button).
+          If you need more than 3 options, use the question tool instead.
+          IMPORTANT: Always call this tool last in your message, after all text parts.
+
+          Examples:
+          - buttons: [{"label":"Yes, proceed"}]
+          - buttons: [{"label":"Approve","color":"green"}]
+          - buttons: [
+              {"label":"Confirm","color":"blue"},
+              {"label":"Cancel","color":"white"}
+            ]
+        `,
+        args: {
+          buttons: z
+            .array(
+              z.object({
+                label: z
+                  .string()
+                  .min(1)
+                  .max(80)
+                  .describe('Button label shown to the user (1-80 chars)'),
+                color: z
+                  .enum(['white', 'blue', 'green', 'red'])
+                  .optional()
+                  .describe(
+                    'Optional button color. white is default and preferred for most confirmations.',
+                  ),
+              }),
+            )
+            .min(1)
+            .max(3)
+            .describe('Array of 1-3 action buttons. Prefer one button whenever possible.'),
+        },
+        async execute({ buttons }, context) {
+          const lockPort = process.env.KIMAKI_LOCK_PORT
+          if (!lockPort) {
+            return 'Action buttons unavailable: bot communication port not configured'
+          }
+
+          const prisma = await getPrisma()
+          const row = await prisma.thread_sessions.findFirst({
+            where: { session_id: context.sessionID },
+            select: { thread_id: true },
+          })
+
+          if (!row?.thread_id) {
+            return 'Could not find thread for current session'
+          }
+
+          const timeout = createTimeoutSignal({ timeoutMs: ACTION_BUTTON_TIMEOUT_MS })
+          const responseResult = await fetch(`http://127.0.0.1:${lockPort}/action-buttons`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId: context.sessionID,
+              threadId: row.thread_id,
+              directory: context.directory,
+              buttons,
+            }),
+            signal: timeout.signal,
+          }).catch((e) => new Error('Action button request failed', { cause: e }))
+          timeout.cleanup()
+
+          if (errore.isAbortError(responseResult)) {
+            return 'Action button request timed out'
+          }
+          if (responseResult instanceof Error) {
+            return `Action button request failed: ${responseResult.message}`
+          }
+
+          const bodyResult = await responseResult
+            .json()
+            .then((json) => json as { ok?: boolean; error?: string })
+            .catch((e) => new Error('Action button service returned invalid JSON', { cause: e }))
+
+          if (bodyResult instanceof Error) {
+            return `Action button request failed: ${bodyResult.message}`
+          }
+
+          if (!responseResult.ok || bodyResult.error) {
+            return `Action button request failed: ${bodyResult.error || 'Unknown error'}`
+          }
+
+          return `Action button(s) shown: ${buttons.map((button) => button.label).join(', ')}`
         },
       }),
       kimaki_archive_thread: tool({

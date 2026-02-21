@@ -1,0 +1,291 @@
+// Action button tool handler - Shows Discord buttons for quick model actions.
+// Used by the kimaki_action_buttons tool to render up to 3 buttons and route
+// button clicks back into the session as a new user message.
+
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+  type ButtonInteraction,
+  type ThreadChannel,
+} from 'discord.js'
+import crypto from 'node:crypto'
+import { getThreadSession } from '../database.js'
+import { NOTIFY_MESSAGE_FLAGS, resolveWorkingDirectory, sendThreadMessage } from '../discord-utils.js'
+import { createLogger } from '../logger.js'
+import { abortControllers, addToQueue, handleOpencodeSession } from '../session-handler.js'
+
+const logger = createLogger('ACT_BTN')
+const PENDING_TTL_MS = 30 * 60 * 1000
+
+export type ActionButtonColor = 'white' | 'blue' | 'green' | 'red'
+
+export type ActionButtonOption = {
+  label: string
+  color?: ActionButtonColor
+}
+
+export type ActionButtonsRequest = {
+  sessionId: string
+  threadId: string
+  directory: string
+  buttons: ActionButtonOption[]
+}
+
+type PendingActionButtonsContext = {
+  sessionId: string
+  directory: string
+  thread: ThreadChannel
+  buttons: ActionButtonOption[]
+  contextHash: string
+  messageId?: string
+  resolved: boolean
+  timer: ReturnType<typeof setTimeout>
+}
+
+export const pendingActionButtonContexts = new Map<string, PendingActionButtonsContext>()
+
+function toButtonStyle(color?: ActionButtonColor): ButtonStyle {
+  if (color === 'blue') {
+    return ButtonStyle.Primary
+  }
+  if (color === 'green') {
+    return ButtonStyle.Success
+  }
+  if (color === 'red') {
+    return ButtonStyle.Danger
+  }
+  return ButtonStyle.Secondary
+}
+
+function resolveContext(context: PendingActionButtonsContext): boolean {
+  if (context.resolved) {
+    return false
+  }
+  context.resolved = true
+  clearTimeout(context.timer)
+  pendingActionButtonContexts.delete(context.contextHash)
+  return true
+}
+
+function updateButtonMessage({
+  context,
+  status,
+}: {
+  context: PendingActionButtonsContext
+  status: string
+}): void {
+  if (!context.messageId) {
+    return
+  }
+  context.thread.messages
+    .fetch(context.messageId)
+    .then((message) => {
+      return message.edit({
+        content: `**Action Required**\n${status}`,
+        components: [],
+      })
+    })
+    .catch(() => {})
+}
+
+async function sendClickedActionToModel({
+  interaction,
+  thread,
+  prompt,
+}: {
+  interaction: ButtonInteraction
+  thread: ThreadChannel
+  prompt: string
+}): Promise<void> {
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
+    throw new Error('Could not resolve project directory for thread')
+  }
+
+  const sessionId = await getThreadSession(thread.id)
+  const existingController = sessionId ? abortControllers.get(sessionId) : null
+  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const username = interaction.user.globalName || interaction.user.username
+
+  if (hasActiveRequest) {
+    addToQueue({
+      threadId: thread.id,
+      message: {
+        prompt,
+        userId: interaction.user.id,
+        username,
+        queuedAt: Date.now(),
+        appId: resolved.channelAppId,
+      },
+    })
+    logger.log(`[ACTION] Queued click for session ${sessionId}`)
+    return
+  }
+
+  await handleOpencodeSession({
+    prompt,
+    thread,
+    projectDirectory: resolved.projectDirectory,
+    channelId: thread.parentId || thread.id,
+    username,
+    userId: interaction.user.id,
+    appId: resolved.channelAppId,
+  })
+}
+
+export async function showActionButtons({
+  thread,
+  sessionId,
+  directory,
+  buttons,
+}: {
+  thread: ThreadChannel
+  sessionId: string
+  directory: string
+  buttons: ActionButtonOption[]
+}): Promise<void> {
+  const safeButtons = buttons
+    .slice(0, 3)
+    .map((button) => {
+      return {
+        label: button.label.trim().slice(0, 80),
+        color: button.color,
+      }
+    })
+    .filter((button) => {
+      return button.label.length > 0
+    })
+
+  if (safeButtons.length === 0) {
+    throw new Error('No valid buttons to display')
+  }
+
+  const contextHash = crypto.randomBytes(8).toString('hex')
+  const timer = setTimeout(() => {
+    const current = pendingActionButtonContexts.get(contextHash)
+    if (!current || current.resolved) {
+      return
+    }
+    resolveContext(current)
+    updateButtonMessage({ context: current, status: '_Expired_' })
+  }, PENDING_TTL_MS)
+
+  const context: PendingActionButtonsContext = {
+    sessionId,
+    directory,
+    thread,
+    buttons: safeButtons,
+    contextHash,
+    resolved: false,
+    timer,
+  }
+
+  pendingActionButtonContexts.set(contextHash, context)
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...safeButtons.map((button, index) => {
+      return new ButtonBuilder()
+        .setCustomId(`action_button:${contextHash}:${index}`)
+        .setLabel(button.label)
+        .setStyle(toButtonStyle(button.color))
+    }),
+  )
+
+  try {
+    const message = await thread.send({
+      content: '**Action Required**',
+      components: [row],
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
+
+    context.messageId = message.id
+    logger.log(`Showed ${safeButtons.length} action button(s) for session ${sessionId}`)
+  } catch (error) {
+    clearTimeout(timer)
+    pendingActionButtonContexts.delete(contextHash)
+    throw new Error('Failed to send action buttons', { cause: error })
+  }
+}
+
+export async function handleActionButton(interaction: ButtonInteraction): Promise<void> {
+  const customId = interaction.customId
+  if (!customId.startsWith('action_button:')) {
+    return
+  }
+
+  const [, contextHash, indexPart] = customId.split(':')
+  if (!contextHash || !indexPart) {
+    await interaction.reply({
+      content: 'Invalid action button.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  const context = pendingActionButtonContexts.get(contextHash)
+  if (!context || context.resolved) {
+    await interaction.reply({
+      content: 'This action is no longer available.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  const buttonIndex = Number.parseInt(indexPart, 10)
+  const button = context.buttons[buttonIndex]
+  if (!button) {
+    await interaction.reply({
+      content: 'This action is no longer available.',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  await interaction.deferUpdate()
+  const claimed = resolveContext(context)
+  if (!claimed) {
+    return
+  }
+
+  const thread = interaction.channel
+  if (!thread?.isThread()) {
+    logger.warn('[ACTION] Button clicked outside thread channel')
+    await interaction.editReply({
+      content: '**Action Required**\n_This action is no longer available._',
+      components: [],
+    })
+    return
+  }
+
+  const currentSessionId = await getThreadSession(thread.id)
+  if (!currentSessionId || currentSessionId !== context.sessionId) {
+    await interaction.editReply({
+      content: '**Action Required**\n_Expired due to session change._',
+      components: [],
+    })
+    return
+  }
+
+  await interaction.editReply({
+    content: `**Action Required**\n_Selected: ${button.label}_`,
+    components: [],
+  })
+
+  const prompt = `User clicked: ${button.label}`
+
+  try {
+    await sendClickedActionToModel({
+      interaction,
+      thread,
+      prompt,
+    })
+  } catch (error) {
+    logger.error('[ACTION] Failed to send click to model:', error)
+    await sendThreadMessage(
+      thread,
+      `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
