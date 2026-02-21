@@ -183,6 +183,9 @@ export async function syncForumToFiles({
       outputDir,
       runtimeState,
       previousFilePath: existing?.filePath,
+      subfolder: existing?.subfolder,
+      project: getStringValue({ value: existing?.frontmatter.project }),
+      projectChannelId: getStringValue({ value: existing?.frontmatter.projectChannelId }),
     })
     if (syncResult instanceof Error) return syncResult
 

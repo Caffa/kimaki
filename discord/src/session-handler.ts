@@ -384,11 +384,13 @@ export async function abortAndRetrySession({
   thread,
   projectDirectory,
   appId,
+  channelId,
 }: {
   sessionId: string
   thread: ThreadChannel
   projectDirectory: string
   appId?: string
+  channelId?: string
 }): Promise<boolean> {
   const controller = abortControllers.get(sessionId)
 
@@ -406,7 +408,7 @@ export async function abortAndRetrySession({
   controller.abort(new Error('model-change'))
 
   // Also call the API abort endpoint
-  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  const getClient = await initializeOpencodeForDirectory(projectDirectory, { channelId })
   if (getClient instanceof Error) {
     sessionLogger.error(`[ABORT+RETRY] Failed to initialize OpenCode client:`, getClient.message)
     return false
@@ -456,6 +458,7 @@ export async function abortAndRetrySession({
           projectDirectory,
           images,
           appId,
+          channelId,
         })
       })
       .then(async (result) => {

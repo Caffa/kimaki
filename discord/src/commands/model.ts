@@ -754,6 +754,7 @@ export async function handleModelScopeSelectMenu(
           thread: context.thread,
           projectDirectory: context.dir,
           appId: context.appId,
+          channelId: context.channelId,
         })
       }
 

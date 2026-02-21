@@ -29,12 +29,20 @@ const SYSTEM_MANAGED_FIELDS = [
   'project', 'projectChannelId',
 ] as const
 
+/** Check that a value is a valid ISO date string that isn't in the future. */
+function isValidPastIsoDate({ value }: { value: unknown }): boolean {
+  if (typeof value !== 'string') return false
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return false
+  return parsed <= Date.now()
+}
+
 function stripSystemFieldsFromUnsyncedFile({
   frontmatter,
 }: {
   frontmatter: Record<string, unknown>
 }): Record<string, unknown> {
-  if (frontmatter.lastSyncedAt) return frontmatter
+  if (isValidPastIsoDate({ value: frontmatter.lastSyncedAt })) return frontmatter
   const cleaned = { ...frontmatter }
   for (const field of SYSTEM_MANAGED_FIELDS) {
     delete cleaned[field]
@@ -377,8 +385,12 @@ export async function syncFilesToForum({
       continue
     }
 
-    // Derive project info from subfolder (subfolder name is the channel ID)
-    const projectChannelId = subfolder || undefined
+    // Derive project info from subfolder (subfolder name is the channel ID).
+    // Only use subfolder as channelId if it looks like a valid Discord snowflake
+    // to prevent nested paths or arbitrary folder names from being treated as IDs.
+    const projectChannelId = subfolder && isValidDiscordSnowflake({ value: subfolder })
+      ? subfolder
+      : undefined
     const project = projectChannelId
       ? (await resolveChannelName(projectChannelId)) || undefined
       : undefined

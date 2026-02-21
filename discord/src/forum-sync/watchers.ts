@@ -228,6 +228,36 @@ function tryHandleThreadEvent({
   scheduleDiscordSync({ runtimeState, threadId: data.threadId, discordClient })
 }
 
+/**
+ * Find the actual file path for a thread, checking root and one level of subdirectories.
+ * Needed because per-project memory files live in outputDir/<channelId>/<threadId>.md
+ * while regular forum files live in outputDir/<threadId>.md.
+ */
+function findThreadFilePath({
+  outputDir,
+  threadId,
+}: {
+  outputDir: string
+  threadId: string
+}): string | null {
+  const rootPath = getCanonicalThreadFilePath({ outputDir, threadId })
+  if (fs.existsSync(rootPath)) return rootPath
+
+  const dirEntries = (() => {
+    try {
+      return fs.readdirSync(outputDir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+  })()
+  for (const entry of dirEntries) {
+    if (!entry.isDirectory()) continue
+    const subPath = getCanonicalThreadFilePath({ outputDir, threadId, subfolder: entry.name })
+    if (fs.existsSync(subPath)) return subPath
+  }
+  return null
+}
+
 function registerDiscordSyncListeners({ discordClient }: { discordClient: Client }) {
   if (discordListenersRegistered) return
   discordListenersRegistered = true
@@ -252,11 +282,11 @@ function registerDiscordSyncListeners({ discordClient }: { discordClient: Client
     if (!data) return
     const runtimeState = forumStateById.get(data.forumChannelId)
     if (!runtimeState) return
-    const targetPath = getCanonicalThreadFilePath({
+    const targetPath = findThreadFilePath({
       outputDir: runtimeState.outputDir,
       threadId: data.threadId,
     })
-    if (!fs.existsSync(targetPath)) return
+    if (!targetPath) return
     addIgnoredPath({ runtimeState, filePath: targetPath })
     await fs.promises.unlink(targetPath).catch((cause) => {
       forumLogger.warn(`Failed to delete forum file on thread delete ${targetPath}:`, cause)

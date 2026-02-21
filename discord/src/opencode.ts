@@ -118,12 +118,16 @@ function buildStartupTimeoutReason({
   return truncateWithEllipsis({ value: formattedReason, maxLength: STARTUP_ERROR_REASON_MAX_LENGTH })
 }
 
+type ServerInitOptions = { originalRepoDirectory?: string; channelId?: string }
+
 const opencodeServers = new Map<
   string,
   {
     process: ChildProcess
     client: OpencodeClient
     port: number
+    /** Original options used to spawn this server, reused on auto-restart */
+    initOptions?: ServerInitOptions
   }
 >()
 
@@ -357,6 +361,9 @@ export async function initializeOpencodeForDirectory(
 
   serverProcess.on('exit', (code) => {
     opencodeLogger.log(`Opencode server on ${directory} exited with code:`, code)
+    // Capture init options before deleting the entry so auto-restart preserves
+    // channelId-scoped memory permissions and worktree repo access.
+    const storedInitOptions = opencodeServers.get(directory)?.initOptions
     opencodeServers.delete(directory)
     if (code !== 0) {
       const retryCount = serverRetryCount.get(directory) || 0
@@ -365,7 +372,7 @@ export async function initializeOpencodeForDirectory(
         opencodeLogger.log(
           `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
         )
-        initializeOpencodeForDirectory(directory).then((result) => {
+        initializeOpencodeForDirectory(directory, storedInitOptions).then((result) => {
           if (result instanceof Error) {
             opencodeLogger.error(`Failed to restart opencode server:`, result)
           }
@@ -409,6 +416,7 @@ export async function initializeOpencodeForDirectory(
     process: serverProcess,
     client,
     port,
+    initOptions: options,
   })
 
   return () => {
@@ -441,6 +449,9 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
  */
 export async function restartOpencodeServer(directory: string): Promise<OpenCodeErrors | true> {
   const existing = opencodeServers.get(directory)
+  // Preserve init options (channelId, originalRepoDirectory) so the restarted
+  // server retains scoped memory permissions and worktree access.
+  const storedInitOptions = existing?.initOptions
 
   if (existing) {
     opencodeLogger.log(
@@ -459,7 +470,7 @@ export async function restartOpencodeServer(directory: string): Promise<OpenCode
   // Reset retry count for the fresh start
   serverRetryCount.delete(directory)
 
-  const result = await initializeOpencodeForDirectory(directory)
+  const result = await initializeOpencodeForDirectory(directory, storedInitOptions)
   if (result instanceof Error) {
     return result
   }
