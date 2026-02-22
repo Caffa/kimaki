@@ -13,6 +13,7 @@ model thread_sessions {
   created_at DateTime? @default(now())
 
   part_messages   part_messages[]
+  scheduled_tasks scheduled_tasks[]
   thread_worktree thread_worktrees?
 }
 
@@ -30,9 +31,10 @@ model bot_tokens {
   token      String
   created_at DateTime? @default(now())
 
-  api_keys     bot_api_keys?
-  channels     channel_directories[]
-  global_model global_models?
+  api_keys           bot_api_keys?
+  channels           channel_directories[]
+  forum_sync_configs forum_sync_configs[]
+  global_model       global_models?
 }
 
 model channel_directories {
@@ -48,6 +50,7 @@ model channel_directories {
   channel_worktree     channel_worktrees?
   channel_verbosity    channel_verbosity?
   channel_mention_mode channel_mention_mode?
+  scheduled_tasks      scheduled_tasks[]
 }
 
 model bot_api_keys {
@@ -174,8 +177,13 @@ model scheduled_tasks {
   created_at         DateTime?          @default(now())
   updated_at         DateTime?          @default(now()) @updatedAt
 
+  channel               channel_directories?    @relation(fields: [channel_id], references: [channel_id], onDelete: SetNull, onUpdate: Cascade)
+  thread                thread_sessions?        @relation(fields: [thread_id], references: [thread_id], onDelete: SetNull, onUpdate: Cascade)
+  session_start_sources session_start_sources[]
+
   @@index([status, next_run_at])
   @@index([channel_id, status])
+  @@index([thread_id, status])
 }
 
 model session_start_sources {
@@ -184,6 +192,10 @@ model session_start_sources {
   scheduled_task_id  Int?
   created_at         DateTime?          @default(now())
   updated_at         DateTime?          @default(now()) @updatedAt
+
+  scheduled_task scheduled_tasks? @relation(fields: [scheduled_task_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([scheduled_task_id])
 }
 
 model forum_sync_configs {
@@ -194,6 +206,8 @@ model forum_sync_configs {
   direction        String    @default("bidirectional")
   created_at       DateTime? @default(now())
   updated_at       DateTime? @default(now()) @updatedAt
+
+  bot bot_tokens @relation(fields: [app_id], references: [app_id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([app_id, forum_channel_id])
 }

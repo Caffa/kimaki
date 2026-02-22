@@ -114,7 +114,9 @@ CREATE TABLE IF NOT EXISTS "scheduled_tasks" (
     "session_id" TEXT,
     "project_directory" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "scheduled_tasks_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "scheduled_tasks_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 CREATE TABLE sqlite_sequence(name,seq);
 CREATE TABLE IF NOT EXISTS "session_start_sources" (
@@ -122,7 +124,8 @@ CREATE TABLE IF NOT EXISTS "session_start_sources" (
     "schedule_kind" TEXT NOT NULL,
     "scheduled_task_id" INTEGER,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "session_start_sources_scheduled_task_id_fkey" FOREIGN KEY ("scheduled_task_id") REFERENCES "scheduled_tasks" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -131,8 +134,11 @@ CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
     "output_dir" TEXT NOT NULL,
     "direction" TEXT NOT NULL DEFAULT 'bidirectional',
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "forum_sync_configs_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
 CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
+CREATE INDEX "scheduled_tasks_thread_id_status_idx" ON "scheduled_tasks"("thread_id", "status");
+CREATE INDEX "session_start_sources_scheduled_task_id_idx" ON "session_start_sources"("scheduled_task_id");
 CREATE UNIQUE INDEX "forum_sync_configs_app_id_forum_channel_id_key" ON "forum_sync_configs"("app_id", "forum_channel_id");
