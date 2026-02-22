@@ -2195,7 +2195,7 @@ cli
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option(
     '--send-at <schedule>',
-    'Schedule send for future (ISO date/time or cron expression)',
+    'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
   .option('--thread <threadId>', 'Post prompt to an existing thread')
   .option(

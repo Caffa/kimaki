@@ -42,6 +42,9 @@ export type ParsedSendAt =
       nextRunAt: Date
     }
 
+const UTC_SEND_AT_DATE_REGEX =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/
+
 export function getLocalTimeZone(): string {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
   if (!tz) {
@@ -58,6 +61,36 @@ export function getPromptPreview(prompt: string): string {
   return `${normalized.slice(0, 117)}...`
 }
 
+function parseUtcSendAtDate({
+  value,
+  now,
+}: {
+  value: string
+  now: Date
+}): Date | Error | null {
+  const looksLikeDate = value.includes('T') || /^\d{4}-\d{2}-\d{2}/.test(value)
+  if (!looksLikeDate) {
+    return null
+  }
+
+  if (!UTC_SEND_AT_DATE_REGEX.test(value)) {
+    return new Error(
+      `--send-at date must be UTC ISO format ending with Z (example: 2026-03-01T09:00:00Z). Received: ${value}`,
+    )
+  }
+
+  const runAt = new Date(value)
+  if (Number.isNaN(runAt.getTime())) {
+    return new Error(`Invalid UTC date for --send-at: ${value}`)
+  }
+
+  if (runAt.getTime() <= now.getTime()) {
+    return new Error(`--send-at date must be in the future (UTC): ${value}`)
+  }
+
+  return runAt
+}
+
 export function parseSendAtValue({
   value,
   now,
@@ -70,6 +103,20 @@ export function parseSendAtValue({
   const trimmed = value.trim()
   if (!trimmed) {
     return new Error('--send-at cannot be empty')
+  }
+
+  const utcDateResult = parseUtcSendAtDate({ value: trimmed, now })
+  if (utcDateResult instanceof Error) {
+    return utcDateResult
+  }
+  if (utcDateResult) {
+    return {
+      scheduleKind: 'at',
+      runAt: utcDateResult,
+      cronExpr: null,
+      timezone: null,
+      nextRunAt: utcDateResult,
+    }
   }
 
   const looksLikeCron =
@@ -91,24 +138,10 @@ export function parseSendAtValue({
     }
   }
 
-  const runAt = new Date(trimmed)
-  if (!Number.isNaN(runAt.getTime())) {
-    if (runAt.getTime() <= now.getTime()) {
-      return new Error(`--send-at date must be in the future: ${trimmed}`)
-    }
-    return {
-      scheduleKind: 'at',
-      runAt,
-      cronExpr: null,
-      timezone: null,
-      nextRunAt: runAt,
-    }
-  }
-
   const cronResult = getNextCronRun({ cronExpr: trimmed, timezone, from: now })
   if (cronResult instanceof Error) {
     return new Error(
-      `Invalid --send-at value: "${trimmed}". Use ISO date/time or a cron expression.`,
+      `Invalid --send-at value: "${trimmed}". Use UTC ISO date/time ending in Z or a cron expression.`,
       {
         cause: cronResult,
       },

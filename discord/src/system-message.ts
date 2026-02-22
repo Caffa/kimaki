@@ -319,8 +319,10 @@ npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the aut
 
 Use \`--send-at\` to schedule a one-time or recurring task:
 
-npx -y kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00+01:00"
+npx -y kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00Z"
 npx -y kimaki send --channel ${channelId} --prompt "Run weekly test suite and summarize failures" --send-at "0 9 * * 1"
+
+When using a date for \`--send-at\`, it must be UTC in ISO format ending with \`Z\`.
 
 \`--send-at\` supports the same useful options for new threads:
 - \`--notify-only\` to create a reminder thread without auto-starting a session
