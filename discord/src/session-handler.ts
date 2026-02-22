@@ -971,6 +971,18 @@ export async function handleOpencodeSession({
   let hasSentParts = false
   let promptResolved = false
   let hasReceivedEvent = false
+  let hasPendingMainSessionIdle = false
+
+  const finishMainSessionFromIdle = (): void => {
+    if (abortController.signal.aborted) {
+      return
+    }
+    sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
+    sessionLogger.log(
+      `[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`,
+    )
+    abortController.abort(new Error('finished'))
+  }
 
   function clearTypingInterval(): void {
     if (!typingInterval) {
@@ -1530,6 +1542,10 @@ export async function handleOpencodeSession({
         return
       }
 
+      if (part.sessionID === session.id) {
+        hasReceivedEvent = true
+      }
+
       if (isSubtaskEvent && subtaskInfo) {
         await handleSubtaskPart(part, subtaskInfo)
         return
@@ -1837,25 +1853,22 @@ export async function handleOpencodeSession({
 
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
-        if (!promptResolved || !hasReceivedEvent) {
+        if (!promptResolved) {
+          hasPendingMainSessionIdle = true
           sessionLogger.log(
-            `[SESSION IDLE] Ignoring idle event for ${session.id} (prompt not resolved or no events yet)`,
+            `[SESSION IDLE] Deferring idle event for ${session.id} until prompt resolves`,
           )
           return
         }
-        if (!assistantMessageId) {
+
+        if (!hasReceivedEvent) {
           sessionLogger.log(
-            `[SESSION IDLE] Ignoring idle event for ${session.id} (no assistant output yet)`,
+            `[SESSION IDLE] Ignoring idle event for ${session.id} (no main-session events yet)`,
           )
           return
         }
-        sessionLogger.log(
-          `[SESSION IDLE] Session ${session.id} is idle, ending stream`,
-        )
-        sessionLogger.log(
-          `[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`,
-        )
-        abortController.abort(new Error('finished'))
+
+        finishMainSessionFromIdle()
         return
       }
 
@@ -2224,6 +2237,20 @@ export async function handleOpencodeSession({
     }
 
     promptResolved = true
+
+    if (hasPendingMainSessionIdle) {
+      hasPendingMainSessionIdle = false
+      if (!hasReceivedEvent) {
+        sessionLogger.log(
+          `[SESSION IDLE] Ignoring deferred idle for ${session.id} because no main-session events were observed`,
+        )
+      } else {
+        sessionLogger.log(
+          `[SESSION IDLE] Processing deferred idle for ${session.id} after prompt resolved`,
+        )
+        finishMainSessionFromIdle()
+      }
+    }
 
     sessionLogger.log(`Successfully sent prompt, got response`)
 
