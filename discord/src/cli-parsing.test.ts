@@ -34,19 +34,28 @@ describe('goke CLI ID parsing', () => {
     const threadId = '9876543210987654321'
     const sessionId = '1111222233334444555'
 
-    const channelResult = cli.parse(['node', 'kimaki', 'send', '--channel', channelId], {
-      run: false,
-    })
+    const channelResult = cli.parse(
+      ['node', 'kimaki', 'send', '--channel', channelId],
+      {
+        run: false,
+      },
+    )
     expect(channelResult.options.channel).toBe(channelId)
     expect(typeof channelResult.options.channel).toBe('string')
 
-    const threadResult = cli.parse(['node', 'kimaki', 'send', '--thread', threadId], { run: false })
+    const threadResult = cli.parse(
+      ['node', 'kimaki', 'send', '--thread', threadId],
+      { run: false },
+    )
     expect(threadResult.options.thread).toBe(threadId)
     expect(typeof threadResult.options.thread).toBe('string')
 
-    const sessionResult = cli.parse(['node', 'kimaki', 'send', '--session', sessionId], {
-      run: false,
-    })
+    const sessionResult = cli.parse(
+      ['node', 'kimaki', 'send', '--session', sessionId],
+      {
+        run: false,
+      },
+    )
     expect(sessionResult.options.session).toBe(sessionId)
     expect(typeof sessionResult.options.session).toBe('string')
   })
@@ -55,7 +64,10 @@ describe('goke CLI ID parsing', () => {
     const cli = createCliForIdParsing()
     const guildId = '001230045600789'
 
-    const result = cli.parse(['node', 'kimaki', 'add-project', '--guild', guildId], { run: false })
+    const result = cli.parse(
+      ['node', 'kimaki', 'add-project', '--guild', guildId],
+      { run: false },
+    )
 
     expect(result.options.guild).toBe(guildId)
     expect(typeof result.options.guild).toBe('string')
@@ -65,9 +77,12 @@ describe('goke CLI ID parsing', () => {
     const cli = createCliForIdParsing()
     const threadId = '0098765432109876543'
 
-    const result = cli.parse(['node', 'kimaki', 'session', 'archive', threadId], {
-      run: false,
-    })
+    const result = cli.parse(
+      ['node', 'kimaki', 'session', 'archive', threadId],
+      {
+        run: false,
+      },
+    )
 
     expect(result.args[0]).toBe(threadId)
     expect(typeof result.args[0]).toBe('string')
@@ -95,7 +110,9 @@ describe('goke CLI ID parsing', () => {
     const cli = createCliForIdParsing()
     const cron = '0 9 * * 1'
 
-    const result = cli.parse(['node', 'kimaki', 'send', '--send-at', cron], { run: false })
+    const result = cli.parse(['node', 'kimaki', 'send', '--send-at', cron], {
+      run: false,
+    })
 
     expect(result.options.sendAt).toBe(cron)
     expect(typeof result.options.sendAt).toBe('string')
@@ -105,7 +122,9 @@ describe('goke CLI ID parsing', () => {
     const cli = createCliForIdParsing()
     const taskId = '0012345'
 
-    const result = cli.parse(['node', 'kimaki', 'task', 'delete', taskId], { run: false })
+    const result = cli.parse(['node', 'kimaki', 'task', 'delete', taskId], {
+      run: false,
+    })
 
     expect(result.args[0]).toBe(taskId)
     expect(typeof result.args[0]).toBe('string')

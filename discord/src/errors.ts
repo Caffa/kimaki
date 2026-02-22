@@ -25,7 +25,8 @@ export class ServerNotFoundError extends createTaggedError({
 
 export class ServerNotReadyError extends createTaggedError({
   name: 'ServerNotReadyError',
-  message: 'OpenCode server for directory "$directory" is in an error state (no client available)',
+  message:
+    'OpenCode server for directory "$directory" is in an error state (no client available)',
 }) {}
 
 export class ApiKeyMissingError extends createTaggedError({
@@ -44,7 +45,6 @@ export class SessionNotFoundError extends createTaggedError({
 
 export class SessionCreateError extends createTaggedError({
   name: 'SessionCreateError',
-
 }) {}
 
 export class MessagesNotFoundError extends createTaggedError({
@@ -120,7 +120,8 @@ export class OpenCodeApiError extends createTaggedError({
 
 export class DirtyWorktreeError extends createTaggedError({
   name: 'DirtyWorktreeError',
-  message: 'Uncommitted changes in worktree. Commit all changes before merging.',
+  message:
+    'Uncommitted changes in worktree. Commit all changes before merging.',
 }) {}
 
 export class NothingToMergeError extends createTaggedError({
@@ -135,7 +136,8 @@ export class SquashError extends createTaggedError({
 
 export class RebaseConflictError extends createTaggedError({
   name: 'RebaseConflictError',
-  message: 'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
+  message:
+    'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
 }) {}
 
 export class RebaseError extends createTaggedError({
@@ -150,7 +152,8 @@ export class NotFastForwardError extends createTaggedError({
 
 export class ConflictingFilesError extends createTaggedError({
   name: 'ConflictingFilesError',
-  message: 'Cannot merge: $target worktree has uncommitted changes in overlapping files',
+  message:
+    'Cannot merge: $target worktree has uncommitted changes in overlapping files',
 }) {}
 
 export class PushError extends createTaggedError({
@@ -181,7 +184,10 @@ export type OpenCodeErrors =
   | ServerNotFoundError
   | ServerNotReadyError
 
-export type SessionErrors = SessionNotFoundError | MessagesNotFoundError | OpenCodeApiError
+export type SessionErrors =
+  | SessionNotFoundError
+  | MessagesNotFoundError
+  | OpenCodeApiError
 
 export type MergeWorktreeErrors =
   | DirtyWorktreeError

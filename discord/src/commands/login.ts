@@ -152,7 +152,9 @@ export async function handleLoginCommand({
       return {
         label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
         value: provider.id,
-        description: isConnected ? 'Connected - select to re-authenticate' : 'Not connected',
+        description: isConnected
+          ? 'Connected - select to re-authenticate'
+          : 'Not connected',
       }
     })
 
@@ -161,7 +163,8 @@ export async function handleLoginCommand({
       .setPlaceholder('Select a provider to authenticate')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: '**Authenticate with Provider**\nSelect a provider:',
@@ -226,7 +229,9 @@ export async function handleLoginProviderSelectMenu(
       directory: context.dir,
     })
 
-    const provider = providersResponse.data?.all.find((p) => p.id === selectedProviderId)
+    const provider = providersResponse.data?.all.find(
+      (p) => p.id === selectedProviderId,
+    )
     const providerName = provider?.name || selectedProviderId
 
     // Get auth methods for all providers
@@ -244,9 +249,9 @@ export async function handleLoginProviderSelectMenu(
     }
 
     // Get methods for this specific provider, default to API key if none defined
-    const methods: ProviderAuthMethod[] = authMethodsResponse.data[selectedProviderId] || [
-      { type: 'api', label: 'API Key' },
-    ]
+    const methods: ProviderAuthMethod[] = authMethodsResponse.data[
+      selectedProviderId
+    ] || [{ type: 'api', label: 'API Key' }]
 
     if (methods.length === 0) {
       await interaction.deferUpdate()
@@ -291,7 +296,10 @@ export async function handleLoginProviderSelectMenu(
     const options = methods.slice(0, 25).map((method, index) => ({
       label: method.label.slice(0, 100),
       value: String(index),
-      description: method.type === 'oauth' ? 'OAuth authentication' : 'Enter API key manually',
+      description:
+        method.type === 'oauth'
+          ? 'OAuth authentication'
+          : 'Enter API key manually',
     }))
 
     const selectMenu = new StringSelectMenuBuilder()
@@ -299,7 +307,8 @@ export async function handleLoginProviderSelectMenu(
       .setPlaceholder('Select authentication method')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Authenticate with ${providerName}**\nSelect authentication method:`,
@@ -360,9 +369,9 @@ export async function handleLoginMethodSelectMenu(
       directory: context.dir,
     })
 
-    const methods: ProviderAuthMethod[] = authMethodsResponse.data?.[context.providerId] || [
-      { type: 'api', label: 'API Key' },
-    ]
+    const methods: ProviderAuthMethod[] = authMethodsResponse.data?.[
+      context.providerId
+    ] || [{ type: 'api', label: 'API Key' }]
 
     const selectedMethod = methods[selectedMethodIndex]
     if (!selectedMethod) {
@@ -423,7 +432,9 @@ async function showApiKeyModal(
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
 
-  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(apiKeyInput)
+  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(
+    apiKeyInput,
+  )
   modal.addComponents(actionRow)
 
   await interaction.showModal(modal)
@@ -474,7 +485,9 @@ async function startOAuthFlow(
     })
 
     if (!authorizeResponse.data) {
-      const errorData = authorizeResponse.error as { data?: { message?: string } } | undefined
+      const errorData = authorizeResponse.error as
+        | { data?: { message?: string } }
+        | undefined
       await interaction.editReply({
         content: `Failed to start authorization: ${errorData?.data?.message || 'Unknown error'}`,
         components: [],
@@ -516,7 +529,9 @@ async function startOAuthFlow(
       })
 
       if (callbackResponse.error) {
-        const errorData = callbackResponse.error as { data?: { message?: string } } | undefined
+        const errorData = callbackResponse.error as
+          | { data?: { message?: string } }
+          | undefined
         await interaction.editReply({
           content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization was not completed'}`,
           components: [],
@@ -550,7 +565,9 @@ async function startOAuthFlow(
 /**
  * Handle API key modal submission.
  */
-export async function handleApiKeyModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+export async function handleApiKeyModalSubmit(
+  interaction: ModalSubmitInteraction,
+): Promise<void> {
   const customId = interaction.customId
 
   if (!customId.startsWith('login_apikey:')) {

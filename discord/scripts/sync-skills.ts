@@ -80,9 +80,7 @@ function parseSource(input: string): ParsedSource {
   }
 
   // GitHub URL with /tree/branch
-  const treeOnly = input.match(
-    /github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)$/,
-  )
+  const treeOnly = input.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)$/)
   if (treeOnly) {
     const [, owner, repo, ref] = treeOnly
     return { url: `https://github.com/${owner}/${repo}.git`, ref }
@@ -168,8 +166,15 @@ async function walkForSkills(
     const content = fs.readFileSync(skillMdPath, 'utf-8')
     const meta = parseFrontmatter(content)
     if (meta && !seenNames.has(meta.name)) {
-      const isRepoRoot = repoRoot ? path.resolve(dir) === path.resolve(repoRoot) : false
-      skills.push({ name: meta.name, description: meta.description, dirPath: dir, isRepoRoot })
+      const isRepoRoot = repoRoot
+        ? path.resolve(dir) === path.resolve(repoRoot)
+        : false
+      skills.push({
+        name: meta.name,
+        description: meta.description,
+        dirPath: dir,
+        isRepoRoot,
+      })
       seenNames.add(meta.name)
     }
   }
@@ -199,7 +204,10 @@ async function walkForSkills(
 
 // ─── Git clone ───────────────────────────────────────────────────────────────
 
-async function cloneRepo(parsed: ParsedSource, tmpDir: string): Promise<string> {
+async function cloneRepo(
+  parsed: ParsedSource,
+  tmpDir: string,
+): Promise<string> {
   const targetDir = path.join(
     tmpDir,
     `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -234,7 +242,10 @@ async function copySkill(skill: SkillInfo, outputDir: string): Promise<string> {
   if (skill.isRepoRoot) {
     // SKILL.md at repo root: only copy the SKILL.md file, not the whole repo
     fs.mkdirSync(targetDir, { recursive: true })
-    fs.copyFileSync(path.join(skill.dirPath, 'SKILL.md'), path.join(targetDir, 'SKILL.md'))
+    fs.copyFileSync(
+      path.join(skill.dirPath, 'SKILL.md'),
+      path.join(targetDir, 'SKILL.md'),
+    )
   } else {
     fs.cpSync(skill.dirPath, targetDir, {
       recursive: true,
@@ -270,7 +281,9 @@ async function main() {
   for (const source of SKILL_SOURCES) {
     const parsed = parseSource(source)
     console.log(`\n--- ${source}`)
-    console.log(`    clone: ${parsed.url}${parsed.ref ? ` @ ${parsed.ref}` : ''}`)
+    console.log(
+      `    clone: ${parsed.url}${parsed.ref ? ` @ ${parsed.ref}` : ''}`,
+    )
 
     let cloneDir: string | undefined
     try {
@@ -288,7 +301,9 @@ async function main() {
 
       for (const skill of skills) {
         const dest = await copySkill(skill, outputDir)
-        console.log(`      - ${skill.name} -> ${path.relative(discordDir, dest)}`)
+        console.log(
+          `      - ${skill.name} -> ${path.relative(discordDir, dest)}`,
+        )
         totalSynced++
       }
     } catch (err) {

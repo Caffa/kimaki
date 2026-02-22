@@ -6,7 +6,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Client, ForumChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
-import { extractStarterContent, getStringValue, parseFrontmatter, toStringArray } from './markdown.js'
+import {
+  extractStarterContent,
+  getStringValue,
+  parseFrontmatter,
+  toStringArray,
+} from './markdown.js'
 import { resolveForumChannel } from './discord-operations.js'
 import { syncSingleThreadToFile } from './sync-to-files.js'
 import {
@@ -24,9 +29,17 @@ const forumLogger = createLogger('FORUM')
 // model-invented values from causing sync errors (e.g. fake threadId -> fetch fails,
 // future lastSyncedAt -> file permanently skipped).
 const SYSTEM_MANAGED_FIELDS = [
-  'threadId', 'forumChannelId', 'lastSyncedAt', 'lastMessageId',
-  'messageCount', 'author', 'authorId', 'createdAt', 'lastUpdated',
-  'project', 'projectChannelId',
+  'threadId',
+  'forumChannelId',
+  'lastSyncedAt',
+  'lastMessageId',
+  'messageCount',
+  'author',
+  'authorId',
+  'createdAt',
+  'lastUpdated',
+  'project',
+  'projectChannelId',
 ] as const
 
 /** Check that a value is a valid ISO date string that isn't in the future. */
@@ -42,7 +55,8 @@ function stripSystemFieldsFromUnsyncedFile({
 }: {
   frontmatter: Record<string, unknown>
 }): Record<string, unknown> {
-  if (isValidPastIsoDate({ value: frontmatter.lastSyncedAt })) return frontmatter
+  if (isValidPastIsoDate({ value: frontmatter.lastSyncedAt }))
+    return frontmatter
   const cleaned = { ...frontmatter }
   for (const field of SYSTEM_MANAGED_FIELDS) {
     delete cleaned[field]
@@ -61,7 +75,10 @@ async function collectMarkdownEntries({
   dir: string
   outputDir: string
 }): Promise<Array<{ filePath: string; subfolder?: string }>> {
-  const exists = await fs.promises.access(dir).then(() => true).catch(() => false)
+  const exists = await fs.promises
+    .access(dir)
+    .then(() => true)
+    .catch(() => false)
   if (!exists) return []
 
   const entries = await fs.promises.readdir(dir, { withFileTypes: true })
@@ -100,14 +117,18 @@ function resolveTagIds({
   tagNames: string[]
 }): string[] {
   if (tagNames.length === 0) return []
-  const normalizedWanted = new Set(tagNames.map((tag) => tag.toLowerCase().trim()))
+  const normalizedWanted = new Set(
+    tagNames.map((tag) => tag.toLowerCase().trim()),
+  )
   return forumChannel.availableTags
     .filter((tag) => normalizedWanted.has(tag.name.toLowerCase().trim()))
     .map((tag) => tag.id)
 }
 
 function hasTagName({ tags, tagName }: { tags: string[]; tagName: string }) {
-  return tags.some((tag) => tag.toLowerCase().trim() === tagName.toLowerCase().trim())
+  return tags.some(
+    (tag) => tag.toLowerCase().trim() === tagName.toLowerCase().trim(),
+  )
 }
 
 async function upsertThreadFromFile({
@@ -129,25 +150,35 @@ async function upsertThreadFromFile({
 }): Promise<'created' | 'updated' | 'skipped' | ForumSyncOperationError> {
   if (!fs.existsSync(filePath)) return 'skipped'
 
-  const content = await fs.promises.readFile(filePath, 'utf8').catch((cause) => {
-    return new ForumSyncOperationError({
-      forumChannelId: forumChannel.id,
-      reason: `failed to read ${filePath}`,
-      cause,
+  const content = await fs.promises
+    .readFile(filePath, 'utf8')
+    .catch((cause) => {
+      return new ForumSyncOperationError({
+        forumChannelId: forumChannel.id,
+        reason: `failed to read ${filePath}`,
+        cause,
+      })
     })
-  })
   if (content instanceof Error) return content
 
   const parsed = parseFrontmatter({ markdown: content })
-  const frontmatter = stripSystemFieldsFromUnsyncedFile({ frontmatter: parsed.frontmatter })
+  const frontmatter = stripSystemFieldsFromUnsyncedFile({
+    frontmatter: parsed.frontmatter,
+  })
   const rawThreadId = getStringValue({ value: frontmatter.threadId })
-  const threadId = rawThreadId && isValidDiscordSnowflake({ value: rawThreadId }) ? rawThreadId : ''
-  const title = getStringValue({ value: frontmatter.title }) || path.basename(filePath, '.md')
+  const threadId =
+    rawThreadId && isValidDiscordSnowflake({ value: rawThreadId })
+      ? rawThreadId
+      : ''
+  const title =
+    getStringValue({ value: frontmatter.title }) ||
+    path.basename(filePath, '.md')
   const tags = toStringArray({ value: frontmatter.tags })
   const normalizedSubfolder = subfolder?.replaceAll('\\', '/').toLowerCase()
   const isGlobalSubfolder = Boolean(
     normalizedSubfolder &&
-      (normalizedSubfolder === 'global' || normalizedSubfolder.startsWith('global/')),
+      (normalizedSubfolder === 'global' ||
+        normalizedSubfolder.startsWith('global/')),
   )
   const tagsWithScope =
     isGlobalSubfolder && !hasTagName({ tags, tagName: 'global' })
@@ -171,8 +202,11 @@ async function upsertThreadFromFile({
   if (stat instanceof Error) return stat
 
   // Skip if file hasn't been modified since last sync
-  const lastSyncedAt = Date.parse(getStringValue({ value: frontmatter.lastSyncedAt }))
-  if (Number.isFinite(lastSyncedAt) && stat.mtimeMs <= lastSyncedAt) return 'skipped'
+  const lastSyncedAt = Date.parse(
+    getStringValue({ value: frontmatter.lastSyncedAt }),
+  )
+  if (Number.isFinite(lastSyncedAt) && stat.mtimeMs <= lastSyncedAt)
+    return 'skipped'
 
   const tagIds = resolveTagIds({ forumChannel, tagNames: allTags })
 
@@ -234,12 +268,13 @@ async function createNewThread({
       message: { content: safeStarterContent.slice(0, 2_000) },
       appliedTags: tagIds,
     })
-    .catch((cause) =>
-      new ForumSyncOperationError({
-        forumChannelId: forumChannel.id,
-        reason: `failed creating thread from ${filePath}`,
-        cause,
-      }),
+    .catch(
+      (cause) =>
+        new ForumSyncOperationError({
+          forumChannelId: forumChannel.id,
+          reason: `failed creating thread from ${filePath}`,
+          cause,
+        }),
     )
   if (created instanceof Error) return created
 
@@ -284,18 +319,21 @@ async function updateExistingThread({
   project?: string
   projectChannelId?: string
 }): Promise<'updated' | ForumSyncOperationError> {
-  const fetchedChannel = await discordClient.channels
-    .fetch(threadId)
-    .catch((cause) =>
+  const fetchedChannel = await discordClient.channels.fetch(threadId).catch(
+    (cause) =>
       new ForumSyncOperationError({
         forumChannelId: forumChannel.id,
         reason: `failed fetching thread ${threadId}`,
         cause,
       }),
-    )
+  )
   if (fetchedChannel instanceof Error) return fetchedChannel
 
-  if (!fetchedChannel || !fetchedChannel.isThread() || fetchedChannel.parentId !== forumChannel.id) {
+  if (
+    !fetchedChannel ||
+    !fetchedChannel.isThread() ||
+    fetchedChannel.parentId !== forumChannel.id
+  ) {
     return new ForumSyncOperationError({
       forumChannelId: forumChannel.id,
       reason: `thread ${threadId} not found in forum`,
@@ -307,33 +345,37 @@ async function updateExistingThread({
       name: title.slice(0, 100) || fetchedChannel.name,
       appliedTags: tagIds,
     })
-    .catch((cause) =>
-      new ForumSyncOperationError({
-        forumChannelId: forumChannel.id,
-        reason: `failed editing thread ${threadId}`,
-        cause,
-      }),
+    .catch(
+      (cause) =>
+        new ForumSyncOperationError({
+          forumChannelId: forumChannel.id,
+          reason: `failed editing thread ${threadId}`,
+          cause,
+        }),
     )
   if (updateResult instanceof Error) return updateResult
 
-  const starterMessage = await fetchedChannel.fetchStarterMessage().catch((cause) => {
-    return new ForumSyncOperationError({
-      forumChannelId: forumChannel.id,
-      reason: `failed fetching starter message for ${threadId}`,
-      cause,
+  const starterMessage = await fetchedChannel
+    .fetchStarterMessage()
+    .catch((cause) => {
+      return new ForumSyncOperationError({
+        forumChannelId: forumChannel.id,
+        reason: `failed fetching starter message for ${threadId}`,
+        cause,
+      })
     })
-  })
   if (starterMessage instanceof Error) return starterMessage
 
   if (starterMessage && starterMessage.content !== safeStarterContent) {
     const editResult = await starterMessage
       .edit({ content: safeStarterContent.slice(0, 2_000) })
-      .catch((cause) =>
-        new ForumSyncOperationError({
-          forumChannelId: forumChannel.id,
-          reason: `failed editing starter message for ${threadId}`,
-          cause,
-        }),
+      .catch(
+        (cause) =>
+          new ForumSyncOperationError({
+            forumChannelId: forumChannel.id,
+            reason: `failed editing starter message for ${threadId}`,
+            cause,
+          }),
       )
     if (editResult instanceof Error) return editResult
   }
@@ -365,29 +407,33 @@ async function deleteThreadFromFilePath({
   if (!/^\d+$/.test(filename)) return
 
   const threadId = filename
-  const fetchedChannel = await discordClient.channels
-    .fetch(threadId)
-    .catch((cause) =>
+  const fetchedChannel = await discordClient.channels.fetch(threadId).catch(
+    (cause) =>
       new ForumSyncOperationError({
         forumChannelId: forumChannel.id,
         reason: `failed fetching deleted thread ${threadId}`,
         cause,
       }),
-    )
+  )
   if (fetchedChannel instanceof Error) return fetchedChannel
 
-  if (!fetchedChannel || !fetchedChannel.isThread() || fetchedChannel.parentId !== forumChannel.id) {
+  if (
+    !fetchedChannel ||
+    !fetchedChannel.isThread() ||
+    fetchedChannel.parentId !== forumChannel.id
+  ) {
     return
   }
 
   const deleteResult = await fetchedChannel
     .delete('Deleted from forum sync markdown directory')
-    .catch((cause) =>
-      new ForumSyncOperationError({
-        forumChannelId: forumChannel.id,
-        reason: `failed deleting thread ${threadId}`,
-        cause,
-      }),
+    .catch(
+      (cause) =>
+        new ForumSyncOperationError({
+          forumChannelId: forumChannel.id,
+          reason: `failed deleting thread ${threadId}`,
+          cause,
+        }),
     )
   if (deleteResult instanceof Error) return deleteResult
 }
@@ -400,31 +446,47 @@ export async function syncFilesToForum({
   changedFilePaths,
   deletedFilePaths,
 }: SyncFilesToForumOptions) {
-  const forumChannel = await resolveForumChannel({ discordClient, forumChannelId })
+  const forumChannel = await resolveForumChannel({
+    discordClient,
+    forumChannelId,
+  })
   if (forumChannel instanceof Error) return forumChannel
 
   // When changedFilePaths is provided (from file watcher), derive subfolder from path.
   // Otherwise, recursively scan all markdown files in outputDir.
-  const changedEntries: Array<{ filePath: string; subfolder?: string }> = changedFilePaths
-    ? changedFilePaths.map((filePath) => {
-        const rel = path.relative(outputDir, path.dirname(filePath))
-        const subfolder = rel && rel !== '.' ? rel : undefined
-        return { filePath, subfolder }
-      })
-    : await collectMarkdownEntries({ dir: outputDir, outputDir })
+  const changedEntries: Array<{ filePath: string; subfolder?: string }> =
+    changedFilePaths
+      ? changedFilePaths.map((filePath) => {
+          const rel = path.relative(outputDir, path.dirname(filePath))
+          const subfolder = rel && rel !== '.' ? rel : undefined
+          return { filePath, subfolder }
+        })
+      : await collectMarkdownEntries({ dir: outputDir, outputDir })
 
   // Resolve channel names for subfolders (each subfolder name is a Discord channel ID).
   // Cache resolutions to avoid redundant API calls.
   const channelNameCache = new Map<string, string | null>()
-  const resolveChannelName = async (channelId: string): Promise<string | null> => {
+  const resolveChannelName = async (
+    channelId: string,
+  ): Promise<string | null> => {
     if (channelNameCache.has(channelId)) return channelNameCache.get(channelId)!
-    const channel = await discordClient.channels.fetch(channelId).catch(() => null)
-    const name = channel && 'name' in channel && typeof channel.name === 'string' ? channel.name : null
+    const channel = await discordClient.channels
+      .fetch(channelId)
+      .catch(() => null)
+    const name =
+      channel && 'name' in channel && typeof channel.name === 'string'
+        ? channel.name
+        : null
     channelNameCache.set(channelId, name)
     return name
   }
 
-  const result: ForumFileSyncResult = { created: 0, updated: 0, skipped: 0, deleted: 0 }
+  const result: ForumFileSyncResult = {
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    deleted: 0,
+  }
 
   for (const { filePath, subfolder } of changedEntries) {
     if (!filePath.endsWith('.md')) continue
@@ -436,9 +498,10 @@ export async function syncFilesToForum({
     // Derive project info from subfolder (subfolder name is the channel ID).
     // Only use subfolder as channelId if it looks like a valid Discord snowflake
     // to prevent nested paths or arbitrary folder names from being treated as IDs.
-    const projectChannelId = subfolder && isValidDiscordSnowflake({ value: subfolder })
-      ? subfolder
-      : undefined
+    const projectChannelId =
+      subfolder && isValidDiscordSnowflake({ value: subfolder })
+        ? subfolder
+        : undefined
     const project = projectChannelId
       ? (await resolveChannelName(projectChannelId)) || undefined
       : undefined

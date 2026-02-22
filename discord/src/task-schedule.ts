@@ -72,9 +72,14 @@ export function parseSendAtValue({
     return new Error('--send-at cannot be empty')
   }
 
-  const looksLikeCron = trimmed.startsWith('@') || trimmed.split(/\s+/).length >= 5
+  const looksLikeCron =
+    trimmed.startsWith('@') || trimmed.split(/\s+/).length >= 5
   if (looksLikeCron) {
-    const nextRunAtResult = getNextCronRun({ cronExpr: trimmed, timezone, from: now })
+    const nextRunAtResult = getNextCronRun({
+      cronExpr: trimmed,
+      timezone,
+      from: now,
+    })
     if (!(nextRunAtResult instanceof Error)) {
       return {
         scheduleKind: 'cron',
@@ -148,7 +153,9 @@ export function getNextCronRun({
       return parsed.next().toDate()
     },
     catch: (error) => {
-      return new Error(`Could not compute next run for cron: ${cronExpr}`, { cause: error })
+      return new Error(`Could not compute next run for cron: ${cronExpr}`, {
+        cause: error,
+      })
     },
   })
   if (next instanceof Error) {
@@ -158,7 +165,9 @@ export function getNextCronRun({
   return next
 }
 
-export function serializeScheduledTaskPayload(payload: ScheduledTaskPayload): string {
+export function serializeScheduledTaskPayload(
+  payload: ScheduledTaskPayload,
+): string {
   return JSON.stringify(payload)
 }
 
@@ -173,7 +182,9 @@ function asString(value: unknown): string | null {
   return value
 }
 
-export function parseScheduledTaskPayload(payloadJson: string): ScheduledTaskPayload | Error {
+export function parseScheduledTaskPayload(
+  payloadJson: string,
+): ScheduledTaskPayload | Error {
   const parsed = errore.try({
     try: () => {
       return JSON.parse(payloadJson) as unknown

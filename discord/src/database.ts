@@ -32,7 +32,10 @@ export async function closeDatabase() {
 // - tools-and-text: shows all output including tool executions
 // - text-and-essential-tools: shows text + edits + custom MCP tools, hides read/search/navigation tools
 // - text-only: only shows text responses (⬥ diamond parts)
-export type VerbosityLevel = 'tools-and-text' | 'text-and-essential-tools' | 'text-only'
+export type VerbosityLevel =
+  | 'tools-and-text'
+  | 'text-and-essential-tools'
+  | 'text-only'
 
 // Worktree status types
 export type WorktreeStatus = 'pending' | 'ready' | 'error'
@@ -46,7 +49,12 @@ export type ThreadWorktree = {
   error_message: string | null
 }
 
-export type ScheduledTaskStatus = 'planned' | 'running' | 'completed' | 'cancelled' | 'failed'
+export type ScheduledTaskStatus =
+  | 'planned'
+  | 'running'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
 export type ScheduledTaskScheduleKind = 'at' | 'cron'
 
 export type ScheduledTask = {
@@ -196,7 +204,10 @@ export async function listScheduledTasks({
 } = {}): Promise<ScheduledTask[]> {
   const prisma = await getPrisma()
   const rows = await prisma.scheduled_tasks.findMany({
-    where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
+    where:
+      statuses && statuses.length > 0
+        ? { status: { in: statuses } }
+        : undefined,
     orderBy: [{ next_run_at: 'asc' }, { id: 'asc' }],
   })
   return rows.map((row) => toScheduledTask(row))
@@ -436,7 +447,9 @@ export type ModelPreference = { modelId: string; variant: string | null }
  * Get the model preference for a channel.
  * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
  */
-export async function getChannelModel(channelId: string): Promise<ModelPreference | undefined> {
+export async function getChannelModel(
+  channelId: string,
+): Promise<ModelPreference | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.channel_models.findUnique({
     where: { channel_id: channelId },
@@ -464,8 +477,16 @@ export async function setChannelModel({
   const prisma = await getPrisma()
   await prisma.channel_models.upsert({
     where: { channel_id: channelId },
-    create: { channel_id: channelId, model_id: modelId, variant: variant ?? null },
-    update: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
+    create: {
+      channel_id: channelId,
+      model_id: modelId,
+      variant: variant ?? null,
+    },
+    update: {
+      model_id: modelId,
+      variant: variant ?? null,
+      updated_at: new Date(),
+    },
   })
 }
 
@@ -477,7 +498,9 @@ export async function setChannelModel({
  * Get the global default model for a bot.
  * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
  */
-export async function getGlobalModel(appId: string): Promise<ModelPreference | undefined> {
+export async function getGlobalModel(
+  appId: string,
+): Promise<ModelPreference | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.global_models.findUnique({
     where: { app_id: appId },
@@ -506,7 +529,11 @@ export async function setGlobalModel({
   await prisma.global_models.upsert({
     where: { app_id: appId },
     create: { app_id: appId, model_id: modelId, variant: variant ?? null },
-    update: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
+    update: {
+      model_id: modelId,
+      variant: variant ?? null,
+      updated_at: new Date(),
+    },
   })
 }
 
@@ -518,7 +545,9 @@ export async function setGlobalModel({
  * Get the model preference for a session.
  * @returns Model ID in format "provider_id/model_id" + optional variant, or undefined
  */
-export async function getSessionModel(sessionId: string): Promise<ModelPreference | undefined> {
+export async function getSessionModel(
+  sessionId: string,
+): Promise<ModelPreference | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.session_models.findUnique({
     where: { session_id: sessionId },
@@ -546,7 +575,11 @@ export async function setSessionModel({
   const prisma = await getPrisma()
   await prisma.session_models.upsert({
     where: { session_id: sessionId },
-    create: { session_id: sessionId, model_id: modelId, variant: variant ?? null },
+    create: {
+      session_id: sessionId,
+      model_id: modelId,
+      variant: variant ?? null,
+    },
     update: { model_id: modelId, variant: variant ?? null },
   })
 }
@@ -607,7 +640,9 @@ export async function getVariantCascade({
 /**
  * Get the agent preference for a channel.
  */
-export async function getChannelAgent(channelId: string): Promise<string | undefined> {
+export async function getChannelAgent(
+  channelId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.channel_agents.findUnique({
     where: { channel_id: channelId },
@@ -618,7 +653,10 @@ export async function getChannelAgent(channelId: string): Promise<string | undef
 /**
  * Set the agent preference for a channel.
  */
-export async function setChannelAgent(channelId: string, agentName: string): Promise<void> {
+export async function setChannelAgent(
+  channelId: string,
+  agentName: string,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.channel_agents.upsert({
     where: { channel_id: channelId },
@@ -634,7 +672,9 @@ export async function setChannelAgent(channelId: string, agentName: string): Pro
 /**
  * Get the agent preference for a session.
  */
-export async function getSessionAgent(sessionId: string): Promise<string | undefined> {
+export async function getSessionAgent(
+  sessionId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.session_agents.findUnique({
     where: { session_id: sessionId },
@@ -645,7 +685,10 @@ export async function getSessionAgent(sessionId: string): Promise<string | undef
 /**
  * Set the agent preference for a session.
  */
-export async function setSessionAgent(sessionId: string, agentName: string): Promise<void> {
+export async function setSessionAgent(
+  sessionId: string,
+  agentName: string,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.session_agents.upsert({
     where: { session_id: sessionId },
@@ -661,7 +704,9 @@ export async function setSessionAgent(sessionId: string, agentName: string): Pro
 /**
  * Get the worktree info for a thread.
  */
-export async function getThreadWorktree(threadId: string): Promise<ThreadWorktree | undefined> {
+export async function getThreadWorktree(
+  threadId: string,
+): Promise<ThreadWorktree | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.thread_worktrees.findUnique({
     where: { thread_id: threadId },
@@ -768,7 +813,9 @@ export async function deleteThreadWorktree(threadId: string): Promise<void> {
  * Get the verbosity setting for a channel.
  * Falls back to the global default set via --verbosity CLI flag if no per-channel override exists.
  */
-export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
+export async function getChannelVerbosity(
+  channelId: string,
+): Promise<VerbosityLevel> {
   const prisma = await getPrisma()
   const row = await prisma.channel_verbosity.findUnique({
     where: { channel_id: channelId },
@@ -802,7 +849,9 @@ export async function setChannelVerbosity(
  * Get the mention mode setting for a channel.
  * Falls back to the global default set via --mention-mode CLI flag if no per-channel override exists.
  */
-export async function getChannelMentionMode(channelId: string): Promise<boolean> {
+export async function getChannelMentionMode(
+  channelId: string,
+): Promise<boolean> {
   const prisma = await getPrisma()
   const row = await prisma.channel_mention_mode.findUnique({
     where: { channel_id: channelId },
@@ -816,7 +865,10 @@ export async function getChannelMentionMode(channelId: string): Promise<boolean>
 /**
  * Set the mention mode setting for a channel.
  */
-export async function setChannelMentionMode(channelId: string, enabled: boolean): Promise<void> {
+export async function setChannelMentionMode(
+  channelId: string,
+  enabled: boolean,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.channel_mention_mode.upsert({
     where: { channel_id: channelId },
@@ -832,7 +884,9 @@ export async function setChannelMentionMode(channelId: string, enabled: boolean)
 /**
  * Check if automatic worktree creation is enabled for a channel.
  */
-export async function getChannelWorktreesEnabled(channelId: string): Promise<boolean> {
+export async function getChannelWorktreesEnabled(
+  channelId: string,
+): Promise<boolean> {
   const prisma = await getPrisma()
   const row = await prisma.channel_worktrees.findUnique({
     where: { channel_id: channelId },
@@ -892,7 +946,9 @@ export async function getChannelDirectory(channelId: string): Promise<
 /**
  * Get the session ID for a thread.
  */
-export async function getThreadSession(threadId: string): Promise<string | undefined> {
+export async function getThreadSession(
+  threadId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.thread_sessions.findUnique({
     where: { thread_id: threadId },
@@ -903,7 +959,10 @@ export async function getThreadSession(threadId: string): Promise<string | undef
 /**
  * Set the session ID for a thread.
  */
-export async function setThreadSession(threadId: string, sessionId: string): Promise<void> {
+export async function setThreadSession(
+  threadId: string,
+  sessionId: string,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.thread_sessions.upsert({
     where: { thread_id: threadId },
@@ -915,7 +974,9 @@ export async function setThreadSession(threadId: string, sessionId: string): Pro
 /**
  * Get the thread ID for a session.
  */
-export async function getThreadIdBySessionId(sessionId: string): Promise<string | undefined> {
+export async function getThreadIdBySessionId(
+  sessionId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.thread_sessions.findFirst({
     where: { session_id: sessionId },
@@ -997,7 +1058,9 @@ export async function setPartMessagesBatch(
 /**
  * Get the most recent bot token.
  */
-export async function getBotToken(): Promise<{ app_id: string; token: string } | undefined> {
+export async function getBotToken(): Promise<
+  { app_id: string; token: string } | undefined
+> {
   const prisma = await getPrisma()
   const row = await prisma.bot_tokens.findFirst({
     orderBy: { created_at: 'desc' },
@@ -1039,7 +1102,10 @@ export async function getGeminiApiKey(appId: string): Promise<string | null> {
  * Set the Gemini API key for a bot.
  * Note: The bot must already have a token (via setBotToken) before calling this.
  */
-export async function setGeminiApiKey(appId: string, apiKey: string): Promise<void> {
+export async function setGeminiApiKey(
+  appId: string,
+  apiKey: string,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.bot_api_keys.upsert({
     where: { app_id: appId },
@@ -1117,7 +1183,9 @@ export async function findChannelsByDirectory({
   directory?: string
   channelType?: 'text' | 'voice'
   appId?: string
-}): Promise<Array<{ channel_id: string; directory: string; channel_type: string }>> {
+}): Promise<
+  Array<{ channel_id: string; directory: string; channel_type: string }>
+> {
   const prisma = await getPrisma()
   const where: {
     directory?: string
@@ -1156,7 +1224,9 @@ export async function getAllTextChannelDirectories(): Promise<string[]> {
 /**
  * Delete all channel directories for a specific directory.
  */
-export async function deleteChannelDirectoriesByDirectory(directory: string): Promise<void> {
+export async function deleteChannelDirectoriesByDirectory(
+  directory: string,
+): Promise<void> {
   const prisma = await getPrisma()
   await prisma.channel_directories.deleteMany({
     where: { directory },
@@ -1166,7 +1236,9 @@ export async function deleteChannelDirectoriesByDirectory(directory: string): Pr
 /**
  * Find a channel by app ID.
  */
-export async function findChannelByAppId(appId: string): Promise<string | undefined> {
+export async function findChannelByAppId(
+  appId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.channel_directories.findFirst({
     where: { app_id: appId },
@@ -1179,7 +1251,9 @@ export async function findChannelByAppId(appId: string): Promise<string | undefi
 /**
  * Get the directory for a voice channel.
  */
-export async function getVoiceChannelDirectory(channelId: string): Promise<string | undefined> {
+export async function getVoiceChannelDirectory(
+  channelId: string,
+): Promise<string | undefined> {
   const prisma = await getPrisma()
   const row = await prisma.channel_directories.findFirst({
     where: { channel_id: channelId, channel_type: 'voice' },
@@ -1220,7 +1294,11 @@ export type ForumSyncConfigRow = {
   direction: string
 }
 
-export async function getForumSyncConfigs({ appId }: { appId: string }): Promise<ForumSyncConfigRow[]> {
+export async function getForumSyncConfigs({
+  appId,
+}: {
+  appId: string
+}): Promise<ForumSyncConfigRow[]> {
   const prisma = await getPrisma()
   const rows = await prisma.forum_sync_configs.findMany({
     where: { app_id: appId },
@@ -1247,10 +1325,18 @@ export async function upsertForumSyncConfig({
   const prisma = await getPrisma()
   await prisma.forum_sync_configs.upsert({
     where: {
-      app_id_forum_channel_id: { app_id: appId, forum_channel_id: forumChannelId },
+      app_id_forum_channel_id: {
+        app_id: appId,
+        forum_channel_id: forumChannelId,
+      },
     },
     update: { output_dir: outputDir, direction },
-    create: { app_id: appId, forum_channel_id: forumChannelId, output_dir: outputDir, direction },
+    create: {
+      app_id: appId,
+      forum_channel_id: forumChannelId,
+      output_dir: outputDir,
+      direction,
+    },
   })
 }
 

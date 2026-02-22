@@ -1,10 +1,21 @@
 // /session-id command - Show current session ID and an opencode attach command.
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
-import { getOpencodeServerPort, initializeOpencodeForDirectory } from '../opencode.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
+import {
+  getOpencodeServerPort,
+  initializeOpencodeForDirectory,
+} from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -16,7 +27,9 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-export async function handleSessionIdCommand({ command }: CommandContext): Promise<void> {
+export async function handleSessionIdCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -35,7 +48,8 @@ export async function handleSessionIdCommand({ command }: CommandContext): Promi
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return

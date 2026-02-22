@@ -1,12 +1,12 @@
 // Jitter Utils - Bundle entry point
 // Exports all utilities and attaches to globalThis.jitterUtils
 
-export * from "./types";
-export * from "./traverse";
-export * from "./actions";
-export * from "./export";
-export * from "./snapshot";
-export * from "./wait";
+export * from './types'
+export * from './traverse'
+export * from './actions'
+export * from './export'
+export * from './snapshot'
+export * from './wait'
 
 // Re-export specific functions for easier access
 import {
@@ -19,7 +19,7 @@ import {
   getParentNode,
   getAncestors,
   flattenTree,
-} from "./traverse";
+} from './traverse'
 
 import {
   replaceAssetUrl,
@@ -41,7 +41,7 @@ import {
   jumpToStart,
   jumpToEnd,
   addObject,
-} from "./actions";
+} from './actions'
 
 import {
   generateExportUrl,
@@ -50,7 +50,7 @@ import {
   getFileMeta,
   generateNodeUrl,
   getCurrentProjectUrl,
-} from "./export";
+} from './export'
 
 import {
   createSnapshot,
@@ -60,7 +60,7 @@ import {
   createMediaSnapshot,
   createTextSnapshot,
   withTemporaryChanges,
-} from "./snapshot";
+} from './snapshot'
 
 import {
   waitForApp,
@@ -70,7 +70,7 @@ import {
   waitForConfigChange,
   isReadOnly,
   isAppReady,
-} from "./wait";
+} from './wait'
 
 const jitterUtils = {
   // Traverse
@@ -130,11 +130,12 @@ const jitterUtils = {
   waitForConfigChange,
   isReadOnly,
   isAppReady,
-};
-
-// Attach to globalThis for browser access
-if (typeof globalThis !== "undefined") {
-  (globalThis as unknown as { jitterUtils: typeof jitterUtils }).jitterUtils = jitterUtils;
 }
 
-export default jitterUtils;
+// Attach to globalThis for browser access
+if (typeof globalThis !== 'undefined') {
+  ;(globalThis as unknown as { jitterUtils: typeof jitterUtils }).jitterUtils =
+    jitterUtils
+}
+
+export default jitterUtils

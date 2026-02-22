@@ -20,7 +20,10 @@ import { z } from 'zod'
 function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
-  execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<string>
+  execute(
+    args: z.infer<z.ZodObject<Args>>,
+    context: ToolContext,
+  ): Promise<string>
 }) {
   return input
 }
@@ -52,7 +55,11 @@ type TimeoutSignalHandle = {
   cleanup: () => void
 }
 
-function createTimeoutSignal({ timeoutMs }: { timeoutMs: number }): TimeoutSignalHandle {
+function createTimeoutSignal({
+  timeoutMs,
+}: {
+  timeoutMs: number
+}): TimeoutSignalHandle {
   const controller = new AbortController()
   const timeout = setTimeout(() => {
     controller.abort(new errore.AbortError(`Timed out after ${timeoutMs}ms`))
@@ -72,7 +79,11 @@ type GitState = {
   warning: string | null
 }
 
-async function resolveGitState({ directory }: { directory: string }): Promise<GitState | null> {
+async function resolveGitState({
+  directory,
+}: {
+  directory: string
+}): Promise<GitState | null> {
   const branchResult = await errore.tryAsync(() => {
     return execAsync('git symbolic-ref --short HEAD', { cwd: directory })
   })
@@ -101,9 +112,12 @@ async function resolveGitState({ directory }: { directory: string }): Promise<Gi
   }
 
   const superprojectResult = await errore.tryAsync(() => {
-    return execAsync('git rev-parse --show-superproject-working-tree', { cwd: directory })
+    return execAsync('git rev-parse --show-superproject-working-tree', {
+      cwd: directory,
+    })
   })
-  const superproject = superprojectResult instanceof Error ? '' : superprojectResult.stdout.trim()
+  const superproject =
+    superprojectResult instanceof Error ? '' : superprojectResult.stdout.trim()
   if (superproject) {
     return {
       key: `detached-submodule:${shortSha}`,
@@ -181,12 +195,15 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           })()
 
           if (members.length === 0) {
-            return query ? `No users found matching "${query}"` : 'No users found in guild'
+            return query
+              ? `No users found matching "${query}"`
+              : 'No users found in guild'
           }
 
           const userList = members
             .map((m) => {
-              const displayName = m.nick || m.user.global_name || m.user.username
+              const displayName =
+                m.nick || m.user.global_name || m.user.username
               return `- ${displayName} (ID: ${m.user.id}) - mention: <@${m.user.id}>`
             })
             .join('\n')
@@ -261,11 +278,15 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
                 }
               },
               catch: (error) => {
-                return new Error('Failed to update session title', { cause: error })
+                return new Error('Failed to update session title', {
+                  cause: error,
+                })
               },
             })
             if (updateResult instanceof Error) {
-              logger.warn(`[kimaki_mark_thread] ${formatErrorWithStack(updateResult)}`)
+              logger.warn(
+                `[kimaki_mark_thread] ${formatErrorWithStack(updateResult)}`,
+              )
             }
           }
 
@@ -282,13 +303,19 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
           'IMPORTANT: Always call this tool last in your message, after all text parts.',
         args: {
-          prompt: z.string().describe('Message shown to the user explaining what files to upload'),
+          prompt: z
+            .string()
+            .describe(
+              'Message shown to the user explaining what files to upload',
+            ),
           maxFiles: z
             .number()
             .min(1)
             .max(10)
             .optional()
-            .describe('Maximum number of files the user can upload (1-10, default 5)'),
+            .describe(
+              'Maximum number of files the user can upload (1-10, default 5)',
+            ),
         },
         async execute({ prompt, maxFiles }, context) {
           const lockPort = process.env.KIMAKI_LOCK_PORT
@@ -306,7 +333,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             return 'Could not find thread for current session'
           }
 
-          const timeout = createTimeoutSignal({ timeoutMs: FILE_UPLOAD_TIMEOUT_MS })
+          const timeout = createTimeoutSignal({
+            timeoutMs: FILE_UPLOAD_TIMEOUT_MS,
+          })
           const responseResult = await errore.tryAsync({
             try: async () => {
               return fetch(`http://127.0.0.1:${lockPort}/file-upload`, {
@@ -338,10 +367,15 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           const response = responseResult
           const bodyResult = await errore.tryAsync({
             try: async () => {
-              return (await response.json()) as { filePaths?: string[]; error?: string }
+              return (await response.json()) as {
+                filePaths?: string[]
+                error?: string
+              }
             },
             catch: (error) => {
-              return new Error('File upload service returned invalid JSON', { cause: error })
+              return new Error('File upload service returned invalid JSON', {
+                cause: error,
+              })
             },
           })
           if (bodyResult instanceof Error) {
@@ -396,7 +430,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             )
             .min(1)
             .max(3)
-            .describe('Array of 1-3 action buttons. Prefer one button whenever possible.'),
+            .describe(
+              'Array of 1-3 action buttons. Prefer one button whenever possible.',
+            ),
         },
         async execute({ buttons }, context) {
           const lockPort = process.env.KIMAKI_LOCK_PORT
@@ -414,18 +450,25 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             return 'Could not find thread for current session'
           }
 
-          const timeout = createTimeoutSignal({ timeoutMs: ACTION_BUTTON_TIMEOUT_MS })
-          const responseResult = await fetch(`http://127.0.0.1:${lockPort}/action-buttons`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId: context.sessionID,
-              threadId: row.thread_id,
-              directory: context.directory,
-              buttons,
-            }),
-            signal: timeout.signal,
-          }).catch((e) => new Error('Action button request failed', { cause: e }))
+          const timeout = createTimeoutSignal({
+            timeoutMs: ACTION_BUTTON_TIMEOUT_MS,
+          })
+          const responseResult = await fetch(
+            `http://127.0.0.1:${lockPort}/action-buttons`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: context.sessionID,
+                threadId: row.thread_id,
+                directory: context.directory,
+                buttons,
+              }),
+              signal: timeout.signal,
+            },
+          ).catch(
+            (e) => new Error('Action button request failed', { cause: e }),
+          )
           timeout.cleanup()
 
           if (errore.isAbortError(responseResult)) {
@@ -438,7 +481,12 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           const bodyResult = await responseResult
             .json()
             .then((json) => json as { ok?: boolean; error?: string })
-            .catch((e) => new Error('Action button service returned invalid JSON', { cause: e }))
+            .catch(
+              (e) =>
+                new Error('Action button service returned invalid JSON', {
+                  cause: e,
+                }),
+            )
 
           if (bodyResult instanceof Error) {
             return `Action button request failed: ${bodyResult.message}`
@@ -493,7 +541,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
           const { sessionID } = input
           const messageID =
-            typeof first === 'object' && first !== null && 'messageID' in first ? first.messageID : ''
+            typeof first === 'object' && first !== null && 'messageID' in first
+              ? first.messageID
+              : ''
 
           // -- Branch / detached HEAD detection --
           // Injects context when git state first appears or changes mid-session.
@@ -536,7 +586,8 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
               const totalMinutes = Math.floor(elapsed / 60_000)
               const hours = Math.floor(totalMinutes / 60)
               const minutes = totalMinutes % 60
-              const elapsedStr = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
+              const elapsedStr =
+                hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`
 
               const utcStr = new Date(now)
                 .toISOString()
@@ -569,7 +620,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
         },
       })
       if (hookResult instanceof Error) {
-        logger.warn(`[opencode-plugin chat.message] ${formatErrorWithStack(hookResult)}`)
+        logger.warn(
+          `[opencode-plugin chat.message] ${formatErrorWithStack(hookResult)}`,
+        )
       }
     },
 
@@ -594,7 +647,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
         },
       })
       if (cleanupResult instanceof Error) {
-        logger.warn(`[opencode-plugin event] ${formatErrorWithStack(cleanupResult)}`)
+        logger.warn(
+          `[opencode-plugin event] ${formatErrorWithStack(cleanupResult)}`,
+        )
       }
     },
   }

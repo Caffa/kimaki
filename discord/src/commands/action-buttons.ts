@@ -12,9 +12,17 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { getThreadSession } from '../database.js'
-import { NOTIFY_MESSAGE_FLAGS, resolveWorkingDirectory, sendThreadMessage } from '../discord-utils.js'
+import {
+  NOTIFY_MESSAGE_FLAGS,
+  resolveWorkingDirectory,
+  sendThreadMessage,
+} from '../discord-utils.js'
 import { createLogger } from '../logger.js'
-import { abortControllers, addToQueue, handleOpencodeSession } from '../session-handler.js'
+import {
+  abortControllers,
+  addToQueue,
+  handleOpencodeSession,
+} from '../session-handler.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 30 * 60 * 1000
@@ -44,9 +52,15 @@ type PendingActionButtonsContext = {
   timer: ReturnType<typeof setTimeout>
 }
 
-export const pendingActionButtonContexts = new Map<string, PendingActionButtonsContext>()
+export const pendingActionButtonContexts = new Map<
+  string,
+  PendingActionButtonsContext
+>()
 const pendingActionButtonRequests = new Map<string, ActionButtonsRequest>()
-const pendingActionButtonRequestWaiters = new Map<string, (request: ActionButtonsRequest) => void>()
+const pendingActionButtonRequestWaiters = new Map<
+  string,
+  (request: ActionButtonsRequest) => void
+>()
 
 export function queueActionButtonsRequest(request: ActionButtonsRequest): void {
   pendingActionButtonRequests.set(request.sessionId, request)
@@ -151,7 +165,9 @@ async function sendClickedActionToModel({
 
   const sessionId = await getThreadSession(thread.id)
   const existingController = sessionId ? abortControllers.get(sessionId) : null
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
   const username = interaction.user.globalName || interaction.user.username
 
   if (hasActiveRequest) {
@@ -246,7 +262,9 @@ export async function showActionButtons({
     })
 
     context.messageId = message.id
-    logger.log(`Showed ${safeButtons.length} action button(s) for session ${sessionId}`)
+    logger.log(
+      `Showed ${safeButtons.length} action button(s) for session ${sessionId}`,
+    )
   } catch (error) {
     clearTimeout(timer)
     pendingActionButtonContexts.delete(contextHash)
@@ -254,7 +272,9 @@ export async function showActionButtons({
   }
 }
 
-export async function handleActionButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleActionButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('action_button:')) {
     return

@@ -137,7 +137,9 @@ export async function handleUnsetModelCommand({
     })
     clearedType = 'channel'
     clearedModel = channelPref.modelId
-    unsetModelLogger.log(`[UNSET-MODEL] Cleared channel model for ${targetChannelId}`)
+    unsetModelLogger.log(
+      `[UNSET-MODEL] Cleared channel model for ${targetChannelId}`,
+    )
   } else {
     await interaction.editReply({
       content: 'No model override to clear.',
@@ -177,7 +179,9 @@ export async function handleUnsetModelCommand({
   }
 
   const clearedTypeText = clearedType === 'session' ? 'Session' : 'Channel'
-  const retriedText = retried ? '\n_Retrying current request with new model..._' : ''
+  const retriedText = retried
+    ? '\n_Retrying current request with new model..._'
+    : ''
 
   await interaction.editReply({
     content: `${clearedTypeText} model override removed.\n**Was:** \`${clearedModel}\`\n**Now using:** ${newModelText}${retriedText}`,

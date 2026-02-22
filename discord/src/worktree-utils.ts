@@ -21,7 +21,8 @@ export function execAsync(
   command: string,
   options?: Parameters<typeof _execAsync>[1],
 ): Promise<{ stdout: string; stderr: string }> {
-  const timeoutMs = (options as { timeout?: number })?.timeout || DEFAULT_EXEC_TIMEOUT_MS
+  const timeoutMs =
+    (options as { timeout?: number })?.timeout || DEFAULT_EXEC_TIMEOUT_MS
   const execPromise = _execAsync(command, options) as Promise<{
     stdout: string
     stderr: string
@@ -78,9 +79,12 @@ function formatCommandError(error: unknown): string {
  */
 async function getSubmodulePaths(directory: string): Promise<string[]> {
   try {
-    const result = await execAsync('git config --file .gitmodules --get-regexp path', {
-      cwd: directory,
-    })
+    const result = await execAsync(
+      'git config --file .gitmodules --get-regexp path',
+      {
+        cwd: directory,
+      },
+    )
     // Output format: "submodule.name.path value"
     return result.stdout
       .trim()
@@ -156,7 +160,9 @@ function parseSubmoduleGitdir(gitFileContent: string): string | Error {
   return gitdir
 }
 
-async function validateSubmodulePointers(directory: string): Promise<void | Error> {
+async function validateSubmodulePointers(
+  directory: string,
+): Promise<void | Error> {
   const submodulePaths = await getSubmodulePaths(directory)
   if (submodulePaths.length === 0) {
     return
@@ -184,10 +190,13 @@ async function validateSubmodulePointers(directory: string): Promise<void | Erro
 
       const gitFileContentResult = await errore.tryAsync({
         try: () => fs.promises.readFile(submoduleGitFile, 'utf-8'),
-        catch: (e) => new Error(`Failed to read .git for ${submodulePath}`, { cause: e }),
+        catch: (e) =>
+          new Error(`Failed to read .git for ${submodulePath}`, { cause: e }),
       })
       if (gitFileContentResult instanceof Error) {
-        validationIssues.push(`${submodulePath}: ${gitFileContentResult.message}`)
+        validationIssues.push(
+          `${submodulePath}: ${gitFileContentResult.message}`,
+        )
         return
       }
 
@@ -208,7 +217,9 @@ async function validateSubmodulePointers(directory: string): Promise<void | Erro
           return false
         })
       if (!headExists) {
-        validationIssues.push(`${submodulePath}: gitdir missing HEAD (${resolvedGitdir})`)
+        validationIssues.push(
+          `${submodulePath}: gitdir missing HEAD (${resolvedGitdir})`,
+        )
       }
     }),
   )
@@ -219,7 +230,8 @@ async function validateSubmodulePointers(directory: string): Promise<void | Erro
         cwd: directory,
         timeout: SUBMODULE_INIT_TIMEOUT_MS,
       }),
-    catch: (e) => new Error('git submodule status --recursive failed', { cause: e }),
+    catch: (e) =>
+      new Error('git submodule status --recursive failed', { cause: e }),
   })
   if (submoduleStatusResult instanceof Error) {
     validationIssues.push(submoduleStatusResult.message)
@@ -229,7 +241,9 @@ async function validateSubmodulePointers(directory: string): Promise<void | Erro
     return
   }
 
-  return new Error(`Submodule validation failed: ${validationIssues.join('; ')}`)
+  return new Error(
+    `Submodule validation failed: ${validationIssues.join('; ')}`,
+  )
 }
 
 type WorktreeResult = {
@@ -237,10 +251,15 @@ type WorktreeResult = {
   branch: string
 }
 
-async function resolveDefaultWorktreeTarget(directory: string): Promise<string> {
-  const remoteHead = await execAsync('git symbolic-ref refs/remotes/origin/HEAD', {
-    cwd: directory,
-  }).catch(() => {
+async function resolveDefaultWorktreeTarget(
+  directory: string,
+): Promise<string> {
+  const remoteHead = await execAsync(
+    'git symbolic-ref refs/remotes/origin/HEAD',
+    {
+      cwd: directory,
+    },
+  ).catch(() => {
     return null
   })
 
@@ -249,9 +268,12 @@ async function resolveDefaultWorktreeTarget(directory: string): Promise<string> 
     return remoteRef.replace('refs/remotes/', '')
   }
 
-  const hasMain = await execAsync('git show-ref --verify --quiet refs/heads/main', {
-    cwd: directory,
-  })
+  const hasMain = await execAsync(
+    'git show-ref --verify --quiet refs/heads/main',
+    {
+      cwd: directory,
+    },
+  )
     .then(() => {
       return true
     })
@@ -262,9 +284,12 @@ async function resolveDefaultWorktreeTarget(directory: string): Promise<string> 
     return 'main'
   }
 
-  const hasMaster = await execAsync('git show-ref --verify --quiet refs/heads/master', {
-    cwd: directory,
-  })
+  const hasMaster = await execAsync(
+    'git show-ref --verify --quiet refs/heads/master',
+    {
+      cwd: directory,
+    },
+  )
     .then(() => {
       return true
     })
@@ -287,7 +312,15 @@ function getManagedWorktreeDirectory({
 }): string {
   const projectHash = crypto.createHash('sha1').update(directory).digest('hex')
   const safeName = name.replaceAll('/', '-')
-  return path.join(os.homedir(), '.local', 'share', 'opencode', 'worktree', projectHash, safeName)
+  return path.join(
+    os.homedir(),
+    '.local',
+    'share',
+    'opencode',
+    'worktree',
+    projectHash,
+    safeName,
+  )
 }
 
 /**
@@ -318,8 +351,15 @@ export async function createWorktreeWithSubmodules({
 
   const createCommand = `git worktree add ${JSON.stringify(worktreeDir)} -B ${JSON.stringify(name)} ${JSON.stringify(targetRef)}`
   const createResult = await errore.tryAsync({
-    try: () => execAsync(createCommand, { cwd: directory, timeout: SUBMODULE_INIT_TIMEOUT_MS }),
-    catch: (e) => new Error(`git worktree add failed: ${formatCommandError(e)}`, { cause: e }),
+    try: () =>
+      execAsync(createCommand, {
+        cwd: directory,
+        timeout: SUBMODULE_INIT_TIMEOUT_MS,
+      }),
+    catch: (e) =>
+      new Error(`git worktree add failed: ${formatCommandError(e)}`, {
+        cause: e,
+      }),
   })
   if (createResult instanceof Error) {
     return createResult
@@ -343,7 +383,9 @@ export async function createWorktreeWithSubmodules({
   // Uses --init to initialize, --recursive for nested submodules.
   // Submodules will be checked out at the commit specified by the (possibly updated) index.
   try {
-    logger.log(`Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`)
+    logger.log(
+      `Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`,
+    )
     await execAsync('git submodule update --init --recursive', {
       cwd: worktreeDir,
       timeout: SUBMODULE_INIT_TIMEOUT_MS,
@@ -399,14 +441,18 @@ export type CapturedDiff = {
  * Capture git diff from a directory (both staged and unstaged changes).
  * Returns null if no changes or on error.
  */
-export async function captureGitDiff(directory: string): Promise<CapturedDiff | null> {
+export async function captureGitDiff(
+  directory: string,
+): Promise<CapturedDiff | null> {
   try {
     // Capture unstaged changes
     const unstagedResult = await execAsync('git diff', { cwd: directory })
     const unstaged = unstagedResult.stdout.trim()
 
     // Capture staged changes
-    const stagedResult = await execAsync('git diff --staged', { cwd: directory })
+    const stagedResult = await execAsync('git diff --staged', {
+      cwd: directory,
+    })
     const staged = stagedResult.stdout.trim()
 
     if (!unstaged && !staged) {
@@ -426,7 +472,11 @@ export async function captureGitDiff(directory: string): Promise<CapturedDiff | 
  * Run a git command with stdin input.
  * Uses spawn to pipe the diff content to git apply.
  */
-function runGitWithStdin(args: string[], cwd: string, input: string): Promise<void> {
+function runGitWithStdin(
+  args: string[],
+  cwd: string,
+  input: string,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
 
@@ -439,7 +489,9 @@ function runGitWithStdin(args: string[], cwd: string, input: string): Promise<vo
       if (code === 0) {
         resolve()
       } else {
-        reject(new Error(stderr || `git ${args.join(' ')} failed with code ${code}`))
+        reject(
+          new Error(stderr || `git ${args.join(' ')} failed with code ${code}`),
+        )
       }
     })
 
@@ -454,7 +506,10 @@ function runGitWithStdin(args: string[], cwd: string, input: string): Promise<vo
  * Apply a captured git diff to a directory.
  * Applies staged changes first, then unstaged.
  */
-export async function applyGitDiff(directory: string, diff: CapturedDiff): Promise<boolean> {
+export async function applyGitDiff(
+  directory: string,
+  diff: CapturedDiff,
+): Promise<boolean> {
   try {
     // Apply staged changes first (and stage them)
     if (diff.staged) {
@@ -528,7 +583,11 @@ async function git(
   opts?: { timeout?: number },
 ): Promise<GitCommandError | string> {
   const result = await errore.tryAsync({
-    try: () => execAsync(`git -C "${dir}" ${args}`, opts ? { timeout: opts.timeout } : undefined),
+    try: () =>
+      execAsync(
+        `git -C "${dir}" ${args}`,
+        opts ? { timeout: opts.timeout } : undefined,
+      ),
     catch: (e) => new GitCommandError({ command: args, cause: e }),
   })
   if (result instanceof Error) {
@@ -564,7 +623,11 @@ async function getGitCommonDir(dir: string): Promise<GitCommandError | string> {
   return path.resolve(dir, commonDir)
 }
 
-async function isAncestor(dir: string, ref1: string, ref2: string): Promise<boolean> {
+async function isAncestor(
+  dir: string,
+  ref1: string,
+  ref2: string,
+): Promise<boolean> {
   const result = await git(dir, `merge-base --is-ancestor "${ref1}" "${ref2}"`)
   return !(result instanceof Error)
 }
@@ -581,7 +644,11 @@ async function isRebasedOnto(dir: string, target: string): Promise<boolean> {
   return mergeBase === targetSha
 }
 
-async function getChangedFiles(dir: string, ref1: string, ref2: string): Promise<string[]> {
+async function getChangedFiles(
+  dir: string,
+  ref1: string,
+  ref2: string,
+): Promise<string[]> {
   const result = await git(dir, `diff --name-only "${ref1}" "${ref2}"`)
   if (result instanceof Error) {
     return []
@@ -612,7 +679,12 @@ async function getDirtyFiles(dir: string): Promise<string[]> {
     if (filePath) {
       files.push(filePath)
     }
-    if (status[0] === 'R' || status[0] === 'C' || status[1] === 'R' || status[1] === 'C') {
+    if (
+      status[0] === 'R' ||
+      status[0] === 'C' ||
+      status[1] === 'R' ||
+      status[1] === 'C'
+    ) {
       i++
       const oldPath = parts[i]
       if (oldPath) {
@@ -658,7 +730,9 @@ async function isRebaseInProgress(dir: string): Promise<boolean> {
     if (gitPath instanceof Error) {
       continue
     }
-    const resolvedPath = path.isAbsolute(gitPath) ? gitPath : path.resolve(dir, gitPath)
+    const resolvedPath = path.isAbsolute(gitPath)
+      ? gitPath
+      : path.resolve(dir, gitPath)
     const exists = await fs.promises
       .access(resolvedPath)
       .then(() => {
@@ -754,10 +828,17 @@ export async function mergeWorktree({
   // the previous run already squashed, and the model completed the rebase.
   const alreadyRebased = await isRebasedOnto(worktreeDir, defaultBranch)
 
-  const mergeBaseResult = await git(worktreeDir, `merge-base HEAD "${defaultBranch}"`)
-  const mergeBase = mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
+  const mergeBaseResult = await git(
+    worktreeDir,
+    `merge-base HEAD "${defaultBranch}"`,
+  )
+  const mergeBase =
+    mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
 
-  const commitCountResult = await git(worktreeDir, `rev-list --count "${mergeBase}..HEAD"`)
+  const commitCountResult = await git(
+    worktreeDir,
+    `rev-list --count "${mergeBase}..HEAD"`,
+  )
   if (commitCountResult instanceof Error) {
     await cleanupTempBranch()
     return commitCountResult
@@ -771,14 +852,24 @@ export async function mergeWorktree({
 
   if (!alreadyRebased) {
     // Squash into single commit with full commit messages
-    log(commitCount > 1 ? `Squashing ${commitCount} commits...` : 'Preparing merge commit...')
+    log(
+      commitCount > 1
+        ? `Squashing ${commitCount} commits...`
+        : 'Preparing merge commit...',
+    )
 
     const SEP = '---KIMAKI-COMMIT-SEP---'
     const logRange = `${mergeBase}..HEAD`
-    const messagesResult = await git(worktreeDir, `log --format="%B${SEP}" --reverse "${logRange}"`)
+    const messagesResult = await git(
+      worktreeDir,
+      `log --format="%B${SEP}" --reverse "${logRange}"`,
+    )
     if (messagesResult instanceof Error) {
       await cleanupTempBranch()
-      return new SquashError({ reason: 'Failed to read commit messages', cause: messagesResult })
+      return new SquashError({
+        reason: 'Failed to read commit messages',
+        cause: messagesResult,
+      })
     }
 
     const commitMessages = messagesResult
@@ -796,12 +887,17 @@ export async function mergeWorktree({
     const resetResult = await git(worktreeDir, `reset --soft "${mergeBase}"`)
     if (resetResult instanceof Error) {
       await cleanupTempBranch()
-      return new SquashError({ reason: 'git reset --soft failed', cause: resetResult })
+      return new SquashError({
+        reason: 'git reset --soft failed',
+        cause: resetResult,
+      })
     }
 
     const commitResult = await errore.tryAsync({
-      try: () => runGitWithStdin(['commit', '-m', squashMessage, '--'], worktreeDir, ''),
-      catch: (e) => new SquashError({ reason: 'git commit failed after reset', cause: e }),
+      try: () =>
+        runGitWithStdin(['commit', '-m', squashMessage, '--'], worktreeDir, ''),
+      catch: (e) =>
+        new SquashError({ reason: 'git commit failed after reset', cause: e }),
     })
     if (commitResult instanceof Error) {
       await cleanupTempBranch()
@@ -810,10 +906,15 @@ export async function mergeWorktree({
 
     // Rebase onto target
     log(`Rebasing onto ${defaultBranch}...`)
-    const rebaseResult = await git(worktreeDir, `rebase "${defaultBranch}"`, { timeout: 60_000 })
+    const rebaseResult = await git(worktreeDir, `rebase "${defaultBranch}"`, {
+      timeout: 60_000,
+    })
     if (rebaseResult instanceof Error) {
       if (await isRebaseInProgress(worktreeDir)) {
-        return new RebaseConflictError({ target: defaultBranch, cause: rebaseResult })
+        return new RebaseConflictError({
+          target: defaultBranch,
+          cause: rebaseResult,
+        })
       }
       await cleanupTempBranch()
       return new RebaseError({ target: defaultBranch, cause: rebaseResult })

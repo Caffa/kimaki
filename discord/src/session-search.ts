@@ -20,7 +20,9 @@ export type SessionSearchHit = {
   length: number
 }
 
-export function parseSessionSearchPattern(query: string): SessionSearchPattern | Error {
+export function parseSessionSearchPattern(
+  query: string,
+): SessionSearchPattern | Error {
   const trimmedQuery = query.trim()
   if (!trimmedQuery) {
     return new Error('Search query cannot be empty')

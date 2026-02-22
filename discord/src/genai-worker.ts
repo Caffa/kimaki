@@ -42,7 +42,12 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   const formattedReason = formatErrorWithStack(reason)
-  workerLogger.error('Unhandled rejection in worker:', formattedReason, 'at promise:', promise)
+  workerLogger.error(
+    'Unhandled rejection in worker:',
+    formattedReason,
+    'at promise:',
+    promise,
+  )
   sendError(`Worker unhandled rejection: ${formattedReason}`)
 })
 
@@ -127,14 +132,22 @@ async function createAssistantAudioLogStream(
   if (!process.env.DEBUG) return null
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
+  const audioDir = path.join(
+    process.cwd(),
+    'discord-audio-logs',
+    guildId,
+    channelId,
+  )
 
   const mkdirError = await errore.tryAsync({
     try: () => mkdir(audioDir, { recursive: true }),
     catch: (e) => e as Error,
   })
   if (mkdirError instanceof Error) {
-    workerLogger.error(`Failed to create audio log directory:`, mkdirError.message)
+    workerLogger.error(
+      `Failed to create audio log directory:`,
+      mkdirError.message,
+    )
     return null
   }
 
@@ -246,7 +259,10 @@ parentPort.on('message', async (message: WorkerInMessage) => {
         workerLogger.log(`Initializing with directory:`, message.directory)
 
         // Create audio log stream for assistant audio
-        audioLogStream = await createAssistantAudioLogStream(message.guildId, message.channelId)
+        audioLogStream = await createAssistantAudioLogStream(
+          message.guildId,
+          message.channelId,
+        )
 
         // Start packet sending interval
         startPacketSending()
@@ -350,6 +366,8 @@ parentPort.on('message', async (message: WorkerInMessage) => {
     }
   } catch (error) {
     workerLogger.error(`Error handling message:`, error)
-    sendError(error instanceof Error ? error.message : 'Unknown error in worker')
+    sendError(
+      error instanceof Error ? error.message : 'Unknown error in worker',
+    )
   }
 })

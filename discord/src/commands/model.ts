@@ -74,15 +74,38 @@ export type ModelSource =
 
 export type CurrentModelInfo =
   | { type: 'session'; model: string; providerID: string; modelID: string }
-  | { type: 'agent'; model: string; providerID: string; modelID: string; agentName: string }
+  | {
+      type: 'agent'
+      model: string
+      providerID: string
+      modelID: string
+      agentName: string
+    }
   | { type: 'channel'; model: string; providerID: string; modelID: string }
   | { type: 'global'; model: string; providerID: string; modelID: string }
-  | { type: 'opencode-config'; model: string; providerID: string; modelID: string }
-  | { type: 'opencode-recent'; model: string; providerID: string; modelID: string }
-  | { type: 'opencode-provider-default'; model: string; providerID: string; modelID: string }
+  | {
+      type: 'opencode-config'
+      model: string
+      providerID: string
+      modelID: string
+    }
+  | {
+      type: 'opencode-recent'
+      model: string
+      providerID: string
+      modelID: string
+    }
+  | {
+      type: 'opencode-provider-default'
+      model: string
+      providerID: string
+      modelID: string
+    }
   | { type: 'none' }
 
-function parseModelId(modelString: string): { providerID: string; modelID: string } | undefined {
+function parseModelId(
+  modelString: string,
+): { providerID: string; modelID: string } | undefined {
   const [providerID, ...modelParts] = modelString.split('/')
   const modelID = modelParts.join('/')
   if (providerID && modelID) {
@@ -274,20 +297,21 @@ export async function handleModelCommand({
 
     // Parallelize: fetch providers, current model info, and variant cascade at the same time.
     // getCurrentModelInfo does DB lookups first (fast) and only hits provider.list as fallback.
-    const [providersResponse, currentModelInfo, cascadeVariant] = await Promise.all([
-      getClient().provider.list({ directory: projectDirectory }),
-      getCurrentModelInfo({
-        sessionId,
-        channelId: targetChannelId,
-        appId: effectiveAppId,
-        getClient,
-      }),
-      getVariantCascade({
-        sessionId,
-        channelId: targetChannelId,
-        appId: effectiveAppId,
-      }),
-    ])
+    const [providersResponse, currentModelInfo, cascadeVariant] =
+      await Promise.all([
+        getClient().provider.list({ directory: projectDirectory }),
+        getCurrentModelInfo({
+          sessionId,
+          channelId: targetChannelId,
+          appId: effectiveAppId,
+          getClient,
+        }),
+        getVariantCascade({
+          sessionId,
+          channelId: targetChannelId,
+          appId: effectiveAppId,
+        }),
+      ])
 
     if (!providersResponse.data) {
       await interaction.editReply({
@@ -355,7 +379,11 @@ export async function handleModelCommand({
       return {
         label: provider.name.slice(0, 100),
         value: provider.id,
-        description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(0, 100),
+        description:
+          `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(
+            0,
+            100,
+          ),
       }
     })
 
@@ -364,7 +392,8 @@ export async function handleModelCommand({
       .setPlaceholder('Select a provider')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Set Model Preference**\n${currentModelText}${variantText}\nSelect a provider:`,
@@ -436,7 +465,9 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const provider = providersResponse.data.all.find((p) => p.id === selectedProviderId)
+    const provider = providersResponse.data.all.find(
+      (p) => p.id === selectedProviderId,
+    )
 
     if (!provider) {
       await interaction.editReply({
@@ -491,7 +522,8 @@ export async function handleProviderSelectMenu(
       .setPlaceholder('Select a model')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Set Model Preference**\nProvider: **${provider.name}**\nSelect a model:`,
@@ -583,9 +615,10 @@ export async function handleModelSelectMenu(
             .setPlaceholder('Select a thinking level')
             .addOptions(variantOptions)
 
-          const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-            selectMenu,
-          )
+          const actionRow =
+            new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+              selectMenu,
+            )
 
           await interaction.editReply({
             content: `**Set Model Preference**\nModel: **${context.providerName}** / **${selectedModelId}**\n\`${fullModelId}\`\nSelect a thinking level:`,
@@ -636,7 +669,10 @@ export async function handleModelVariantSelectMenu(
 
   const selectedValue = interaction.values[0]
   if (!selectedValue) {
-    await interaction.editReply({ content: 'No variant selected', components: [] })
+    await interaction.editReply({
+      content: 'No variant selected',
+      components: [],
+    })
     return
   }
 
@@ -657,7 +693,9 @@ async function showScopeMenu({
 }): Promise<void> {
   const modelId = context.selectedModelId!
   const modelDisplay = modelId.split('/')[1] || modelId
-  const variantSuffix = context.selectedVariant ? ` (${context.selectedVariant})` : ''
+  const variantSuffix = context.selectedVariant
+    ? ` (${context.selectedVariant})`
+    : ''
 
   const scopeOptions = [
     ...(context.isThread && context.sessionId
@@ -669,7 +707,11 @@ async function showScopeMenu({
           },
         ]
       : []),
-    { label: 'This channel only', value: 'channel', description: 'Override for this channel only' },
+    {
+      label: 'This channel only',
+      value: 'channel',
+      description: 'Override for this channel only',
+    },
     {
       label: 'Global default',
       value: 'global',
@@ -682,7 +724,8 @@ async function showScopeMenu({
     .setPlaceholder('Apply to...')
     .addOptions(scopeOptions)
 
-  const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+  const actionRow =
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
   await interaction.editReply({
     content: `**Set Model Preference**\nModel: **${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nApply to:`,
@@ -709,7 +752,12 @@ export async function handleModelScopeSelectMenu(
   const contextHash = customId.replace('model_scope:', '')
   const context = pendingModelContexts.get(contextHash)
 
-  if (!context || !context.providerId || !context.providerName || !context.selectedModelId) {
+  if (
+    !context ||
+    !context.providerId ||
+    !context.providerName ||
+    !context.selectedModelId
+  ) {
     await interaction.editReply({
       content: 'Selection expired. Please run /model again.',
       components: [],
@@ -745,7 +793,9 @@ export async function handleModelScopeSelectMenu(
         return
       }
       await setSessionModel({ sessionId: context.sessionId, modelId, variant })
-      modelLogger.log(`Set model ${modelId}${variantSuffix} for session ${context.sessionId}`)
+      modelLogger.log(
+        `Set model ${modelId}${variantSuffix} for session ${context.sessionId}`,
+      )
 
       let retried = false
       if (context.thread) {
@@ -758,7 +808,9 @@ export async function handleModelScopeSelectMenu(
         })
       }
 
-      const retryNote = retried ? '\n_Retrying current request with new model..._' : ''
+      const retryNote = retried
+        ? '\n_Retrying current request with new model..._'
+        : ''
       await interaction.editReply({
         content: `Model set for this session:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`${retryNote}${agentTip}`,
         flags: MessageFlags.SuppressEmbeds,
@@ -787,7 +839,9 @@ export async function handleModelScopeSelectMenu(
     } else {
       // channel scope
       await setChannelModel({ channelId: context.channelId, modelId, variant })
-      modelLogger.log(`Set model ${modelId}${variantSuffix} for channel ${context.channelId}`)
+      modelLogger.log(
+        `Set model ${modelId}${variantSuffix} for channel ${context.channelId}`,
+      )
 
       await interaction.editReply({
         content: `Model preference set for this channel:\n**${context.providerName}** / **${modelDisplay}**${variantSuffix}\n\`${modelId}\`\nAll new sessions in this channel will use this model.${agentTip}`,

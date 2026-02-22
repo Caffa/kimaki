@@ -7,7 +7,12 @@ import { createLogger, LogPrefix } from './logger.js'
 const logger = createLogger(LogPrefix.FORMATTING)
 
 const MAX_DIMENSION = 1500
-const HEIC_MIME_TYPES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
+const HEIC_MIME_TYPES = [
+  'image/heic',
+  'image/heif',
+  'image/heic-sequence',
+  'image/heif-sequence',
+]
 
 type SharpModule = typeof import('sharp')
 type HeicConvertFn = (options: {
@@ -81,14 +86,18 @@ export async function processImage(
         })
         workingBuffer = Buffer.from(outputArrayBuffer)
         workingMime = 'image/jpeg'
-        logger.log(`Converted HEIC to JPEG (${buffer.length} → ${workingBuffer.length} bytes)`)
+        logger.log(
+          `Converted HEIC to JPEG (${buffer.length} → ${workingBuffer.length} bytes)`,
+        )
       } catch (error) {
         logger.error('Failed to convert HEIC, sending original:', error)
         return { buffer, mime }
       }
     } else {
       // No heic-convert available, return original (LLM might not support it)
-      logger.log('HEIC image detected but heic-convert not available, sending as-is')
+      logger.log(
+        'HEIC image detected but heic-convert not available, sending as-is',
+      )
       return { buffer, mime }
     }
   }
@@ -104,12 +113,15 @@ export async function processImage(
     const metadata = await image.metadata()
     const { width, height } = metadata
 
-    const needsResize = width && height && (width > MAX_DIMENSION || height > MAX_DIMENSION)
+    const needsResize =
+      width && height && (width > MAX_DIMENSION || height > MAX_DIMENSION)
 
     if (!needsResize) {
       // Still convert to JPEG for consistency (unless already JPEG from HEIC conversion)
       const outputBuffer = await image.jpeg({ quality: 85 }).toBuffer()
-      logger.log(`Converted image to JPEG: ${width}x${height} (${outputBuffer.length} bytes)`)
+      logger.log(
+        `Converted image to JPEG: ${width}x${height} (${outputBuffer.length} bytes)`,
+      )
       return { buffer: outputBuffer, mime: 'image/jpeg' }
     }
 
@@ -128,7 +140,10 @@ export async function processImage(
 
     return { buffer: outputBuffer, mime: 'image/jpeg' }
   } catch (error) {
-    logger.error('Failed to process image with sharp, using working buffer:', error)
+    logger.error(
+      'Failed to process image with sharp, using working buffer:',
+      error,
+    )
     return { buffer: workingBuffer, mime: workingMime }
   }
 }

@@ -38,7 +38,9 @@ async function migrateLegacyConfig({ appId }: { appId: string }) {
   try {
     parsed = yaml.load(raw)
   } catch {
-    forumLogger.warn(`Failed to parse legacy ${LEGACY_CONFIG_FILE}, skipping migration`)
+    forumLogger.warn(
+      `Failed to parse legacy ${LEGACY_CONFIG_FILE}, skipping migration`,
+    )
     return
   }
 
@@ -49,9 +51,12 @@ async function migrateLegacyConfig({ appId }: { appId: string }) {
   for (const item of forums) {
     if (!item || typeof item !== 'object') continue
     const entry = item as Record<string, unknown>
-    const forumChannelId = typeof entry.forumChannelId === 'string' ? entry.forumChannelId : ''
+    const forumChannelId =
+      typeof entry.forumChannelId === 'string' ? entry.forumChannelId : ''
     const outputDir = typeof entry.outputDir === 'string' ? entry.outputDir : ''
-    const direction = isForumSyncDirection(entry.direction) ? entry.direction : 'bidirectional'
+    const direction = isForumSyncDirection(entry.direction)
+      ? entry.direction
+      : 'bidirectional'
     if (!forumChannelId || !outputDir) continue
 
     await upsertForumSyncConfig({
@@ -65,7 +70,9 @@ async function migrateLegacyConfig({ appId }: { appId: string }) {
   // Rename so we don't re-import next time
   const backupPath = configPath + '.migrated'
   fs.renameSync(configPath, backupPath)
-  forumLogger.log(`Legacy config migrated and renamed to ${path.basename(backupPath)}`)
+  forumLogger.log(
+    `Legacy config migrated and renamed to ${path.basename(backupPath)}`,
+  )
 }
 
 export async function readForumSyncConfig({ appId }: { appId?: string }) {
@@ -78,6 +85,8 @@ export async function readForumSyncConfig({ appId }: { appId?: string }) {
   return rows.map<LoadedForumConfig>((row) => ({
     forumChannelId: row.forumChannelId,
     outputDir: resolveOutputDir(row.outputDir),
-    direction: isForumSyncDirection(row.direction) ? row.direction : 'bidirectional',
+    direction: isForumSyncDirection(row.direction)
+      ? row.direction
+      : 'bidirectional',
   }))
 }

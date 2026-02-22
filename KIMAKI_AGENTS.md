@@ -5,6 +5,7 @@ do not use spawnSync. use our util execAsync. which uses spawn under the hood
 ## opencode SDK
 
 always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). the v2 SDK uses flat parameters instead of nested `path`/`query`/`body` objects. for example:
+
 - `session.get({ sessionID: id })` not `session.get({ path: { id } })`
 - `session.messages({ sessionID: id, directory })` not `session.messages({ path: { id }, query: { directory } })`
 - `session.create({ title, directory })` not `session.create({ body: { title }, query: { directory } })`
@@ -25,7 +26,6 @@ The bot will wait 1000ms and then restart itself with the same arguments.
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
 
-
 you should prefer never deleting or adding new fields. we rely in a schema.sql generated inside src to initialize an update the database schema for users.
 
 if we added new fields on the schema then we would also need to update db.ts with manual sql migration code to keep existing users databases working.
@@ -43,6 +43,7 @@ cd discord && pnpm generate
 this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
 
 when adding new tables:
+
 1. add the model to `discord/schema.prisma`
 2. run `pnpm generate` inside discord folder
 3. add getter/setter functions in `database.ts` if needed
@@ -84,6 +85,7 @@ AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will 
 ## resolving project directories in commands
 
 use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get directory paths in slash commands. it returns:
+
 - `projectDirectory`: base project dir, used for `initializeOpencodeForDirectory` (server is keyed by this)
 - `workingDirectory`: worktree dir if thread has an active worktree, otherwise same as `projectDirectory`. use this for `cwd` in shell commands and for SDK `directory` params
 - `channelAppId`: optional app ID from channel metadata
@@ -97,6 +99,7 @@ discord message components (buttons, select menus, modals) enforce a strict `cus
 never embed long strings in `custom_id` (absolute paths, base64 of paths, serialized json, session transcripts, etc) or the builder will throw errors like `Invalid string length`.
 
 instead:
+
 - store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
@@ -118,6 +121,7 @@ open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memo
 there is a 5 minute cooldown between automatic snapshots to avoid disk spam.
 
 signal summary:
+
 - `SIGUSR1`: write heap snapshot to disk
 - `SIGUSR2`: graceful restart (existing)
 
@@ -135,7 +139,6 @@ for the log prefixes always use short names
 
 kimaki will also output logs to the file discord/kimaki.log
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
-
 
 ## skills folder
 

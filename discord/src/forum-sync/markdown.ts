@@ -22,7 +22,11 @@ export function getStringValue({ value }: { value: unknown }): string {
   return value
 }
 
-export function parseFrontmatter({ markdown }: { markdown: string }): ParsedMarkdownFile {
+export function parseFrontmatter({
+  markdown,
+}: {
+  markdown: string
+}): ParsedMarkdownFile {
   if (!markdown.startsWith('---\n')) {
     return { frontmatter: {}, body: markdown.trim() }
   }
@@ -37,7 +41,8 @@ export function parseFrontmatter({ markdown }: { markdown: string }): ParsedMark
 
   const parsed = errore.try({
     try: () => yaml.load(rawFrontmatter),
-    catch: (cause) => new ForumFrontmatterParseError({ reason: 'yaml parse failed', cause }),
+    catch: (cause) =>
+      new ForumFrontmatterParseError({ reason: 'yaml parse failed', cause }),
   })
 
   if (parsed instanceof Error || !parsed || typeof parsed !== 'object') {
@@ -81,7 +86,11 @@ export function extractStarterContent({ body }: { body: string }) {
   return (match[1] || '').trim()
 }
 
-export function buildMessageSections({ messages }: { messages: Message[] }): ForumMessageSection[] {
+export function buildMessageSections({
+  messages,
+}: {
+  messages: Message[]
+}): ForumMessageSection[] {
   return messages.map((message) => {
     const attachmentLines = Array.from(message.attachments.values()).map(
       (attachment) => `Attachment: ${attachment.url}`,
@@ -96,20 +105,29 @@ export function buildMessageSections({ messages }: { messages: Message[] }): For
       contentParts.push(attachmentLines.join('\n'))
     }
 
-    const content = contentParts.length > 0 ? contentParts.join('\n\n') : '_(no text content)_'
+    const content =
+      contentParts.length > 0
+        ? contentParts.join('\n\n')
+        : '_(no text content)_'
 
     return {
       messageId: message.id,
       authorName: message.author.username,
       authorId: message.author.id,
       createdAt: new Date(message.createdTimestamp).toISOString(),
-      editedAt: message.editedTimestamp ? new Date(message.editedTimestamp).toISOString() : null,
+      editedAt: message.editedTimestamp
+        ? new Date(message.editedTimestamp).toISOString()
+        : null,
       content,
     } satisfies ForumMessageSection
   })
 }
 
-export function formatMessageSection({ section }: { section: ForumMessageSection }) {
+export function formatMessageSection({
+  section,
+}: {
+  section: ForumMessageSection
+}) {
   const editedSuffix = section.editedAt ? ` (edited ${section.editedAt})` : ''
   return `**${section.authorName}** (${section.authorId}) - ${section.createdAt}${editedSuffix}\n\n${section.content}`
 }

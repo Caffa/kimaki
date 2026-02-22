@@ -68,7 +68,10 @@ export function deduplicateByKey<T, K>(arr: T[], keyFn: (item: T) => K): T[] {
   })
 }
 
-export function isAbortError(error: unknown, signal?: AbortSignal): error is Error {
+export function isAbortError(
+  error: unknown,
+  signal?: AbortSignal,
+): error is Error {
   return (
     (error instanceof Error &&
       (error.name === 'AbortError' ||
@@ -84,7 +87,10 @@ export function isAbortError(error: unknown, signal?: AbortSignal): error is Err
 
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
-const TIME_DIVISIONS: Array<{ amount: number; name: Intl.RelativeTimeFormatUnit }> = [
+const TIME_DIVISIONS: Array<{
+  amount: number
+  name: Intl.RelativeTimeFormatUnit
+}> = [
   { amount: 60, name: 'seconds' },
   { amount: 60, name: 'minutes' },
   { amount: 24, name: 'hours' },
@@ -124,7 +130,8 @@ export function formatDateTime(date: Date): string {
 const ANSI_REGEX = (() => {
   const ST = '(?:\\u0007|\\u001B\\u005C|\\u009C)'
   const osc = `(?:\\u001B\\][\\s\\S]*?${ST})`
-  const csi = '[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]'
+  const csi =
+    '[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]'
   return new RegExp(`${osc}|${csi}`, 'g')
 })()
 

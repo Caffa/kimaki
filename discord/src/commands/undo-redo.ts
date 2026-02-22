@@ -1,15 +1,25 @@
 // Undo/Redo commands - /undo, /redo
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.UNDO_REDO)
 
-export async function handleUndoCommand({ command }: CommandContext): Promise<void> {
+export async function handleUndoCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -28,7 +38,8 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -93,7 +104,9 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
     })
 
     if (response.error) {
-      await command.editReply(`Failed to undo: ${JSON.stringify(response.error)}`)
+      await command.editReply(
+        `Failed to undo: ${JSON.stringify(response.error)}`,
+      )
       return
     }
 
@@ -101,8 +114,12 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
       ? `\n\`\`\`diff\n${response.data.revert.diff.slice(0, 1500)}\n\`\`\``
       : ''
 
-    await command.editReply(`⏪ **Undone** - reverted last assistant message${diffInfo}`)
-    logger.log(`Session ${sessionId} reverted message ${lastAssistantMessage.info.id}`)
+    await command.editReply(
+      `⏪ **Undone** - reverted last assistant message${diffInfo}`,
+    )
+    logger.log(
+      `Session ${sessionId} reverted message ${lastAssistantMessage.info.id}`,
+    )
   } catch (error) {
     logger.error('[UNDO] Error:', error)
     await command.editReply(
@@ -111,7 +128,9 @@ export async function handleUndoCommand({ command }: CommandContext): Promise<vo
   }
 }
 
-export async function handleRedoCommand({ command }: CommandContext): Promise<void> {
+export async function handleRedoCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -130,7 +149,8 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -184,7 +204,9 @@ export async function handleRedoCommand({ command }: CommandContext): Promise<vo
     })
 
     if (response.error) {
-      await command.editReply(`Failed to redo: ${JSON.stringify(response.error)}`)
+      await command.editReply(
+        `Failed to redo: ${JSON.stringify(response.error)}`,
+      )
       return
     }
 

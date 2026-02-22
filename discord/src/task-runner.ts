@@ -80,7 +80,9 @@ async function executeThreadScheduledTask({
       },
     })
     .catch((error) => {
-      return new Error(`Failed to post scheduled thread task ${task.id}`, { cause: error })
+      return new Error(`Failed to post scheduled thread task ${task.id}`, {
+        cause: error,
+      })
     })
 
   if (postResult instanceof Error) {
@@ -119,7 +121,9 @@ async function executeChannelScheduledTask({
         ...(payload.username ? { username: payload.username } : {}),
         ...(payload.userId ? { userId: payload.userId } : {}),
       }
-  const embeds = marker ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }] : undefined
+  const embeds = marker
+    ? [{ color: 0x2b2d31, footer: { text: yaml.dump(marker) } }]
+    : undefined
 
   const starterResult = await rest
     .post(Routes.channelMessages(payload.channelId), {
@@ -129,7 +133,9 @@ async function executeChannelScheduledTask({
       },
     })
     .catch((error) => {
-      return new Error(`Failed to create starter message for task ${task.id}`, { cause: error })
+      return new Error(`Failed to create starter message for task ${task.id}`, {
+        cause: error,
+      })
     })
 
   if (starterResult instanceof Error) {
@@ -143,7 +149,10 @@ async function executeChannelScheduledTask({
     })
   }
 
-  const threadName = (payload.name || getPromptPreview(payload.prompt)).slice(0, 100)
+  const threadName = (payload.name || getPromptPreview(payload.prompt)).slice(
+    0,
+    100,
+  )
   const threadResult = await rest
     .post(Routes.threads(payload.channelId, starterMessageId), {
       body: {
@@ -152,7 +161,9 @@ async function executeChannelScheduledTask({
       },
     })
     .catch((error) => {
-      return new Error(`Failed to create thread for task ${task.id}`, { cause: error })
+      return new Error(`Failed to create thread for task ${task.id}`, {
+        cause: error,
+      })
     })
 
   if (threadResult instanceof Error) {
@@ -173,7 +184,10 @@ async function executeChannelScheduledTask({
   const addMemberResult = await rest
     .put(Routes.threadMembers(threadIdResult, payload.userId))
     .catch((error) => {
-      return new Error(`Failed to add user to scheduled thread for task ${task.id}`, { cause: error })
+      return new Error(
+        `Failed to add user to scheduled thread for task ${task.id}`,
+        { cause: error },
+      )
     })
   if (addMemberResult instanceof Error) {
     return addMemberResult
@@ -189,7 +203,9 @@ async function executeScheduledTask({
 }): Promise<void | Error> {
   const payloadResult = parseScheduledTaskPayload(task.payload_json)
   if (payloadResult instanceof Error) {
-    return new Error(`Task ${task.id} has invalid payload`, { cause: payloadResult })
+    return new Error(`Task ${task.id} has invalid payload`, {
+      cause: payloadResult,
+    })
   }
 
   if (payloadResult.kind === 'thread') {
@@ -229,7 +245,11 @@ async function finalizeSuccessfulTask({
   }
 
   const timezone = task.timezone || getLocalTimeZone()
-  const nextRunResult = getNextCronRun({ cronExpr: task.cron_expr, timezone, from: completedAt })
+  const nextRunResult = getNextCronRun({
+    cronExpr: task.cron_expr,
+    timezone,
+    from: completedAt,
+  })
   if (nextRunResult instanceof Error) {
     await markScheduledTaskFailed({
       taskId: task.id,
@@ -257,7 +277,11 @@ async function finalizeFailedTask({
 }): Promise<void> {
   if (task.schedule_kind === 'cron' && task.cron_expr) {
     const timezone = task.timezone || getLocalTimeZone()
-    const nextRunResult = getNextCronRun({ cronExpr: task.cron_expr, timezone, from: failedAt })
+    const nextRunResult = getNextCronRun({
+      cronExpr: task.cron_expr,
+      timezone,
+      from: failedAt,
+    })
     if (!(nextRunResult instanceof Error)) {
       await markScheduledTaskCronRetry({
         taskId: task.id,
@@ -296,8 +320,14 @@ async function processDueTask({
   const finishedAt = new Date()
 
   if (executeResult instanceof Error) {
-    taskLogger.warn(`[task-runner] task ${task.id} failed: ${formatErrorWithStack(executeResult)}`)
-    await finalizeFailedTask({ task, failedAt: finishedAt, error: executeResult })
+    taskLogger.warn(
+      `[task-runner] task ${task.id} failed: ${formatErrorWithStack(executeResult)}`,
+    )
+    await finalizeFailedTask({
+      task,
+      failedAt: finishedAt,
+      error: executeResult,
+    })
     return
   }
 
@@ -314,9 +344,13 @@ async function runTaskRunnerTick({
   dueBatchSize: number
 }): Promise<void> {
   const staleBefore = new Date(Date.now() - staleRunningMs)
-  const recoveredCount = await recoverStaleRunningScheduledTasks({ staleBefore })
+  const recoveredCount = await recoverStaleRunningScheduledTasks({
+    staleBefore,
+  })
   if (recoveredCount > 0) {
-    taskLogger.warn(`[task-runner] Recovered ${recoveredCount} stale running task(s)`)
+    taskLogger.warn(
+      `[task-runner] Recovered ${recoveredCount} stale running task(s)`,
+    )
   }
 
   const dueTasks = await getDuePlannedScheduledTasks({

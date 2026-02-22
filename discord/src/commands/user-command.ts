@@ -2,7 +2,12 @@
 // Handles slash commands that map to user-configured commands in opencode.json.
 
 import type { CommandContext, CommandHandler } from './types.js'
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import { handleOpencodeSession } from '../session-handler.js'
 import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -11,7 +16,10 @@ import fs from 'node:fs'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
 
-export const handleUserCommand: CommandHandler = async ({ command, appId }: CommandContext) => {
+export const handleUserCommand: CommandHandler = async ({
+  command,
+  appId,
+}: CommandContext) => {
   const discordCommandName = command.commandName
   // Strip the -cmd suffix to get the actual OpenCode command name
   const commandName = discordCommandName.replace(/-cmd$/, '')
@@ -29,9 +37,11 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
 
   const isThread =
     channel &&
-    [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(
-      channel.type,
-    )
+    [
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+    ].includes(channel.type)
 
   const isTextChannel = channel?.type === ChannelType.GuildText
 
@@ -139,11 +149,14 @@ export const handleUserCommand: CommandHandler = async ({ command, appId }: Comm
       await newThread.members.add(command.user.id)
 
       if (args) {
-        const argsPreview = args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
+        const argsPreview =
+          args.length > 1800 ? `${args.slice(0, 1800)}\n... truncated` : args
         await sendThreadMessage(newThread, `Args: ${argsPreview}`)
       }
 
-      await command.editReply(`Started /${commandName} in ${newThread.toString()}`)
+      await command.editReply(
+        `Started /${commandName} in ${newThread.toString()}`,
+      )
 
       await handleOpencodeSession({
         prompt: '', // Not used when command is set

@@ -14,7 +14,10 @@ import {
 } from 'discord.js'
 import { createLogger } from '../logger.js'
 import { readForumSyncConfig } from './config.js'
-import { ensureDirectory, getCanonicalThreadFilePath } from './discord-operations.js'
+import {
+  ensureDirectory,
+  getCanonicalThreadFilePath,
+} from './discord-operations.js'
 import { syncForumToFiles } from './sync-to-files.js'
 import { syncFilesToForum } from './sync-to-discord.js'
 import {
@@ -95,11 +98,16 @@ async function runQueuedFileEvents({
   })
 
   if (fileSyncResult instanceof Error) {
-    forumLogger.warn(`FS -> Discord sync failed for ${runtimeState.forumChannelId}: ${fileSyncResult.message}`)
+    forumLogger.warn(
+      `FS -> Discord sync failed for ${runtimeState.forumChannelId}: ${fileSyncResult.message}`,
+    )
     return
   }
 
-  if (fileSyncResult.created + fileSyncResult.updated + fileSyncResult.deleted > 0) {
+  if (
+    fileSyncResult.created + fileSyncResult.updated + fileSyncResult.deleted >
+    0
+  ) {
     forumLogger.log(
       `FS -> Discord ${runtimeState.forumChannelId}: +${fileSyncResult.created} ~${fileSyncResult.updated} -${fileSyncResult.deleted} (skip ${fileSyncResult.skipped})`,
     )
@@ -252,13 +260,21 @@ function findThreadFilePath({
   })()
   for (const entry of dirEntries) {
     if (!entry.isDirectory()) continue
-    const subPath = getCanonicalThreadFilePath({ outputDir, threadId, subfolder: entry.name })
+    const subPath = getCanonicalThreadFilePath({
+      outputDir,
+      threadId,
+      subfolder: entry.name,
+    })
     if (fs.existsSync(subPath)) return subPath
   }
   return null
 }
 
-function registerDiscordSyncListeners({ discordClient }: { discordClient: Client }) {
+function registerDiscordSyncListeners({
+  discordClient,
+}: {
+  discordClient: Client
+}) {
   if (discordListenersRegistered) return
   discordListenersRegistered = true
 
@@ -289,7 +305,10 @@ function registerDiscordSyncListeners({ discordClient }: { discordClient: Client
     if (!targetPath) return
     addIgnoredPath({ runtimeState, filePath: targetPath })
     await fs.promises.unlink(targetPath).catch((cause) => {
-      forumLogger.warn(`Failed to delete forum file on thread delete ${targetPath}:`, cause)
+      forumLogger.warn(
+        `Failed to delete forum file on thread delete ${targetPath}:`,
+        cause,
+      )
     })
   })
 }
@@ -311,8 +330,11 @@ async function startWatcherForRuntimeState({
     .subscribe(runtimeState.outputDir, (_error, events) => {
       const mdEvents = events.filter((event) => event.path.endsWith('.md'))
       mdEvents
-        .filter((event) =>
-          event.type === 'create' || event.type === 'update' || event.type === 'delete',
+        .filter(
+          (event) =>
+            event.type === 'create' ||
+            event.type === 'update' ||
+            event.type === 'delete',
         )
         .map((event) => {
           queueFileEvent({
@@ -323,12 +345,13 @@ async function startWatcherForRuntimeState({
           })
         })
     })
-    .catch((cause) =>
-      new ForumSyncOperationError({
-        forumChannelId: runtimeState.forumChannelId,
-        reason: `failed to subscribe watcher for ${runtimeState.outputDir}`,
-        cause,
-      }),
+    .catch(
+      (cause) =>
+        new ForumSyncOperationError({
+          forumChannelId: runtimeState.forumChannelId,
+          reason: `failed to subscribe watcher for ${runtimeState.outputDir}`,
+          cause,
+        }),
     )
 
   if (subscription instanceof Error) return subscription
@@ -356,7 +379,10 @@ export async function stopConfiguredForumSync() {
   )
 }
 
-export async function startConfiguredForumSync({ discordClient, appId }: StartForumSyncOptions) {
+export async function startConfiguredForumSync({
+  discordClient,
+  appId,
+}: StartForumSyncOptions) {
   const loadedConfig = await readForumSyncConfig({ appId })
   if (loadedConfig instanceof Error) return loadedConfig
 
@@ -376,7 +402,9 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
 
     const ensureResult = await ensureDirectory({ directory: entry.outputDir })
     if (ensureResult instanceof Error) {
-      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: failed to create ${entry.outputDir}`)
+      forumLogger.warn(
+        `Skipping forum ${entry.forumChannelId}: failed to create ${entry.outputDir}`,
+      )
       continue
     }
 
@@ -387,7 +415,9 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
       runtimeState,
     })
     if (fileToDiscordResult instanceof Error) {
-      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: FS->Discord sync failed: ${fileToDiscordResult.message}`)
+      forumLogger.warn(
+        `Skipping forum ${entry.forumChannelId}: FS->Discord sync failed: ${fileToDiscordResult.message}`,
+      )
       continue
     }
 
@@ -399,13 +429,20 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
       runtimeState,
     })
     if (discordToFileResult instanceof Error) {
-      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: Discord->FS sync failed: ${discordToFileResult.message}`)
+      forumLogger.warn(
+        `Skipping forum ${entry.forumChannelId}: Discord->FS sync failed: ${discordToFileResult.message}`,
+      )
       continue
     }
 
-    const watcherResult = await startWatcherForRuntimeState({ runtimeState, discordClient })
+    const watcherResult = await startWatcherForRuntimeState({
+      runtimeState,
+      discordClient,
+    })
     if (watcherResult instanceof Error) {
-      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: watcher failed: ${watcherResult.message}`)
+      forumLogger.warn(
+        `Skipping forum ${entry.forumChannelId}: watcher failed: ${watcherResult.message}`,
+      )
       continue
     }
 

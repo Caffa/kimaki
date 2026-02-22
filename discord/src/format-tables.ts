@@ -81,7 +81,11 @@ export function buildTableComponents(table: Tokens.Table): ContentSegment[] {
 
     for (let i = 0; i < chunkRows.length; i++) {
       if (i > 0) {
-        children.push({ type: 14, divider: true, spacing: SeparatorSpacingSize.Small })
+        children.push({
+          type: 14,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small,
+        })
       }
       const row = chunkRows[i]!
       const lines = headers.map((key, j) => {
@@ -96,7 +100,10 @@ export function buildTableComponents(table: Tokens.Table): ContentSegment[] {
       components: children,
     }
 
-    return { type: 'components' as const, components: [container] as APIMessageTopLevelComponent[] }
+    return {
+      type: 'components' as const,
+      components: [container] as APIMessageTopLevelComponent[],
+    }
   })
 }
 

@@ -1,6 +1,6 @@
 // Waiting utilities for Jitter app initialization and sync
 
-import type { JitterApp } from "./types";
+import type { JitterApp } from './types'
 
 /**
  * Wait for the Jitter app to be fully loaded and ready
@@ -8,24 +8,24 @@ import type { JitterApp } from "./types";
  */
 export function waitForApp(timeoutMs = 30000): Promise<JitterApp> {
   return new Promise((resolve, reject) => {
-    const startTime = Date.now();
+    const startTime = Date.now()
 
     const check = (): void => {
       if (Date.now() - startTime > timeoutMs) {
-        reject(new Error("Timeout waiting for Jitter app to load"));
-        return;
+        reject(new Error('Timeout waiting for Jitter app to load'))
+        return
       }
 
-      const app = window.app;
+      const app = window.app
       if (app?.props?.observableImmutableConf?.lastImmutableConf) {
-        resolve(app);
+        resolve(app)
       } else {
-        setTimeout(check, 100);
+        setTimeout(check, 100)
       }
-    };
+    }
 
-    check();
-  });
+    check()
+  })
 }
 
 /**
@@ -34,8 +34,8 @@ export function waitForApp(timeoutMs = 30000): Promise<JitterApp> {
  */
 export function waitForSync(delayMs = 2000): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-  });
+    setTimeout(resolve, delayMs)
+  })
 }
 
 /**
@@ -43,28 +43,28 @@ export function waitForSync(delayMs = 2000): Promise<void> {
  */
 export function waitFor(
   condition: () => boolean,
-  options: { timeout?: number; interval?: number } = {}
+  options: { timeout?: number; interval?: number } = {},
 ): Promise<void> {
-  const { timeout = 30000, interval = 100 } = options;
+  const { timeout = 30000, interval = 100 } = options
 
   return new Promise((resolve, reject) => {
-    const startTime = Date.now();
+    const startTime = Date.now()
 
     const check = (): void => {
       if (Date.now() - startTime > timeout) {
-        reject(new Error("Timeout waiting for condition"));
-        return;
+        reject(new Error('Timeout waiting for condition'))
+        return
       }
 
       if (condition()) {
-        resolve();
+        resolve()
       } else {
-        setTimeout(check, interval);
+        setTimeout(check, interval)
       }
-    };
+    }
 
-    check();
-  });
+    check()
+  })
 }
 
 /**
@@ -73,25 +73,25 @@ export function waitFor(
 export function waitForNode(nodeId: string, timeoutMs = 10000): Promise<void> {
   return waitFor(
     () => {
-      const conf = window.app?.props?.observableImmutableConf?.lastImmutableConf;
+      const conf = window.app?.props?.observableImmutableConf?.lastImmutableConf
       if (!conf) {
-        return false;
+        return false
       }
 
       const search = (node: { id: string; children?: unknown[] }): boolean => {
         if (node.id === nodeId) {
-          return true;
+          return true
         }
         if (node.children) {
-          return (node.children as typeof node[]).some(search);
+          return (node.children as (typeof node)[]).some(search)
         }
-        return false;
-      };
+        return false
+      }
 
-      return (conf.roots || []).some(search);
+      return (conf.roots || []).some(search)
     },
-    { timeout: timeoutMs }
-  );
+    { timeout: timeoutMs },
+  )
 }
 
 /**
@@ -101,23 +101,25 @@ export function waitForNode(nodeId: string, timeoutMs = 10000): Promise<void> {
 export function waitForConfigChange(timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      unsubscribe();
-      reject(new Error("Timeout waiting for config change"));
-    }, timeoutMs);
+      unsubscribe()
+      reject(new Error('Timeout waiting for config change'))
+    }, timeoutMs)
 
-    const unsubscribe = window.app.props.observableImmutableConf.subscribe(() => {
-      clearTimeout(timeout);
-      unsubscribe();
-      resolve();
-    });
-  });
+    const unsubscribe = window.app.props.observableImmutableConf.subscribe(
+      () => {
+        clearTimeout(timeout)
+        unsubscribe()
+        resolve()
+      },
+    )
+  })
 }
 
 /**
  * Check if the app is currently in read-only mode
  */
 export function isReadOnly(): boolean {
-  return window.app?.isReadOnly?.() ?? false;
+  return window.app?.isReadOnly?.() ?? false
 }
 
 /**
@@ -127,5 +129,5 @@ export function isAppReady(): boolean {
   return !!(
     window.app?.props?.observableImmutableConf?.lastImmutableConf &&
     window.app?.props?.fileMeta?.id
-  );
+  )
 }

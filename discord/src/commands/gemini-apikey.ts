@@ -9,7 +9,9 @@ import {
 } from 'discord.js'
 import { setGeminiApiKey } from '../database.js'
 
-export async function handleGeminiApiKeyButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleGeminiApiKeyButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('gemini_apikey:')) {
     return
@@ -35,7 +37,9 @@ export async function handleGeminiApiKeyButton(interaction: ButtonInteraction): 
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
 
-  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(apiKeyInput)
+  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(
+    apiKeyInput,
+  )
   modal.addComponents(actionRow)
 
   await interaction.showModal(modal)

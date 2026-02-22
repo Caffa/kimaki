@@ -96,7 +96,8 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
-    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
+    const placeholder =
+      options.find((x) => x.label)?.label || 'Select an option'
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`ask_question:${contextHash}:${i}`)
       .setPlaceholder(placeholder)
@@ -108,7 +109,8 @@ export async function showAskUserQuestionDropdowns({
       selectMenu.setMaxValues(options.length)
     }
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await thread.send({
       content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
@@ -117,7 +119,9 @@ export async function showAskUserQuestionDropdowns({
     })
   }
 
-  logger.log(`Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`)
+  logger.log(
+    `Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`,
+  )
 }
 
 /**
@@ -198,7 +202,9 @@ export async function handleAskQuestionSelectMenu(
  * Submit all collected answers back to the OpenCode session.
  * Uses the question.reply API to provide answers to the waiting tool.
  */
-async function submitQuestionAnswers(context: PendingQuestionContext): Promise<void> {
+async function submitQuestionAnswers(
+  context: PendingQuestionContext,
+): Promise<void> {
   try {
     const client = getOpencodeClient(context.directory)
     if (!client) {
@@ -249,7 +255,11 @@ export function parseAskUserQuestionTool(part: {
 
   const input = part.state?.input as AskUserQuestionInput | undefined
 
-  if (!input?.questions || !Array.isArray(input.questions) || input.questions.length === 0) {
+  if (
+    !input?.questions ||
+    !Array.isArray(input.questions) ||
+    input.questions.length === 0
+  ) {
     return null
   }
 

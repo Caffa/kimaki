@@ -1,15 +1,25 @@
 // /share command - Share the current session as a public URL.
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SHARE)
 
-export async function handleShareCommand({ command }: CommandContext): Promise<void> {
+export async function handleShareCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -28,7 +38,8 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return

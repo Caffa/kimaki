@@ -35,7 +35,9 @@ export async function waitForSessionId({
     })
   }
 
-  throw new Error(`Timed out waiting for session ID (thread: ${threadId}, timeout: ${timeoutMs}ms)`)
+  throw new Error(
+    `Timed out waiting for session ID (thread: ${threadId}, timeout: ${timeoutMs}ms)`,
+  )
 }
 
 /**
@@ -56,9 +58,12 @@ export async function waitForSessionComplete({
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, {
-      cause: getClient,
-    })
+    throw new Error(
+      `Failed to connect to OpenCode server: ${getClient.message}`,
+      {
+        cause: getClient,
+      },
+    )
   }
 
   while (Date.now() - startTime < timeoutMs) {
@@ -68,7 +73,9 @@ export async function waitForSessionComplete({
     const messages = messagesResponse.data || []
 
     // Find the last assistant message
-    const lastAssistant = [...messages].reverse().find((m) => m.info.role === 'assistant')
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.info.role === 'assistant')
 
     if (
       lastAssistant &&
@@ -105,23 +112,35 @@ export async function waitAndOutputSession({
   completionTimeoutMs?: number
 }): Promise<void> {
   waitLogger.log('Waiting for session ID...')
-  const sessionId = await waitForSessionId({ threadId, timeoutMs: sessionIdTimeoutMs })
+  const sessionId = await waitForSessionId({
+    threadId,
+    timeoutMs: sessionIdTimeoutMs,
+  })
 
   waitLogger.log(`Waiting for session ${sessionId} to complete...`)
-  await waitForSessionComplete({ projectDirectory, sessionId, timeoutMs: completionTimeoutMs })
+  await waitForSessionComplete({
+    projectDirectory,
+    sessionId,
+    timeoutMs: completionTimeoutMs,
+  })
 
   waitLogger.log('Generating session output...')
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    throw new Error(`Failed to connect to OpenCode server: ${getClient.message}`, {
-      cause: getClient,
-    })
+    throw new Error(
+      `Failed to connect to OpenCode server: ${getClient.message}`,
+      {
+        cause: getClient,
+      },
+    )
   }
 
   const markdown = new ShareMarkdown(getClient())
   const result = await markdown.generate({ sessionID: sessionId })
   if (result instanceof Error) {
-    throw new Error(`Failed to generate session markdown: ${result.message}`, { cause: result })
+    throw new Error(`Failed to generate session markdown: ${result.message}`, {
+      cause: result,
+    })
   }
 
   process.stdout.write(result)

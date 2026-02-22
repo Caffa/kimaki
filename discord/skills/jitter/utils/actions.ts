@@ -1,9 +1,9 @@
 // Action helpers for modifying Jitter projects
 
-import type { LayerProperties } from "./types";
+import type { LayerProperties } from './types'
 
 function dispatch(action: Record<string, unknown>): void {
-  window.app.dispatchAction(action);
+  window.app.dispatchAction(action)
 }
 
 /**
@@ -11,10 +11,10 @@ function dispatch(action: Record<string, unknown>): void {
  */
 export function replaceAssetUrl(nodeId: string, newUrl: string): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { url: newUrl },
-  });
+  })
 }
 
 /**
@@ -22,10 +22,10 @@ export function replaceAssetUrl(nodeId: string, newUrl: string): void {
  */
 export function replaceText(nodeId: string, newText: string): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { text: newText },
-  });
+  })
 }
 
 /**
@@ -33,18 +33,18 @@ export function replaceText(nodeId: string, newText: string): void {
  */
 export function updateNode(
   nodeId: string,
-  properties: Partial<LayerProperties> & { url?: string; text?: string }
+  properties: Partial<LayerProperties> & { url?: string; text?: string },
 ): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: properties,
-  });
+  })
 }
 
 export interface ReplacementItem {
-  nodeId: string;
-  data: Partial<LayerProperties> & { url?: string; text?: string };
+  nodeId: string
+  data: Partial<LayerProperties> & { url?: string; text?: string }
 }
 
 /**
@@ -53,10 +53,10 @@ export interface ReplacementItem {
 export function batchReplace(replacements: ReplacementItem[]): void {
   for (const { nodeId, data } of replacements) {
     dispatch({
-      type: "updateObjWithUndo",
+      type: 'updateObjWithUndo',
       objId: nodeId,
       data: data,
-    });
+    })
   }
 }
 
@@ -65,24 +65,24 @@ export function batchReplace(replacements: ReplacementItem[]): void {
  */
 export function selectNodes(nodeIds: string[]): void {
   dispatch({
-    type: "setSelection",
+    type: 'setSelection',
     selection: { nodesIds: nodeIds },
     saveInCmdHistory: true,
-  });
+  })
 }
 
 /**
  * Clear the current selection
  */
 export function clearSelection(): void {
-  dispatch({ type: "emptySelection" });
+  dispatch({ type: 'emptySelection' })
 }
 
 /**
  * Delete the currently selected nodes
  */
 export function deleteSelection(): void {
-  dispatch({ type: "deleteCurrentSelection" });
+  dispatch({ type: 'deleteCurrentSelection' })
 }
 
 /**
@@ -90,34 +90,34 @@ export function deleteSelection(): void {
  */
 export function removeNodes(nodeIds: string[]): void {
   dispatch({
-    type: "removeObjWithUndo",
+    type: 'removeObjWithUndo',
     objIds: nodeIds,
-  });
+  })
 }
 
 /**
  * Undo the last action
  */
 export function undo(): void {
-  dispatch({ type: "undo" });
+  dispatch({ type: 'undo' })
 }
 
 /**
  * Redo the last undone action
  */
 export function redo(): void {
-  dispatch({ type: "redo" });
+  dispatch({ type: 'redo' })
 }
 
 /**
  * Rename a node
  */
 export function renameNode(nodeId: string, newName: string): void {
-  selectNodes([nodeId]);
+  selectNodes([nodeId])
   dispatch({
-    type: "renameSelection",
+    type: 'renameSelection',
     name: newName,
-  });
+  })
 }
 
 /**
@@ -125,21 +125,25 @@ export function renameNode(nodeId: string, newName: string): void {
  */
 export function moveNode(nodeId: string, x: number, y: number): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { x, y },
-  });
+  })
 }
 
 /**
  * Update node size
  */
-export function resizeNode(nodeId: string, width: number, height: number): void {
+export function resizeNode(
+  nodeId: string,
+  width: number,
+  height: number,
+): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { width, height },
-  });
+  })
 }
 
 /**
@@ -147,10 +151,10 @@ export function resizeNode(nodeId: string, width: number, height: number): void 
  */
 export function setOpacity(nodeId: string, opacity: number): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { opacity },
-  });
+  })
 }
 
 /**
@@ -158,10 +162,10 @@ export function setOpacity(nodeId: string, opacity: number): void {
  */
 export function setRotation(nodeId: string, angle: number): void {
   dispatch({
-    type: "updateObjWithUndo",
+    type: 'updateObjWithUndo',
     objId: nodeId,
     data: { angle },
-  });
+  })
 }
 
 /**
@@ -169,23 +173,23 @@ export function setRotation(nodeId: string, angle: number): void {
  */
 export function setCurrentTime(artboardId: string, timeMs: number): void {
   dispatch({
-    type: "setArtboardsTime",
+    type: 'setArtboardsTime',
     times: { [artboardId]: timeMs },
-  });
+  })
 }
 
 /**
  * Jump playhead to start
  */
 export function jumpToStart(): void {
-  dispatch({ type: "jumpToStartTime" });
+  dispatch({ type: 'jumpToStartTime' })
 }
 
 /**
  * Jump playhead to end
  */
 export function jumpToEnd(): void {
-  dispatch({ type: "jumpToEndTime" });
+  dispatch({ type: 'jumpToEndTime' })
 }
 
 /**
@@ -195,14 +199,14 @@ export function addObject(
   parentId: string,
   id: string,
   item: LayerProperties,
-  index?: string
+  index?: string,
 ): void {
-  dispatch({ type: "saveSelectionForUndo" });
+  dispatch({ type: 'saveSelectionForUndo' })
   dispatch({
-    type: "addObjWithUndo",
+    type: 'addObjWithUndo',
     parentId,
     objData: { id, item },
     index,
-  });
-  selectNodes([id]);
+  })
+  selectNodes([id])
 }

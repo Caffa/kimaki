@@ -8,7 +8,10 @@ import {
   ChannelType,
   type TextChannel,
 } from 'discord.js'
-import { getChannelWorktreesEnabled, setChannelWorktreesEnabled } from '../database.js'
+import {
+  getChannelWorktreesEnabled,
+  setChannelWorktreesEnabled,
+} from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 

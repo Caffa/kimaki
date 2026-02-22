@@ -46,7 +46,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
     if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
       fs.mkdirSync(HEAP_SNAPSHOT_DIR, { recursive: true })
     }
-    const heapArgs = [`--heapsnapshot-near-heap-limit=3`, `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`]
+    const heapArgs = [
+      `--heapsnapshot-near-heap-limit=3`,
+      `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
+    ]
     child = spawn(
       process.argv[0]!,
       [...heapArgs, ...process.execArgv, ...process.argv.slice(1)],
@@ -103,5 +106,3 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
 
   start()
 }
-
-

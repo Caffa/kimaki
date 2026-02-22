@@ -11,7 +11,11 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import { getChannelVerbosity, setChannelVerbosity, type VerbosityLevel } from '../database.js'
+import {
+  getChannelVerbosity,
+  setChannelVerbosity,
+  type VerbosityLevel,
+} from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const verbosityLogger = createLogger(LogPrefix.VERBOSITY)

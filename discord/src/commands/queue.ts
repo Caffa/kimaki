@@ -20,7 +20,10 @@ import { registeredUserCommands } from '../config.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
-export async function handleQueueCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleQueueCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   const message = command.options.getString('message', true)
   const channel = command.channel
 
@@ -40,7 +43,8 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -50,7 +54,8 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   if (!sessionId) {
     await command.reply({
-      content: 'No active session in this thread. Send a message directly instead.',
+      content:
+        'No active session in this thread. Send a message directly instead.',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -58,14 +63,18 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   // Check if there's an active request running
   const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
   if (existingController && existingController.signal.aborted) {
     abortControllers.delete(sessionId)
   }
 
   if (!hasActiveRequest) {
     // No active request, send immediately
-    const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
+    const resolved = await resolveWorkingDirectory({
+      channel: channel as ThreadChannel,
+    })
 
     if (!resolved) {
       await command.reply({
@@ -80,7 +89,9 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    logger.log(`[QUEUE] No active request, sending immediately in thread ${channel.id}`)
+    logger.log(
+      `[QUEUE] No active request, sending immediately in thread ${channel.id}`,
+    )
 
     handleOpencodeSession({
       prompt: message,
@@ -91,7 +102,10 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)
       const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(channel as ThreadChannel, `✗ Failed: ${errorMsg.slice(0, 200)}`)
+      await sendThreadMessage(
+        channel as ThreadChannel,
+        `✗ Failed: ${errorMsg.slice(0, 200)}`,
+      )
     })
 
     return
@@ -114,10 +128,14 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
     flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`,
+  )
 }
 
-export async function handleClearQueueCommand({ command }: CommandContext): Promise<void> {
+export async function handleClearQueueCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -159,10 +177,15 @@ export async function handleClearQueueCommand({ command }: CommandContext): Prom
     flags: SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
+  )
 }
 
-export async function handleQueueCommandCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleQueueCommandCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   const commandName = command.options.getString('command', true)
   const args = command.options.getString('arguments') || ''
   const channel = command.channel
@@ -183,7 +206,8 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -193,7 +217,8 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   if (!sessionId) {
     await command.reply({
-      content: 'No active session in this thread. Send a message directly instead.',
+      content:
+        'No active session in this thread. Send a message directly instead.',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -216,13 +241,17 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   // Check if there's an active request running
   const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
   if (existingController && existingController.signal.aborted) {
     abortControllers.delete(sessionId)
   }
 
   if (!hasActiveRequest) {
-    const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
+    const resolved = await resolveWorkingDirectory({
+      channel: channel as ThreadChannel,
+    })
 
     if (!resolved) {
       await command.reply({
@@ -237,7 +266,9 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    logger.log(`[QUEUE] No active request, sending command immediately in thread ${channel.id}`)
+    logger.log(
+      `[QUEUE] No active request, sending command immediately in thread ${channel.id}`,
+    )
 
     handleOpencodeSession({
       prompt: '',
@@ -249,7 +280,10 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send command:`, e)
       const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(channel as ThreadChannel, `Failed: ${errorMsg.slice(0, 200)}`)
+      await sendThreadMessage(
+        channel as ThreadChannel,
+        `Failed: ${errorMsg.slice(0, 200)}`,
+      )
     })
 
     return

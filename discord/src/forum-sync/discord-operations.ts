@@ -4,7 +4,13 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { ChannelType, type Client, type ForumChannel, type Message, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  type Client,
+  type ForumChannel,
+  type Message,
+  type ThreadChannel,
+} from 'discord.js'
 import { createLogger } from '../logger.js'
 import { parseFrontmatter, getStringValue } from './markdown.js'
 import {
@@ -35,7 +41,14 @@ export function getCanonicalThreadFilePath({
 export async function ensureDirectory({ directory }: { directory: string }) {
   const result = await fs.promises
     .mkdir(directory, { recursive: true })
-    .catch((cause) => new ForumSyncOperationError({ forumChannelId: 'unknown', reason: directory, cause }))
+    .catch(
+      (cause) =>
+        new ForumSyncOperationError({
+          forumChannelId: 'unknown',
+          reason: directory,
+          cause,
+        }),
+    )
   if (result instanceof Error) return result
 }
 
@@ -65,15 +78,14 @@ export async function fetchForumThreads({
 }): Promise<ThreadChannel[] | ForumSyncOperationError> {
   const byId = new Map<string, ThreadChannel>()
 
-  const active = await forumChannel.threads
-    .fetchActive()
-    .catch((cause) =>
+  const active = await forumChannel.threads.fetchActive().catch(
+    (cause) =>
       new ForumSyncOperationError({
         forumChannelId: forumChannel.id,
         reason: 'fetchActive failed',
         cause,
       }),
-    )
+  )
   if (active instanceof Error) return active
 
   for (const [id, thread] of active.threads) {
@@ -84,12 +96,13 @@ export async function fetchForumThreads({
   while (true) {
     const archived = await forumChannel.threads
       .fetchArchived({ type: 'public', limit: 100, before })
-      .catch((cause) =>
-        new ForumSyncOperationError({
-          forumChannelId: forumChannel.id,
-          reason: 'fetchArchived failed',
-          cause,
-        }),
+      .catch(
+        (cause) =>
+          new ForumSyncOperationError({
+            forumChannelId: forumChannel.id,
+            reason: 'fetchArchived failed',
+            cause,
+          }),
       )
     if (archived instanceof Error) return archived
 
@@ -123,15 +136,14 @@ export async function fetchThreadMessages({
   let before: string | undefined
 
   while (true) {
-    const fetched = await thread.messages
-      .fetch({ limit: 100, before })
-      .catch((cause) =>
+    const fetched = await thread.messages.fetch({ limit: 100, before }).catch(
+      (cause) =>
         new ForumSyncOperationError({
           forumChannelId: thread.parentId || 'unknown',
           reason: `message fetch failed for thread ${thread.id}`,
           cause,
         }),
-      )
+    )
     if (fetched instanceof Error) return fetched
 
     const messages = Array.from(fetched.values())
@@ -149,7 +161,9 @@ export async function fetchThreadMessages({
     await delay({ ms: DEFAULT_RATE_LIMIT_DELAY_MS })
   }
 
-  return Array.from(byId.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+  return Array.from(byId.values()).sort(
+    (a, b) => a.createdTimestamp - b.createdTimestamp,
+  )
 }
 
 /**
@@ -174,10 +188,12 @@ async function collectMarkdownFiles({
 
   const subdirs = entries.filter((entry) => entry.isDirectory())
   const nestedResults = await Promise.all(
-    subdirs.map((subdir) => collectMarkdownFiles({
-      dir: path.join(dir, subdir.name),
-      outputDir,
-    })),
+    subdirs.map((subdir) =>
+      collectMarkdownFiles({
+        dir: path.join(dir, subdir.name),
+        outputDir,
+      }),
+    ),
   )
 
   return [...mdFiles, ...nestedResults.flat()]
@@ -188,23 +204,37 @@ export async function loadExistingForumFiles({
 }: {
   outputDir: string
 }): Promise<ExistingForumFile[]> {
-  const markdownEntries = await collectMarkdownFiles({ dir: outputDir, outputDir })
+  const markdownEntries = await collectMarkdownFiles({
+    dir: outputDir,
+    outputDir,
+  })
 
   const loaded = await Promise.all(
     markdownEntries.map(async ({ filePath, subfolder }) => {
-      const content = await fs.promises.readFile(filePath, 'utf8').catch((cause) => {
-        forumLogger.warn(`Failed to read forum file ${filePath}:`, cause)
-        return null
-      })
+      const content = await fs.promises
+        .readFile(filePath, 'utf8')
+        .catch((cause) => {
+          forumLogger.warn(`Failed to read forum file ${filePath}:`, cause)
+          return null
+        })
       if (content === null) return null
 
       const parsed = parseFrontmatter({ markdown: content })
-      const threadIdFromFrontmatter = getStringValue({ value: parsed.frontmatter.threadId })
+      const threadIdFromFrontmatter = getStringValue({
+        value: parsed.frontmatter.threadId,
+      })
       const threadIdFromFilename = path.basename(filePath, '.md')
-      const threadId = threadIdFromFrontmatter || (/^\d+$/.test(threadIdFromFilename) ? threadIdFromFilename : '')
+      const threadId =
+        threadIdFromFrontmatter ||
+        (/^\d+$/.test(threadIdFromFilename) ? threadIdFromFilename : '')
       if (!threadId) return null
 
-      const result: ExistingForumFile = { filePath, threadId, frontmatter: parsed.frontmatter, subfolder }
+      const result: ExistingForumFile = {
+        filePath,
+        threadId,
+        frontmatter: parsed.frontmatter,
+        subfolder,
+      }
       return result
     }),
   )

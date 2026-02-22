@@ -1,15 +1,28 @@
 // /compact command - Trigger context compaction (summarization) for the current session.
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory, getOpencodeClient } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  initializeOpencodeForDirectory,
+  getOpencodeClient,
+} from '../opencode.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.COMPACT)
 
-export async function handleCompactCommand({ command }: CommandContext): Promise<void> {
+export async function handleCompactCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -28,7 +41,8 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -121,7 +135,8 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
       logger.error('[COMPACT] Error:', result.error)
       const errorMessage =
         'data' in result.error && result.error.data
-          ? (result.error.data as { message?: string }).message || 'Unknown error'
+          ? (result.error.data as { message?: string }).message ||
+            'Unknown error'
           : 'Unknown error'
       await command.editReply({
         content: `Failed to compact: ${errorMessage}`,

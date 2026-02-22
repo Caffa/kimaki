@@ -6,7 +6,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ForumChannel, ThreadChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
-import { buildMessageSections, formatMessageSection, getStringValue, stringifyFrontmatter } from './markdown.js'
+import {
+  buildMessageSections,
+  formatMessageSection,
+  getStringValue,
+  stringifyFrontmatter,
+} from './markdown.js'
 import {
   ensureDirectory,
   fetchForumThreads,
@@ -53,8 +58,9 @@ function resolveSubfolderForThread({
   thread: ThreadChannel
   forumChannel: ForumChannel
 }) {
-  const hasGlobalTag = resolveTagNames({ thread, forumChannel })
-    .some((tagName) => tagName.toLowerCase().trim() === 'global')
+  const hasGlobalTag = resolveTagNames({ thread, forumChannel }).some(
+    (tagName) => tagName.toLowerCase().trim() === 'global',
+  )
   if (hasGlobalTag) return 'global'
   if (existingSubfolder) return existingSubfolder
   return undefined
@@ -89,7 +95,9 @@ function buildFrontmatter({
     tags: resolveTagNames({ thread, forumChannel }),
     author: firstSection?.authorName || '',
     authorId: firstSection?.authorId || '',
-    createdAt: thread.createdAt?.toISOString() || new Date(createdTimestamp).toISOString(),
+    createdAt:
+      thread.createdAt?.toISOString() ||
+      new Date(createdTimestamp).toISOString(),
     lastUpdated: new Date(latestTimestamp).toISOString(),
     lastMessageId: thread.lastMessageId,
     lastSyncedAt: new Date().toISOString(),
@@ -129,26 +137,47 @@ export async function syncSingleThreadToFile({
   }
 
   const sections = buildMessageSections({ messages })
-  const body = sections.map((section) => formatMessageSection({ section })).join('\n\n---\n\n')
-  const frontmatter = buildFrontmatter({ thread, forumChannel, sections, project, projectChannelId })
+  const body = sections
+    .map((section) => formatMessageSection({ section }))
+    .join('\n\n---\n\n')
+  const frontmatter = buildFrontmatter({
+    thread,
+    forumChannel,
+    sections,
+    project,
+    projectChannelId,
+  })
   const markdown = stringifyFrontmatter({ frontmatter, body })
-  const targetPath = getCanonicalThreadFilePath({ outputDir, threadId: thread.id, subfolder })
+  const targetPath = getCanonicalThreadFilePath({
+    outputDir,
+    threadId: thread.id,
+    subfolder,
+  })
 
   addIgnoredPath({ runtimeState, filePath: targetPath })
-  const writeResult = await fs.promises.writeFile(targetPath, markdown, 'utf8').catch((cause) => {
-    return new ForumSyncOperationError({
-      forumChannelId: forumChannel.id,
-      reason: `failed to write ${targetPath}`,
-      cause,
+  const writeResult = await fs.promises
+    .writeFile(targetPath, markdown, 'utf8')
+    .catch((cause) => {
+      return new ForumSyncOperationError({
+        forumChannelId: forumChannel.id,
+        reason: `failed to write ${targetPath}`,
+        cause,
+      })
     })
-  })
   if (writeResult instanceof Error) return writeResult
 
   // Clean up old file if thread was renamed (file path changed)
-  if (previousFilePath && previousFilePath !== targetPath && fs.existsSync(previousFilePath)) {
+  if (
+    previousFilePath &&
+    previousFilePath !== targetPath &&
+    fs.existsSync(previousFilePath)
+  ) {
     addIgnoredPath({ runtimeState, filePath: previousFilePath })
     await fs.promises.unlink(previousFilePath).catch((cause) => {
-      forumLogger.warn(`Failed to remove old forum file ${previousFilePath}:`, cause)
+      forumLogger.warn(
+        `Failed to remove old forum file ${previousFilePath}:`,
+        cause,
+      )
     })
   }
 }
@@ -170,7 +199,10 @@ export async function syncForumToFiles({
     })
   }
 
-  const forumChannel = await resolveForumChannel({ discordClient, forumChannelId })
+  const forumChannel = await resolveForumChannel({
+    discordClient,
+    forumChannelId,
+  })
   if (forumChannel instanceof Error) return forumChannel
 
   const threads = await fetchForumThreads({ forumChannel })
@@ -185,10 +217,15 @@ export async function syncForumToFiles({
 
   for (const thread of threads) {
     const existing = existingByThreadId.get(thread.id)
-    const savedLastMessageId = getStringValue({ value: existing?.frontmatter.lastMessageId }) || null
+    const savedLastMessageId =
+      getStringValue({ value: existing?.frontmatter.lastMessageId }) || null
     const isForced = forceFullRefresh || Boolean(forceThreadIds?.has(thread.id))
 
-    if (!isForced && savedLastMessageId && savedLastMessageId === thread.lastMessageId) {
+    if (
+      !isForced &&
+      savedLastMessageId &&
+      savedLastMessageId === thread.lastMessageId
+    ) {
       result.skipped += 1
       continue
     }
@@ -205,7 +242,9 @@ export async function syncForumToFiles({
         forumChannel,
       }),
       project: getStringValue({ value: existing?.frontmatter.project }),
-      projectChannelId: getStringValue({ value: existing?.frontmatter.projectChannelId }),
+      projectChannelId: getStringValue({
+        value: existing?.frontmatter.projectChannelId,
+      }),
     })
     if (syncResult instanceof Error) return syncResult
 
@@ -220,13 +259,15 @@ export async function syncForumToFiles({
     if (!fs.existsSync(existing.filePath)) continue
 
     addIgnoredPath({ runtimeState, filePath: existing.filePath })
-    const deleteResult = await fs.promises.unlink(existing.filePath).catch((cause) => {
-      return new ForumSyncOperationError({
-        forumChannelId,
-        reason: `failed deleting stale file ${existing.filePath}`,
-        cause,
+    const deleteResult = await fs.promises
+      .unlink(existing.filePath)
+      .catch((cause) => {
+        return new ForumSyncOperationError({
+          forumChannelId,
+          reason: `failed deleting stale file ${existing.filePath}`,
+          cause,
+        })
       })
-    })
     if (deleteResult instanceof Error) return deleteResult
     result.deleted += 1
   }

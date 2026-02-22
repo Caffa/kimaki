@@ -10,9 +10,17 @@ import {
   type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
-import { getThreadSession, setThreadSession, setPartMessagesBatch } from '../database.js'
+import {
+  getThreadSession,
+  setThreadSession,
+  setPartMessagesBatch,
+} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveWorkingDirectory, resolveTextChannel, sendThreadMessage } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  resolveTextChannel,
+  sendThreadMessage,
+} from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
@@ -20,7 +28,9 @@ import * as errore from 'errore'
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
 
-export async function handleForkCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleForkCommand(
+  interaction: ChatInputCommandInteraction,
+): Promise<void> {
   const channel = interaction.channel
 
   if (!channel) {
@@ -39,13 +49,16 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
 
   if (!isThread) {
     await interaction.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as ThreadChannel,
+  })
 
   if (!resolved) {
     await interaction.reply({
@@ -111,16 +124,18 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
         },
         index: number,
       ) => {
-        const textPart = m.parts.find((p: { type: string }) => p.type === 'text') as
-          | { type: 'text'; text: string }
-          | undefined
+        const textPart = m.parts.find(
+          (p: { type: string }) => p.type === 'text',
+        ) as { type: 'text'; text: string } | undefined
         const preview = textPart?.text?.slice(0, 80) || '(no text)'
         const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
 
         return {
           label: label.slice(0, 100),
           value: m.info.id,
-          description: new Date(m.info.time.created).toLocaleString().slice(0, 50),
+          description: new Date(m.info.time.created)
+            .toLocaleString()
+            .slice(0, 50),
         }
       },
     )
@@ -133,7 +148,8 @@ export async function handleForkCommand(interaction: ChatInputCommandInteraction
       .setPlaceholder('Select a message to fork from')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content:
@@ -183,9 +199,13 @@ export async function handleForkSelectMenu(
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: threadChannel as ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: threadChannel as ThreadChannel,
+  })
   if (!resolved) {
-    await interaction.editReply('Could not determine project directory for this channel')
+    await interaction.editReply(
+      'Could not determine project directory for this channel',
+    )
     return
   }
 
@@ -241,7 +261,9 @@ export async function handleForkSelectMenu(
 
     await setThreadSession(thread.id, forkedSession.id)
 
-    sessionLogger.log(`Created forked session ${forkedSession.id} in thread ${thread.id}`)
+    sessionLogger.log(
+      `Created forked session ${forkedSession.id} in thread ${thread.id}`,
+    )
 
     await sendThreadMessage(
       thread,
@@ -272,9 +294,14 @@ export async function handleForkSelectMenu(
       }
     }
 
-    await sendThreadMessage(thread, `You can now continue the conversation from this point.`)
+    await sendThreadMessage(
+      thread,
+      `You can now continue the conversation from this point.`,
+    )
 
-    await interaction.editReply(`Session forked! Continue in ${thread.toString()}`)
+    await interaction.editReply(
+      `Session forked! Continue in ${thread.toString()}`,
+    )
   } catch (error) {
     forkLogger.error('Error forking session:', error)
     await interaction.editReply(

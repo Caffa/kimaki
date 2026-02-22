@@ -3,9 +3,17 @@
 // Also used by the ! prefix shortcut in discord messages (e.g. "!ls -la").
 // Messages starting with ! are intercepted before session handling and routed here.
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 import { stripAnsi } from '../utils.js'
@@ -37,16 +45,23 @@ export async function runShellCommand({
       message?: string
       code?: number | string
     }
-    const output = stripAnsi([execError.stdout, execError.stderr].filter(Boolean).join('\n').trim())
+    const output = stripAnsi(
+      [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim(),
+    )
     const exitCode = execError.code ?? 1
-    logger.error(`[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`, error)
+    logger.error(
+      `[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`,
+      error,
+    )
 
     const header = `\`${command}\` exited with ${exitCode}`
     return formatOutput(output || execError.message || 'Unknown error', header)
   }
 }
 
-export async function handleRunCommand({ command }: CommandContext): Promise<void> {
+export async function handleRunCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -89,7 +104,10 @@ export async function handleRunCommand({ command }: CommandContext): Promise<voi
 
   await command.deferReply()
 
-  const result = await runShellCommand({ command: input, directory: resolved.workingDirectory })
+  const result = await runShellCommand({
+    command: input,
+    directory: resolved.workingDirectory,
+  })
   await command.editReply({ content: result })
 }
 
@@ -98,6 +116,8 @@ function formatOutput(output: string, header: string): string {
   const overhead = header.length + 1 + 3 + 1 + 1 + 3 // header\n```\n...\n```
   const maxContent = MAX_OUTPUT_CHARS - overhead
   const truncated =
-    output.length > maxContent ? output.slice(0, maxContent - 14) + '\n... truncated' : output
+    output.length > maxContent
+      ? output.slice(0, maxContent - 14) + '\n... truncated'
+      : output
   return `${header}\n\`\`\`\n${truncated}\n\`\`\``
 }

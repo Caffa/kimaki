@@ -2,7 +2,12 @@
 // Transcribes voice messages with code-aware context.
 // Uses errore for type-safe error handling.
 
-import { GoogleGenAI, FunctionCallingConfigMode, Type, type Content } from '@google/genai'
+import {
+  GoogleGenAI,
+  FunctionCallingConfigMode,
+  Type,
+  type Content,
+} from '@google/genai'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -75,7 +80,11 @@ async function runTranscriptionOnce({
           },
         },
       }),
-    catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
+    catch: (e) =>
+      new TranscriptionError({
+        reason: `API call failed: ${String(e)}`,
+        cause: e,
+      }),
   })
 
   if (response instanceof Error) {
@@ -87,7 +96,9 @@ async function runTranscriptionOnce({
   if (!parts) {
     const text = response.text?.trim()
     if (text) {
-      voiceLogger.log(`No parts but got text response: "${text.slice(0, 100)}..."`)
+      voiceLogger.log(
+        `No parts but got text response: "${text.slice(0, 100)}..."`,
+      )
       return text
     }
     return new NoResponseContentError()
@@ -100,15 +111,21 @@ async function runTranscriptionOnce({
   if (!call) {
     const text = response.text?.trim()
     if (text) {
-      voiceLogger.log(`No function call but got text: "${text.slice(0, 100)}..."`)
+      voiceLogger.log(
+        `No function call but got text: "${text.slice(0, 100)}..."`,
+      )
       return text
     }
-    return new TranscriptionError({ reason: 'Model did not produce a transcription' })
+    return new TranscriptionError({
+      reason: 'Model did not produce a transcription',
+    })
   }
 
   const args = call.args as Record<string, string> | undefined
   const transcription = args?.transcription?.trim() || ''
-  voiceLogger.log(`Transcription result received: "${transcription.slice(0, 100)}..."`)
+  voiceLogger.log(
+    `Transcription result received: "${transcription.slice(0, 100)}..."`,
+  )
 
   if (!transcription) {
     return new EmptyTranscriptionError()

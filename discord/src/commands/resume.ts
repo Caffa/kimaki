@@ -22,7 +22,10 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.RESUME)
 
-export async function handleResumeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleResumeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const sessionId = command.options.getString('session', true)
@@ -30,12 +33,16 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   const isThread =
     channel &&
-    [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(
-      channel.type,
-    )
+    [
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+    ].includes(channel.type)
 
   if (isThread) {
-    await command.editReply('This command can only be used in project channels, not threads')
+    await command.editReply(
+      'This command can only be used in project channels, not threads',
+    )
     return
   }
 
@@ -56,7 +63,9 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
   }
 
   if (!projectDirectory) {
-    await command.editReply('This channel is not configured with a project directory')
+    await command.editReply(
+      'This channel is not configured with a project directory',
+    )
     return
   }
 
@@ -106,7 +115,9 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
     const messages = messagesResponse.data
 
-    await command.editReply(`Resumed session "${sessionTitle}" in ${thread.toString()}`)
+    await command.editReply(
+      `Resumed session "${sessionTitle}" in ${thread.toString()}`,
+    )
 
     await sendThreadMessage(
       thread,
@@ -119,7 +130,10 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
       })
 
       if (skippedCount > 0) {
-        await sendThreadMessage(thread, `*Skipped ${skippedCount} older assistant parts...*`)
+        await sendThreadMessage(
+          thread,
+          `*Skipped ${skippedCount} older assistant parts...*`,
+        )
       }
 
       if (content.trim()) {
@@ -200,7 +214,9 @@ export async function handleResumeAutocomplete({
 
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))
-      .filter((session) => session.title.toLowerCase().includes(focusedValue.toLowerCase()))
+      .filter((session) =>
+        session.title.toLowerCase().includes(focusedValue.toLowerCase()),
+      )
       .slice(0, 25)
       .map((session) => {
         const dateStr = new Date(session.time.updated).toLocaleString()

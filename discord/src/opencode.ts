@@ -17,7 +17,12 @@ import {
   type Config as SdkConfig,
 } from '@opencode-ai/sdk/v2'
 import { getBotToken } from './database.js'
-import { getDataDir, getLockPort, getMemoryEnabled, getVerboseOpencodeServer } from './config.js'
+import {
+  getDataDir,
+  getLockPort,
+  getMemoryEnabled,
+  getVerboseOpencodeServer,
+} from './config.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -49,7 +54,13 @@ const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
 const ANSI_ESCAPE_REGEX =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g
 
-function truncateWithEllipsis({ value, maxLength }: { value: string; maxLength: number }): string {
+function truncateWithEllipsis({
+  value,
+  maxLength,
+}: {
+  value: string
+  maxLength: number
+}): string {
   if (maxLength <= 3) {
     return value.slice(0, maxLength)
   }
@@ -74,11 +85,20 @@ function sanitizeForCodeFence(line: string): string {
   return line.replaceAll('```', '`\u200b``')
 }
 
-function pushStartupStderrTail({ stderrTail, chunk }: { stderrTail: string[]; chunk: string }): void {
+function pushStartupStderrTail({
+  stderrTail,
+  chunk,
+}: {
+  stderrTail: string[]
+  chunk: string
+}): void {
   const incomingLines = splitOutputChunkLines(chunk)
   const truncatedLines = incomingLines.map((line) => {
     const sanitizedLine = sanitizeForCodeFence(line)
-    return truncateWithEllipsis({ value: sanitizedLine, maxLength: STARTUP_STDERR_LINE_MAX_LENGTH })
+    return truncateWithEllipsis({
+      value: sanitizedLine,
+      maxLength: STARTUP_STDERR_LINE_MAX_LENGTH,
+    })
   })
   stderrTail.push(...truncatedLines)
   if (stderrTail.length > STARTUP_STDERR_TAIL_LIMIT) {
@@ -98,9 +118,17 @@ function buildStartupTimeoutReason({
     return baseReason
   }
 
-  const formatReason = ({ lines, omitted }: { lines: string[]; omitted: number }): string => {
+  const formatReason = ({
+    lines,
+    omitted,
+  }: {
+    lines: string[]
+    omitted: number
+  }): string => {
     const omittedLine =
-      omitted > 0 ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n` : ''
+      omitted > 0
+        ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n`
+        : ''
     const stderrCodeBlock = `${omittedLine}${lines.join('\n')}`
     return `${baseReason}\nLast opencode stderr lines:\n\`\`\`text\n${stderrCodeBlock}\n\`\`\``
   }
@@ -109,13 +137,19 @@ function buildStartupTimeoutReason({
   let omitted = 0
   let formattedReason = formatReason({ lines, omitted })
 
-  while (formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH && lines.length > 0) {
+  while (
+    formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH &&
+    lines.length > 0
+  ) {
     lines = lines.slice(1)
     omitted += 1
     formattedReason = formatReason({ lines, omitted })
   }
 
-  return truncateWithEllipsis({ value: formattedReason, maxLength: STARTUP_ERROR_REASON_MAX_LENGTH })
+  return truncateWithEllipsis({
+    value: formattedReason,
+    maxLength: STARTUP_ERROR_REASON_MAX_LENGTH,
+  })
 }
 
 type ServerInitOptions = { originalRepoDirectory?: string; channelId?: string }
@@ -183,7 +217,10 @@ async function waitForServer({
   }
   return new ServerStartError({
     port,
-    reason: buildStartupTimeoutReason({ maxAttempts, stderrTail: startupStderrTail }),
+    reason: buildStartupTimeoutReason({
+      maxAttempts,
+      stderrTail: startupStderrTail,
+    }),
   })
 }
 
@@ -245,11 +282,15 @@ export async function initializeOpencodeForDirectory(
     [`${normalizedDirectory}/*`]: 'allow',
   }
   if (getMemoryEnabled()) {
-    const globalMemoryDir = path.join(getDataDir(), 'memory', 'global').replaceAll('\\', '/')
+    const globalMemoryDir = path
+      .join(getDataDir(), 'memory', 'global')
+      .replaceAll('\\', '/')
     externalDirectoryPermissions[globalMemoryDir] = 'allow'
     externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
     if (options?.channelId) {
-      const scopedMemoryDir = path.join(getDataDir(), 'memory', options.channelId).replaceAll('\\', '/')
+      const scopedMemoryDir = path
+        .join(getDataDir(), 'memory', options.channelId)
+        .replaceAll('\\', '/')
       externalDirectoryPermissions[scopedMemoryDir] = 'allow'
       externalDirectoryPermissions[`${scopedMemoryDir}/*`] = 'allow'
     }
@@ -263,54 +304,58 @@ export async function initializeOpencodeForDirectory(
   const botTokenFromDb = await getBotToken()
   const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
 
-  const serverProcess = spawn(opencodeCommand, ['serve', '--port', port.toString()], {
-    stdio: 'pipe',
-    detached: false,
-    cwd: directory,
-    shell: true, // Required for .cmd files on Windows
-    env: {
-      ...process.env,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({
-        $schema: 'https://opencode.ai/config.json',
-        lsp: false,
-        formatter: false,
-        plugin: [new URL('../src/opencode-plugin.ts', import.meta.url).href],
-        permission: {
-          edit: 'allow',
-          bash: 'allow',
-          external_directory: externalDirectoryPermissions,
-          webfetch: 'allow',
-        },
-        agent: {
-          explore: {
-            permission: {
-              '*': 'deny',
-              grep: 'allow',
-              glob: 'allow',
-              list: 'allow',
-              read: {
-                '*': 'allow',
-                '*.env': 'deny',
-                '*.env.*': 'deny',
-                '*.env.example': 'allow',
+  const serverProcess = spawn(
+    opencodeCommand,
+    ['serve', '--port', port.toString()],
+    {
+      stdio: 'pipe',
+      detached: false,
+      cwd: directory,
+      shell: true, // Required for .cmd files on Windows
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          lsp: false,
+          formatter: false,
+          plugin: [new URL('../src/opencode-plugin.ts', import.meta.url).href],
+          permission: {
+            edit: 'allow',
+            bash: 'allow',
+            external_directory: externalDirectoryPermissions,
+            webfetch: 'allow',
+          },
+          agent: {
+            explore: {
+              permission: {
+                '*': 'deny',
+                grep: 'allow',
+                glob: 'allow',
+                list: 'allow',
+                read: {
+                  '*': 'allow',
+                  '*.env': 'deny',
+                  '*.env.*': 'deny',
+                  '*.env.example': 'allow',
+                },
+                webfetch: 'allow',
+                websearch: 'allow',
+                codesearch: 'allow',
+                external_directory: externalDirectoryPermissions,
               },
-              webfetch: 'allow',
-              websearch: 'allow',
-              codesearch: 'allow',
-              external_directory: externalDirectoryPermissions,
             },
           },
-        },
-        skills: {
-          paths: [path.resolve(__dirname, '..', 'skills')],
-        },
-      } satisfies Config),
-      OPENCODE_PORT: port.toString(),
-      KIMAKI_DATA_DIR: getDataDir(),
-      ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
-      KIMAKI_LOCK_PORT: getLockPort().toString(),
+          skills: {
+            paths: [path.resolve(__dirname, '..', 'skills')],
+          },
+        } satisfies Config),
+        OPENCODE_PORT: port.toString(),
+        KIMAKI_DATA_DIR: getDataDir(),
+        ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
+        KIMAKI_LOCK_PORT: getLockPort().toString(),
+      },
     },
-  })
+  )
 
   // Buffer logs until we know if server started successfully.
   // Once ready, switch to forwarding if --verbose-opencode-server is set.
@@ -365,7 +410,10 @@ export async function initializeOpencodeForDirectory(
   })
 
   serverProcess.on('exit', (code) => {
-    opencodeLogger.log(`Opencode server on ${directory} exited with code:`, code)
+    opencodeLogger.log(
+      `Opencode server on ${directory} exited with code:`,
+      code,
+    )
     // Capture init options before deleting the entry so auto-restart preserves
     // channelId-scoped memory permissions and worktree repo access.
     const storedInitOptions = opencodeServers.get(directory)?.initOptions
@@ -377,13 +425,17 @@ export async function initializeOpencodeForDirectory(
         opencodeLogger.log(
           `Restarting server for directory: ${directory} (attempt ${retryCount + 1}/5)`,
         )
-        initializeOpencodeForDirectory(directory, storedInitOptions).then((result) => {
-          if (result instanceof Error) {
-            opencodeLogger.error(`Failed to restart opencode server:`, result)
-          }
-        })
+        initializeOpencodeForDirectory(directory, storedInitOptions).then(
+          (result) => {
+            if (result instanceof Error) {
+              opencodeLogger.error(`Failed to restart opencode server:`, result)
+            }
+          },
+        )
       } else {
-        opencodeLogger.error(`Server for ${directory} crashed too many times (5), not restarting`)
+        opencodeLogger.error(
+          `Server for ${directory} crashed too many times (5), not restarting`,
+        )
       }
     } else {
       serverRetryCount.delete(directory)
@@ -452,7 +504,9 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
  * Kills the existing process and reinitializes a new one.
  * Used for resolving opencode state issues, refreshing auth, plugins, etc.
  */
-export async function restartOpencodeServer(directory: string): Promise<OpenCodeErrors | true> {
+export async function restartOpencodeServer(
+  directory: string,
+): Promise<OpenCodeErrors | true> {
   const existing = opencodeServers.get(directory)
   // Preserve init options (channelId, originalRepoDirectory) so the restarted
   // server retains scoped memory permissions and worktree access.
@@ -475,7 +529,10 @@ export async function restartOpencodeServer(directory: string): Promise<OpenCode
   // Reset retry count for the fresh start
   serverRetryCount.delete(directory)
 
-  const result = await initializeOpencodeForDirectory(directory, storedInitOptions)
+  const result = await initializeOpencodeForDirectory(
+    directory,
+    storedInitOptions,
+  )
   if (result instanceof Error) {
     return result
   }

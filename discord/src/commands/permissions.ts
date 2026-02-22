@@ -17,7 +17,13 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
-function wildcardMatch({ value, pattern }: { value: string; pattern: string }): boolean {
+function wildcardMatch({
+  value,
+  pattern,
+}: {
+  value: string
+  pattern: string
+}): boolean {
   let escapedPattern = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*/g, '.*')
@@ -66,7 +72,10 @@ type PendingPermissionContext = {
 }
 
 // Store pending permission contexts by hash
-export const pendingPermissionContexts = new Map<string, PendingPermissionContext>()
+export const pendingPermissionContexts = new Map<
+  string,
+  PendingPermissionContext
+>()
 
 /**
  * Show permission buttons for a permission request.
@@ -143,7 +152,9 @@ export async function showPermissionButtons({
 /**
  * Handle button click for permission.
  */
-export async function handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
+export async function handlePermissionButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
 
   // Extract action and hash from customId (e.g., "permission_once:abc123")
@@ -152,7 +163,10 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
     return
   }
 
-  const response = actionPart.replace('permission_', '') as 'once' | 'always' | 'reject'
+  const response = actionPart.replace('permission_', '') as
+    | 'once'
+    | 'always'
+    | 'reject'
 
   const context = pendingPermissionContexts.get(contextHash)
 
@@ -168,7 +182,10 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
     if (!permClient) {
       throw new Error('OpenCode server not found for directory')
     }
-    const requestIds = context.requestIds.length > 0 ? context.requestIds : [context.permission.id]
+    const requestIds =
+      context.requestIds.length > 0
+        ? context.requestIds
+        : [context.permission.id]
     await Promise.all(
       requestIds.map((requestId) => {
         return permClient.permission.reply({
@@ -193,7 +210,9 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
       }
     })()
 
-    const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+    const patternStr = compactPermissionPatterns(
+      context.permission.patterns,
+    ).join(', ')
     await interaction.editReply({
       content:
         `⚠️ **Permission Required**\n` +
@@ -203,7 +222,9 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
       components: [], // Remove the buttons
     })
 
-    logger.log(`Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`)
+    logger.log(
+      `Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`,
+    )
   } catch (error) {
     logger.error('Error handling permission:', error)
     await interaction.editReply({

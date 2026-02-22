@@ -32,7 +32,10 @@ export function unnestCodeBlocksFromLists(markdown: string): string {
 
     const nextRaw = next?.raw ?? ''
     const needsNewline =
-      nextRaw && !chunk.endsWith('\n') && typeof nextRaw === 'string' && !nextRaw.startsWith('\n')
+      nextRaw &&
+      !chunk.endsWith('\n') &&
+      typeof nextRaw === 'string' &&
+      !nextRaw.startsWith('\n')
 
     result.push(needsNewline ? chunk + '\n' : chunk)
   }
@@ -41,7 +44,8 @@ export function unnestCodeBlocksFromLists(markdown: string): string {
 
 function processListToken(list: Tokens.List): Segment[] {
   const segments: Segment[] = []
-  const start = typeof list.start === 'number' ? list.start : parseInt(list.start, 10) || 1
+  const start =
+    typeof list.start === 'number' ? list.start : parseInt(list.start, 10) || 1
   const prefix = list.ordered ? (i: number) => `${start + i}. ` : () => '- '
 
   for (let i = 0; i < list.items.length; i++) {

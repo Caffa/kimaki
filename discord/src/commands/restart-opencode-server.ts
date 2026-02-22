@@ -2,10 +2,21 @@
 // Used for resolving opencode state issues, internal bugs, refreshing auth state, plugins, etc.
 // Aborts all in-progress sessions in this channel before restarting to avoid orphaned requests.
 
-import { ChannelType, MessageFlags, type ThreadChannel, type TextChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type ThreadChannel,
+  type TextChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
-import { initializeOpencodeForDirectory, restartOpencodeServer } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  initializeOpencodeForDirectory,
+  restartOpencodeServer,
+} from '../opencode.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getAllThreadSessionIds, getThreadIdBySessionId } from '../database.js'
 import { abortControllers } from '../session-handler.js'
@@ -71,7 +82,9 @@ export async function handleRestartOpencodeServerCommand({
   // Abort all in-progress sessions in this channel before restarting.
   // Find sessions with active abort controllers, check if their thread belongs
   // to this channel (thread parentId matches, or command was run in the thread itself).
-  const parentChannelId = isThread ? (channel as ThreadChannel).parentId : channel.id
+  const parentChannelId = isThread
+    ? (channel as ThreadChannel).parentId
+    : channel.id
   const activeSessionIds = [...abortControllers.keys()]
   let abortedCount = 0
 
@@ -92,14 +105,17 @@ export async function handleRestartOpencodeServerCommand({
       if (threadChannel instanceof Error || !threadChannel) {
         continue
       }
-      const threadParentId = 'parentId' in threadChannel ? threadChannel.parentId : null
+      const threadParentId =
+        'parentId' in threadChannel ? threadChannel.parentId : null
       if (threadId !== channel.id && threadParentId !== parentChannelId) {
         continue
       }
 
       const controller = abortControllers.get(sessionId)
       if (controller) {
-        logger.log(`[RESTART] Aborting session ${sessionId} in thread ${threadId}`)
+        logger.log(
+          `[RESTART] Aborting session ${sessionId} in thread ${threadId}`,
+        )
         controller.abort(new Error('Server restart requested'))
         abortControllers.delete(sessionId)
         abortedCount++
@@ -113,10 +129,14 @@ export async function handleRestartOpencodeServerCommand({
   }
 
   if (abortedCount > 0) {
-    logger.log(`[RESTART] Aborted ${abortedCount} active session(s) before restart`)
+    logger.log(
+      `[RESTART] Aborted ${abortedCount} active session(s) before restart`,
+    )
   }
 
-  logger.log(`[RESTART] Restarting opencode server for directory: ${projectDirectory}`)
+  logger.log(
+    `[RESTART] Restarting opencode server for directory: ${projectDirectory}`,
+  )
 
   const result = await restartOpencodeServer(projectDirectory)
 
@@ -135,5 +155,7 @@ export async function handleRestartOpencodeServerCommand({
   await command.editReply({
     content: `Opencode server **restarted** successfully${abortMsg}`,
   })
-  logger.log(`[RESTART] Opencode server restarted for directory: ${projectDirectory}`)
+  logger.log(
+    `[RESTART] Opencode server restarted for directory: ${projectDirectory}`,
+  )
 }

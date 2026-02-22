@@ -539,7 +539,9 @@ if (serverVersion !== null && compareVersions(serverVersion, VERSION) > 0) retur
   expect(result).toMatch(/\n```ts\n[\s\S]*\n```\n/)
 
   // Regression: these are the two failure modes seen in the session message
-  expect(result).not.toContain('**"Older client must not kill newer server"**- Start')
+  expect(result).not.toContain(
+    '**"Older client must not kill newer server"**- Start',
+  )
   expect(result).not.toContain('exercises:```')
 })
 

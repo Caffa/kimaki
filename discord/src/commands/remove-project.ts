@@ -32,7 +32,9 @@ export async function handleRemoveProjectCommand({
     const channels = await findChannelsByDirectory({ directory })
 
     if (channels.length === 0) {
-      await command.editReply(`No channels found for directory: \`${directory}\``)
+      await command.editReply(
+        `No channels found for directory: \`${directory}\``,
+      )
       return
     }
 
@@ -106,7 +108,9 @@ export async function handleRemoveProjectAutocomplete({
 
   try {
     // Get all directories with channels
-    const allChannels = (await findChannelsByDirectory({ channelType: 'text' })) as Array<{
+    const allChannels = (await findChannelsByDirectory({
+      channelType: 'text',
+    })) as Array<{
       directory: string
       channel_id: string
     }>

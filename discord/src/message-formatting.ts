@@ -33,7 +33,10 @@ export function resolveMentions(message: Message): string {
   for (const [userId, user] of message.mentions.users) {
     const member = message.guild?.members.cache.get(userId)
     const displayName = member?.displayName || user.displayName || user.username
-    content = content.replace(new RegExp(`<@!?${userId}>`, 'g'), `@${displayName}`)
+    content = content.replace(
+      new RegExp(`<@!?${userId}>`, 'g'),
+      `@${displayName}`,
+    )
   }
 
   // Replace role mentions <@&roleId> with @roleName
@@ -183,8 +186,8 @@ export function isTextMimeType(contentType: string | null): boolean {
 }
 
 export async function getTextAttachments(message: Message): Promise<string> {
-  const textAttachments = Array.from(message.attachments.values()).filter((attachment) =>
-    isTextMimeType(attachment.contentType),
+  const textAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => isTextMimeType(attachment.contentType),
   )
 
   if (textAttachments.length === 0) {
@@ -211,11 +214,17 @@ export async function getTextAttachments(message: Message): Promise<string> {
   return textContents.join('\n\n')
 }
 
-export async function getFileAttachments(message: Message): Promise<DiscordFileAttachment[]> {
-  const fileAttachments = Array.from(message.attachments.values()).filter((attachment) => {
-    const contentType = attachment.contentType || ''
-    return contentType.startsWith('image/') || contentType === 'application/pdf'
-  })
+export async function getFileAttachments(
+  message: Message,
+): Promise<DiscordFileAttachment[]> {
+  const fileAttachments = Array.from(message.attachments.values()).filter(
+    (attachment) => {
+      const contentType = attachment.contentType || ''
+      return (
+        contentType.startsWith('image/') || contentType === 'application/pdf'
+      )
+    },
+  )
 
   if (fileAttachments.length === 0) {
     return []
@@ -228,11 +237,16 @@ export async function getFileAttachments(message: Message): Promise<DiscordFileA
         catch: (e) => new FetchError({ url: attachment.url, cause: e }),
       })
       if (response instanceof Error) {
-        logger.error(`Error downloading attachment ${attachment.name}:`, response.message)
+        logger.error(
+          `Error downloading attachment ${attachment.name}:`,
+          response.message,
+        )
         return null
       }
       if (!response.ok) {
-        logger.error(`Failed to fetch attachment ${attachment.name}: ${response.status}`)
+        logger.error(
+          `Failed to fetch attachment ${attachment.name}: ${response.status}`,
+        )
         return null
       }
 
@@ -309,7 +323,9 @@ export function getToolSummaryText(part: Part): string {
   if (part.tool === 'webfetch') {
     const url = (part.state.input?.url as string) || ''
     const urlWithoutProtocol = url.replace(/^https?:\/\//, '')
-    return urlWithoutProtocol ? `*${escapeInlineMarkdown(urlWithoutProtocol)}*` : ''
+    return urlWithoutProtocol
+      ? `*${escapeInlineMarkdown(urlWithoutProtocol)}*`
+      : ''
   }
 
   if (part.tool === 'read') {
@@ -334,7 +350,11 @@ export function getToolSummaryText(part: Part): string {
     return pattern ? `*${escapeInlineMarkdown(pattern)}*` : ''
   }
 
-  if (part.tool === 'bash' || part.tool === 'todoread' || part.tool === 'todowrite') {
+  if (
+    part.tool === 'bash' ||
+    part.tool === 'todoread' ||
+    part.tool === 'todowrite'
+  ) {
     return ''
   }
 
@@ -359,9 +379,11 @@ export function getToolSummaryText(part: Part): string {
   const inputFields = Object.entries(part.state.input)
     .map(([key, value]) => {
       if (value === null || value === undefined) return null
-      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
+      const stringValue =
+        typeof value === 'string' ? value : JSON.stringify(value)
       const normalized = normalizeWhitespace(stringValue)
-      const truncatedValue = normalized.length > 50 ? normalized.slice(0, 50) + '…' : normalized
+      const truncatedValue =
+        normalized.length > 50 ? normalized.slice(0, 50) + '…' : normalized
       return `${key}: ${truncatedValue}`
     })
     .filter(Boolean)
@@ -386,8 +408,10 @@ export function formatTodoList(part: Part): string {
   // digit-with-period ⒈-⒛ for 1-20, fallback to regular number for 21+
   const digitWithPeriod = '⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛'
   const todoNumber = activeIndex + 1
-  const num = todoNumber <= 20 ? digitWithPeriod[todoNumber - 1] : `${todoNumber}.`
-  const content = activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
+  const num =
+    todoNumber <= 20 ? digitWithPeriod[todoNumber - 1] : `${todoNumber}.`
+  const content =
+    activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
@@ -403,7 +427,8 @@ export function formatPart(part: Part, prefix?: string): string {
     }
     const firstChar = text[0] || ''
     const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
-    const startsWithMarkdown = markdownStarters.includes(firstChar) || /^\d+\./.test(text)
+    const startsWithMarkdown =
+      markdownStarters.includes(firstChar) || /^\d+\./.test(text)
     if (startsWithMarkdown) {
       return `\n${text}`
     }
@@ -416,10 +441,16 @@ export function formatPart(part: Part, prefix?: string): string {
   }
 
   if (part.type === 'file') {
-    return prefix ? `📄 ${pfx}${part.filename || 'File'}` : `📄 ${part.filename || 'File'}`
+    return prefix
+      ? `📄 ${pfx}${part.filename || 'File'}`
+      : `📄 ${part.filename || 'File'}`
   }
 
-  if (part.type === 'step-start' || part.type === 'step-finish' || part.type === 'patch') {
+  if (
+    part.type === 'step-start' ||
+    part.type === 'step-finish' ||
+    part.type === 'patch'
+  ) {
     return ''
   }
 
@@ -486,12 +517,18 @@ export function formatPart(part: Part, prefix?: string): string {
       if (part.state.status === 'error') {
         return '⨯'
       }
-      if (part.tool === 'edit' || part.tool === 'write' || part.tool === 'apply_patch') {
+      if (
+        part.tool === 'edit' ||
+        part.tool === 'write' ||
+        part.tool === 'apply_patch'
+      ) {
         return '◼︎'
       }
       return '┣'
     })()
-    const toolParts = [part.tool, toolTitle, summaryText].filter(Boolean).join(' ')
+    const toolParts = [part.tool, toolTitle, summaryText]
+      .filter(Boolean)
+      .join(' ')
     return `${icon} ${pfx}${toolParts}`
   }
 

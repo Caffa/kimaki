@@ -1,10 +1,18 @@
 // /context-usage command - Show token usage and context window percentage for the current session.
 
-import { ChannelType, MessageFlags, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -24,7 +32,9 @@ function getTokenTotal({
   return input + output + reasoning + cache.read + cache.write
 }
 
-export async function handleContextUsageCommand({ command }: CommandContext): Promise<void> {
+export async function handleContextUsageCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
@@ -43,7 +53,8 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
+      content:
+        'This command can only be used in a thread with an active session',
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -91,7 +102,9 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     })
 
     const messages = messagesResponse.data || []
-    const assistantMessages = messages.filter((m) => m.info.role === 'assistant')
+    const assistantMessages = messages.filter(
+      (m) => m.info.role === 'assistant',
+    )
 
     if (assistantMessages.length === 0) {
       await command.editReply({
@@ -135,9 +148,14 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
       return getClient().provider.list({ directory: workingDirectory })
     })
     if (providersResult instanceof Error) {
-      logger.error('[CONTEXT-USAGE] Failed to fetch provider info:', providersResult)
+      logger.error(
+        '[CONTEXT-USAGE] Failed to fetch provider info:',
+        providersResult,
+      )
     } else {
-      const provider = providersResult.data?.all?.find((p) => p.id === providerID)
+      const provider = providersResult.data?.all?.find(
+        (p) => p.id === providerID,
+      )
       const model = provider?.models?.[modelID]
       if (model?.limit?.context) {
         contextLimit = model.limit.context
@@ -156,7 +174,9 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
         `**Context usage:** ${percentage}%, ${formattedTokens} / ${formattedLimit} tokens`,
       )
     } else {
-      lines.push(`**Context usage:** ${formattedTokens} tokens (context limit unavailable)`)
+      lines.push(
+        `**Context usage:** ${formattedTokens} tokens (context limit unavailable)`,
+      )
     }
 
     if (modelID) {
@@ -167,7 +187,9 @@ export async function handleContextUsageCommand({ command }: CommandContext): Pr
     }
 
     await command.editReply({ content: lines.join('\n') })
-    logger.log(`Context usage shown for session ${sessionId}: ${totalTokens} tokens`)
+    logger.log(
+      `Context usage shown for session ${sessionId}: ${totalTokens} tokens`,
+    )
   } catch (error) {
     logger.error('[CONTEXT-USAGE] Error:', error)
     await command.editReply({

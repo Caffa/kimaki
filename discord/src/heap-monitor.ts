@@ -54,7 +54,9 @@ export function writeHeapSnapshot(): string {
   const filename = `heap-${timestamp}-${Math.round(usedMB)}MB.heapsnapshot`
   const filepath = path.join(dir, filename)
 
-  logger.log(`Writing heap snapshot (${Math.round(usedMB)}MB / ${Math.round(limitMB)}MB, ${pct}%)`)
+  logger.log(
+    `Writing heap snapshot (${Math.round(usedMB)}MB / ${Math.round(limitMB)}MB, ${pct}%)`,
+  )
   v8.writeHeapSnapshot(filepath)
   logger.log(`Snapshot saved: ${filepath}`)
 
@@ -76,7 +78,10 @@ function checkHeapUsage(): void {
       try {
         writeHeapSnapshot()
       } catch (e) {
-        logger.error('Failed to write heap snapshot:', e instanceof Error ? e.message : String(e))
+        logger.error(
+          'Failed to write heap snapshot:',
+          e instanceof Error ? e.message : String(e),
+        )
       }
     } else {
       logger.log('Snapshot cooldown active, skipping')

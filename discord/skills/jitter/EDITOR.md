@@ -6,22 +6,22 @@ Reference for `window.app` methods and layer types. For utilities, see SKILL.md 
 
 ```javascript
 // Playback
-app.play();
-app.stopPlayback();
-app.moveCursor(timeInMs);
+app.play()
+app.stopPlayback()
+app.moveCursor(timeInMs)
 
 // Layer creation (opens picker or adds at cursor)
-app.addArtboard();
-app.addText("toolbar");
-app.addRectShape("toolbar");
-app.addEllipseShape("toolbar");
-app.addMedia("toolbar");
+app.addArtboard()
+app.addText('toolbar')
+app.addRectShape('toolbar')
+app.addEllipseShape('toolbar')
+app.addMedia('toolbar')
 
 // File operations
-app.renameFile(newName);
-app.deleteFile();
-app.downloadProject();
-app.scheduleSave();
+app.renameFile(newName)
+app.deleteFile()
+app.downloadProject()
+app.scheduleSave()
 ```
 
 ## Dispatch Actions
@@ -30,20 +30,21 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 
 ### Core Actions
 
-| Action Type | Purpose |
-|-------------|---------|
+| Action Type         | Purpose                |
+| ------------------- | ---------------------- |
 | `updateObjWithUndo` | Update node properties |
-| `addObjWithUndo` | Add new node |
-| `removeObjWithUndo` | Remove nodes |
-| `setSelection` | Select nodes |
-| `emptySelection` | Clear selection |
-| `undo` / `redo` | Undo/redo |
-| `setCurrentTime` | Set playhead time |
-| `zoomToSelection` | Zoom to selected |
+| `addObjWithUndo`    | Add new node           |
+| `removeObjWithUndo` | Remove nodes           |
+| `setSelection`      | Select nodes           |
+| `emptySelection`    | Clear selection        |
+| `undo` / `redo`     | Undo/redo              |
+| `setCurrentTime`    | Set playhead time      |
+| `zoomToSelection`   | Zoom to selected       |
 
 ## Layer Types
 
 ### Artboard
+
 ```javascript
 {
   type: "artboard",
@@ -57,6 +58,7 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 ```
 
 ### Text
+
 ```javascript
 {
   type: "text",
@@ -70,6 +72,7 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 ```
 
 ### Image / SVG / Video / GIF
+
 ```javascript
 {
   type: "image",  // or "svg", "video", "gif"
@@ -81,6 +84,7 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 ```
 
 ### Shapes
+
 ```javascript
 // Rectangle
 { type: "rect", fillColor: "#3B82F6", cornerRadius: 8 }
@@ -93,6 +97,7 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 ```
 
 ### Group
+
 ```javascript
 {
   type: "layerGrp",
@@ -106,15 +111,15 @@ Use `app.dispatchAction(action)` or `jitterUtils.*` helpers.
 
 All layers support:
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `x`, `y` | number | Position |
-| `width`, `height` | number | Size |
-| `angle` | number | Rotation in degrees |
-| `scale` | number | Scale factor |
-| `opacity` | number | 0-100 |
-| `shadowEnabled` | boolean | Drop shadow |
-| `strokeEnabled` | boolean | Stroke/border |
+| Property          | Type    | Description         |
+| ----------------- | ------- | ------------------- |
+| `x`, `y`          | number  | Position            |
+| `width`, `height` | number  | Size                |
+| `angle`           | number  | Rotation in degrees |
+| `scale`           | number  | Scale factor        |
+| `opacity`         | number  | 0-100               |
+| `shadowEnabled`   | boolean | Drop shadow         |
+| `strokeEnabled`   | boolean | Stroke/border       |
 
 ## Fill Colors
 
@@ -154,15 +159,19 @@ fillColor: {
 ## Animation Types
 
 ### Transform
+
 `scale`, `move`, `rotate`, `opacity`
 
 ### Enter/Exit
+
 `fadeIn/Out`, `growIn/Out`, `shrinkIn/Out`, `slideIn/Out`, `spinIn/Out`, `blurIn/Out`, `textIn/Out`
 
 ### Mask
+
 `maskRevealIn/Out`, `maskSlideIn/Out`, `maskCenterIn/Out`
 
 ### Media
+
 `playVideo`, `playAudio`
 
 ## Node Tree Structure
@@ -184,27 +193,27 @@ Artboard (type: "artboard")
 
 ```javascript
 // Current selection
-const state = app.props.observableEditorState.getSnapshot();
-const selectedIds = state.selection.nodesIds;
+const state = app.props.observableEditorState.getSnapshot()
+const selectedIds = state.selection.nodesIds
 
 // Project config
-const conf = app.props.observableImmutableConf.lastImmutableConf;
+const conf = app.props.observableImmutableConf.lastImmutableConf
 
 // File metadata
-const fileMeta = app.props.fileMeta;
+const fileMeta = app.props.fileMeta
 // { id, name, bucket, teamId }
 
 // Subscribe to changes
 const unsubscribe = app.props.observableImmutableConf.subscribe(() => {
   // Config changed
-});
+})
 ```
 
 ## File Actions
 
 ```javascript
-await app.props.fileActions.duplicateFile(fileId);  // Returns new ID
-await app.props.fileActions.deleteFile(fileId);
-await app.props.fileActions.renameFile(name);
-await app.props.fileActions.saveFile();
+await app.props.fileActions.duplicateFile(fileId) // Returns new ID
+await app.props.fileActions.deleteFile(fileId)
+await app.props.fileActions.renameFile(name)
+await app.props.fileActions.saveFile()
 ```

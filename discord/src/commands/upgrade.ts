@@ -10,7 +10,9 @@ import { spawn } from 'node:child_process'
 
 const logger = createLogger(LogPrefix.CLI)
 
-export async function handleUpgradeAndRestartCommand({ command }: CommandContext): Promise<void> {
+export async function handleUpgradeAndRestartCommand({
+  command,
+}: CommandContext): Promise<void> {
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   logger.log('[UPGRADE] /upgrade-and-restart triggered')

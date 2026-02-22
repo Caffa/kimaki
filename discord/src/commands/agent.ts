@@ -103,7 +103,9 @@ export async function resolveAgentCommandContext({
   const channel = interaction.channel
 
   if (!channel) {
-    await interaction.editReply({ content: 'This command can only be used in a channel' })
+    await interaction.editReply({
+      content: 'This command can only be used in a channel',
+    })
     return null
   }
 
@@ -141,7 +143,9 @@ export async function resolveAgentCommandContext({
   }
 
   if (channelAppId && channelAppId !== appId) {
-    await interaction.editReply({ content: 'This channel is not configured for this bot' })
+    await interaction.editReply({
+      content: 'This channel is not configured for this bot',
+    })
     return null
   }
 
@@ -257,7 +261,8 @@ export async function handleAgentCommand({
       .setPlaceholder('Select an agent')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
@@ -349,7 +354,10 @@ export async function handleQuickAgentCommand({
 
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
-  const context = await resolveAgentCommandContext({ interaction: command, appId })
+  const context = await resolveAgentCommandContext({
+    interaction: command,
+    appId,
+  })
   if (!context) {
     return
   }
@@ -361,7 +369,8 @@ export async function handleQuickAgentCommand({
       sessionId: context.sessionId,
       channelId: context.channelId,
     })
-    const previousAgentName = previousAgent.type !== 'none' ? previousAgent.agent : undefined
+    const previousAgentName =
+      previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
     if (previousAgentName === sanitizedAgentName) {
       await command.editReply({
@@ -373,7 +382,9 @@ export async function handleQuickAgentCommand({
     // Set the agent preference (DB write only, no HTTP calls)
     await setAgentForContext({ context, agentName: sanitizedAgentName })
 
-    const previousText = previousAgentName ? ` (was **${previousAgentName}**)` : ''
+    const previousText = previousAgentName
+      ? ` (was **${previousAgentName}**)`
+      : ''
 
     if (context.isThread && context.sessionId) {
       await command.editReply({
