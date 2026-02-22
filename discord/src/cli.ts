@@ -1305,7 +1305,6 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
 
   const forceSetup = Boolean(restart)
 
-  intro('🤖 Discord Bot Setup')
 
   // Step 0: Ensure required CLI tools are installed (OpenCode + Bun)
   await ensureCommandAvailable({
