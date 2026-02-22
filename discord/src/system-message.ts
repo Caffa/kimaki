@@ -330,6 +330,15 @@ npx -y kimaki send --channel ${channelId} --prompt "Run weekly test suite and su
 
 \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
 
+For scheduled tasks, use long and detailed prompts with goal, constraints, expected output format, and explicit completion criteria.
+
+Notification strategy for scheduled tasks:
+- Prefer selective mentions in the prompt instead of relying on broad thread notifications.
+- If a task needs user attention, include this instruction in the prompt: "mention @username when task requires user review or notification".
+- Replace \`@username\` with the actual user from the current thread context${username ? ` (in this thread: @${username})` : ''}.
+- Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
+- With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
+
 Manage scheduled tasks with:
 
 kimaki task list
@@ -338,9 +347,9 @@ kimaki task delete <id>
 \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
 
 Use case patterns:
-- Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`.
-- Weekly QA: schedule "run full test suite, inspect failures, and post summary".
-- Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, and commits results.
+- Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
+- Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention ${username ? `@${username}` : '@username'} only when failures require review".
+- Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
 
 Scheduled tasks can maintain project memory by reading and updating an md file in the repository (for example \`docs/automation-notes.md\`) on each run.
 
