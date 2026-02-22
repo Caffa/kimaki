@@ -106,6 +106,10 @@ function resolveTagIds({
     .map((tag) => tag.id)
 }
 
+function hasTagName({ tags, tagName }: { tags: string[]; tagName: string }) {
+  return tags.some((tag) => tag.toLowerCase().trim() === tagName.toLowerCase().trim())
+}
+
 async function upsertThreadFromFile({
   discordClient,
   forumChannel,
@@ -140,8 +144,20 @@ async function upsertThreadFromFile({
   const threadId = rawThreadId && isValidDiscordSnowflake({ value: rawThreadId }) ? rawThreadId : ''
   const title = getStringValue({ value: frontmatter.title }) || path.basename(filePath, '.md')
   const tags = toStringArray({ value: frontmatter.tags })
+  const normalizedSubfolder = subfolder?.replaceAll('\\', '/').toLowerCase()
+  const isGlobalSubfolder = Boolean(
+    normalizedSubfolder &&
+      (normalizedSubfolder === 'global' || normalizedSubfolder.startsWith('global/')),
+  )
+  const tagsWithScope =
+    isGlobalSubfolder && !hasTagName({ tags, tagName: 'global' })
+      ? [...tags, 'global']
+      : tags
   // Add project name as a forum tag if derived from subfolder
-  const allTags = project && !tags.includes(project) ? [...tags, project] : tags
+  const allTags =
+    project && !hasTagName({ tags: tagsWithScope, tagName: project })
+      ? [...tagsWithScope, project]
+      : tagsWithScope
   const starterContent = extractStarterContent({ body: parsed.body })
   const safeStarterContent = starterContent || title || 'Untitled post'
 

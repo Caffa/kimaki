@@ -121,21 +121,28 @@ tmux list-sessions
 
 function getMemoryInstructions({ channelId }: { channelId?: string }) {
   if (!channelId) return ''
+  const globalMemoryDir = path.join(getDataDir(), 'memory', 'global')
   const memoryDir = path.join(getDataDir(), 'memory', channelId)
   return `
 ## memory
 
-Persistent memory is stored in: \`${memoryDir}\`
-This directory contains markdown files that persist knowledge across sessions and projects.
+Persistent memory has two scopes:
+- Channel memory: \`${memoryDir}\`
+- Global memory: \`${globalMemoryDir}\`
+Both directories contain markdown files that persist knowledge across sessions and projects.
 Use regular Read, Write, and Edit tools to manage memory files. No special memory tools are needed.
 
 ### when to read memory
-Before answering questions about prior work, decisions, preferences, or project context, list existing memory files and read relevant ones first.
+Before answering questions about prior work, decisions, preferences, or project context, list existing files in both memory scopes and read relevant ones first.
 At the start of complex tasks, check if there is prior context that could inform your approach.
 
 ### when to write memory
-After making important decisions, completing significant tasks, or learning user-specific patterns and preferences, write or update the relevant memory file.
+After making important decisions, completing significant tasks, or learning user-specific patterns and preferences, write or update the relevant memory file in the correct scope.
 Include enough context that a future session can understand the decision without the original conversation.
+
+### scope rules
+- Use channel memory for project/thread-specific notes.
+- Use global memory for reusable preferences or conventions that should be available across all channels.
 
 ### filename conventions
 Use kebab-case topic slugs as filenames. One file per topic. Examples:

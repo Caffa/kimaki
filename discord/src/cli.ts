@@ -56,6 +56,7 @@ import {
   Events,
   ChannelType,
   type CategoryChannel,
+  type ForumChannel,
   type Guild,
   REST,
   Routes,
@@ -1147,15 +1148,34 @@ async function ensureMemoryForumSync({
   appId: string
   botName?: string
 }) {
-  cliLogger.log('ensureMemoryForumSync: starting...')
   const guild = guilds[0]
   if (!guild) {
     cliLogger.warn('No guild available, skipping memory forum setup')
     return
   }
-  cliLogger.log(`ensureMemoryForumSync: guild=${guild.name}, ensuring forum channel...`)
+
+  const ensureGlobalMemoryTag = async ({ forumChannel }: { forumChannel: ForumChannel }) => {
+    const hasGlobalTag = forumChannel.availableTags
+      .some((tag) => tag.name.toLowerCase().trim() === 'global')
+    if (hasGlobalTag) {
+      return
+    }
+
+    const setTagResult = await forumChannel
+      .setAvailableTags([...forumChannel.availableTags, { name: 'global' }], 'Ensure global memory tag')
+      .catch((cause) => cause)
+
+    if (setTagResult instanceof Error) {
+      cliLogger.warn('Failed to add global memory tag:', setTagResult.message)
+      return
+    }
+
+    cliLogger.log(`Added global tag to memory forum: #${forumChannel.name}`)
+  }
+
   const forumChannel = await ensureMemoryForumChannel({ guild, botName })
-  cliLogger.log(`ensureMemoryForumSync: forum channel=${forumChannel.name} (${forumChannel.id})`)
+  await ensureGlobalMemoryTag({ forumChannel })
+
   const memoryDir = path.join(getDataDir(), 'memory')
   await upsertForumSyncConfig({
     appId,

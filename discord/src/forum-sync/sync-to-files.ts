@@ -44,6 +44,22 @@ function resolveTagNames({
     .filter((tagName): tagName is string => Boolean(tagName))
 }
 
+function resolveSubfolderForThread({
+  existingSubfolder,
+  thread,
+  forumChannel,
+}: {
+  existingSubfolder?: string
+  thread: ThreadChannel
+  forumChannel: ForumChannel
+}) {
+  const hasGlobalTag = resolveTagNames({ thread, forumChannel })
+    .some((tagName) => tagName.toLowerCase().trim() === 'global')
+  if (hasGlobalTag) return 'global'
+  if (existingSubfolder) return existingSubfolder
+  return undefined
+}
+
 function buildFrontmatter({
   thread,
   forumChannel,
@@ -183,7 +199,11 @@ export async function syncForumToFiles({
       outputDir,
       runtimeState,
       previousFilePath: existing?.filePath,
-      subfolder: existing?.subfolder,
+      subfolder: resolveSubfolderForThread({
+        existingSubfolder: existing?.subfolder,
+        thread,
+        forumChannel,
+      }),
       project: getStringValue({ value: existing?.frontmatter.project }),
       projectChannelId: getStringValue({ value: existing?.frontmatter.projectChannelId }),
     })

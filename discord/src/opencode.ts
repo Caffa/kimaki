@@ -232,7 +232,7 @@ export async function initializeOpencodeForDirectory(
   const normalizedDirectory = directory.replaceAll('\\', '/')
 
   // Build external_directory permissions, optionally including original repo for worktrees.
-  // Memory permissions are scoped to ~/.kimaki/memory/{channelId}/ when channelId is available.
+  // Memory permissions include channel-scoped memory and shared global memory.
   const externalDirectoryPermissions: Record<string, PermissionAction> = {
     '*': 'ask',
     '/tmp': 'allow',
@@ -244,6 +244,9 @@ export async function initializeOpencodeForDirectory(
     [normalizedDirectory]: 'allow',
     [`${normalizedDirectory}/*`]: 'allow',
   }
+  const globalMemoryDir = path.join(getDataDir(), 'memory', 'global').replaceAll('\\', '/')
+  externalDirectoryPermissions[globalMemoryDir] = 'allow'
+  externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
   if (options?.channelId) {
     const scopedMemoryDir = path.join(getDataDir(), 'memory', options.channelId).replaceAll('\\', '/')
     externalDirectoryPermissions[scopedMemoryDir] = 'allow'
