@@ -94,6 +94,18 @@ export function setVerboseOpencodeServer(enabled: boolean): void {
   verboseOpencodeServer = enabled
 }
 
+// Whether memory sync/instructions are enabled.
+// Disabled by default; enabled via --memory CLI flag.
+let memoryEnabled = false
+
+export function getMemoryEnabled(): boolean {
+  return memoryEnabled
+}
+
+export function setMemoryEnabled(enabled: boolean): void {
+  memoryEnabled = enabled
+}
+
 // Registered user commands, populated by registerCommands() in cli.ts.
 // Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
 export type RegisteredUserCommand = { name: string; description: string }

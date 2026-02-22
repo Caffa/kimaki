@@ -3,7 +3,7 @@
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
 import path from 'node:path'
-import { getCritiqueEnabled, getDataDir } from './config.js'
+import { getCritiqueEnabled, getDataDir, getMemoryEnabled } from './config.js'
 
 const CRITIQUE_INSTRUCTIONS = `
 ## showing diffs
@@ -120,6 +120,14 @@ tmux list-sessions
 `
 
 function getMemoryInstructions({ channelId }: { channelId?: string }) {
+  if (!getMemoryEnabled()) {
+    return `
+## memory
+
+Memory features are currently disabled for this bot run.
+If needed, restart kimaki with the \`--memory\` option.
+`
+  }
   if (!channelId) return ''
   const globalMemoryDir = path.join(getDataDir(), 'memory', 'global')
   const memoryDir = path.join(getDataDir(), 'memory', channelId)

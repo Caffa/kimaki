@@ -79,6 +79,8 @@ import {
   setDefaultMentionMode,
   setCritiqueEnabled,
   setVerboseOpencodeServer,
+  getMemoryEnabled,
+  setMemoryEnabled,
   getProjectsDir,
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
@@ -1253,6 +1255,7 @@ async function backgroundInit({
 
 async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: CliOptions) {
   startCaffeinate()
+  const memoryEnabled = getMemoryEnabled()
 
   const forceSetup = Boolean(restart)
 
@@ -1495,16 +1498,20 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({ currentDir, token, appId })
 
-    // Background: create memory forum channel + start forum sync
-    void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
-      .then(() => startConfiguredForumSync({ discordClient, appId }))
-      .then((result) => {
-        if (!result) return
-        cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-      })
-      .catch((error) => {
-        cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
-      })
+    if (memoryEnabled) {
+      // Background: create memory forum channel + start forum sync
+      void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
+        .then(() => startConfiguredForumSync({ discordClient, appId }))
+        .then((result) => {
+          if (!result) return
+          cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+        })
+        .catch((error) => {
+          cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
+        })
+    } else {
+      cliLogger.log('Memory disabled (--memory not provided)')
+    }
 
     showReadyMessage({ kimakiChannels: [], createdChannels, appId })
     outro('✨ Bot ready! Listening for messages...')
@@ -1704,16 +1711,20 @@ async function run({ restart, addChannels, useWorktrees, enableVoiceChannels }: 
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
 
-  // Background: create memory forum channel + start forum sync
-  void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
-    .then(() => startConfiguredForumSync({ discordClient, appId }))
-    .then((result) => {
-      if (!result) return
-      cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-    })
-    .catch((error) => {
-      cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
-    })
+  if (memoryEnabled) {
+    // Background: create memory forum channel + start forum sync
+    void ensureMemoryForumSync({ guilds, appId, botName: discordClient.user?.username })
+      .then(() => startConfiguredForumSync({ discordClient, appId }))
+      .then((result) => {
+        if (!result) return
+        cliLogger.warn(`Forum sync startup failed: ${result.message}`)
+      })
+      .catch((error) => {
+        cliLogger.warn('Memory forum setup failed:', error instanceof Error ? error.message : String(error))
+      })
+  } else {
+    cliLogger.log('Memory disabled (--memory not provided)')
+  }
 
   showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro('✨ Setup complete! Listening for new messages... do not close this process.')
@@ -1735,6 +1746,7 @@ cli
     'Default verbosity for all channels (tools-and-text, text-and-essential-tools, or text-only)',
   )
   .option('--mention-mode', 'Bot only responds when @mentioned (default for all channels)')
+  .option('--memory', 'Enable memory sync and persistent memory features')
   .option('--no-critique', 'Disable automatic diff upload to critique.work in system prompts')
   .option('--auto-restart', 'Automatically restart the bot on crash or OOM kill')
   .option('--verbose-opencode-server', 'Forward OpenCode server stdout/stderr to kimaki.log')
@@ -1748,6 +1760,7 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
+      memory?: boolean
       noCritique?: boolean
       autoRestart?: boolean
       verboseOpencodeServer?: boolean
@@ -1776,6 +1789,11 @@ cli
         if (options.mentionMode) {
           setDefaultMentionMode(true)
           cliLogger.log('Default mention mode: enabled (bot only responds when @mentioned)')
+        }
+
+        setMemoryEnabled(Boolean(options.memory))
+        if (options.memory) {
+          cliLogger.log('Memory enabled')
         }
 
         if (options.noCritique) {

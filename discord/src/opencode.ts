@@ -17,7 +17,7 @@ import {
   type Config as SdkConfig,
 } from '@opencode-ai/sdk/v2'
 import { getBotToken } from './database.js'
-import { getDataDir, getLockPort, getVerboseOpencodeServer } from './config.js'
+import { getDataDir, getLockPort, getMemoryEnabled, getVerboseOpencodeServer } from './config.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -244,13 +244,15 @@ export async function initializeOpencodeForDirectory(
     [normalizedDirectory]: 'allow',
     [`${normalizedDirectory}/*`]: 'allow',
   }
-  const globalMemoryDir = path.join(getDataDir(), 'memory', 'global').replaceAll('\\', '/')
-  externalDirectoryPermissions[globalMemoryDir] = 'allow'
-  externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
-  if (options?.channelId) {
-    const scopedMemoryDir = path.join(getDataDir(), 'memory', options.channelId).replaceAll('\\', '/')
-    externalDirectoryPermissions[scopedMemoryDir] = 'allow'
-    externalDirectoryPermissions[`${scopedMemoryDir}/*`] = 'allow'
+  if (getMemoryEnabled()) {
+    const globalMemoryDir = path.join(getDataDir(), 'memory', 'global').replaceAll('\\', '/')
+    externalDirectoryPermissions[globalMemoryDir] = 'allow'
+    externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
+    if (options?.channelId) {
+      const scopedMemoryDir = path.join(getDataDir(), 'memory', options.channelId).replaceAll('\\', '/')
+      externalDirectoryPermissions[scopedMemoryDir] = 'allow'
+      externalDirectoryPermissions[`${scopedMemoryDir}/*`] = 'allow'
+    }
   }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
