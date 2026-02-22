@@ -46,7 +46,7 @@ import {
   registerVoiceStateHandler,
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { handleOpencodeSession } from './session-handler.js'
+import { handleOpencodeSession, type SessionStartSourceContext } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 
@@ -78,6 +78,7 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
+import { startTaskRunner } from './task-runner.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
@@ -104,6 +105,28 @@ function parseEmbedFooterMarker<T extends Record<string, unknown>>({
     return parsed as T
   } catch {
     return undefined
+  }
+}
+
+function parseSessionStartSourceFromMarker(
+  marker: ThreadStartMarker | undefined,
+): SessionStartSourceContext | undefined {
+  if (!marker?.scheduledKind) {
+    return undefined
+  }
+  if (marker.scheduledKind !== 'at' && marker.scheduledKind !== 'cron') {
+    return undefined
+  }
+  if (
+    typeof marker.scheduledTaskId !== 'number' ||
+    !Number.isInteger(marker.scheduledTaskId) ||
+    marker.scheduledTaskId < 1
+  ) {
+    return { scheduleKind: marker.scheduledKind }
+  }
+  return {
+    scheduleKind: marker.scheduledKind,
+    scheduledTaskId: marker.scheduledTaskId,
   }
 }
 
@@ -207,6 +230,13 @@ export async function startDiscordBot({
         footer: message.embeds[0]?.footer?.text,
       })
       const isCliInjectedPrompt = Boolean(isSelfBotMessage && promptMarker?.cliThreadPrompt)
+      const sessionStartSource = isCliInjectedPrompt
+        ? parseSessionStartSourceFromMarker(promptMarker)
+        : undefined
+      const cliInjectedUsername = isCliInjectedPrompt ? promptMarker?.username || 'kimaki-cli' : undefined
+      const cliInjectedUserId = isCliInjectedPrompt ? promptMarker?.userId : undefined
+      const cliInjectedAgent = isCliInjectedPrompt ? promptMarker?.agent : undefined
+      const cliInjectedModel = isCliInjectedPrompt ? promptMarker?.model : undefined
 
       if (message.author?.bot && !isCliInjectedPrompt) {
         return
@@ -388,9 +418,13 @@ export async function startDiscordBot({
             thread,
             projectDirectory,
             channelId: parent?.id || '',
-            username: message.member?.displayName || message.author.displayName,
-            userId: message.author.id,
+            username:
+              cliInjectedUsername || message.member?.displayName || message.author.displayName,
+            userId: cliInjectedUserId || message.author.id,
             appId: currentAppId,
+            sessionStartSource,
+            agent: cliInjectedAgent,
+            model: cliInjectedModel,
           })
           return
         }
@@ -476,11 +510,13 @@ export async function startDiscordBot({
           originalMessage: message,
           images: fileAttachments,
           channelId: parent?.id,
-          username: isCliInjectedPrompt
-            ? 'kimaki-cli'
-            : message.member?.displayName || message.author.displayName,
-          userId: isCliInjectedPrompt ? undefined : message.author.id,
+          username:
+            cliInjectedUsername || message.member?.displayName || message.author.displayName,
+          userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
           appId: currentAppId,
+          sessionStartSource,
+          agent: cliInjectedAgent,
+          model: cliInjectedModel,
         })
         return
       }
@@ -806,6 +842,8 @@ export async function startDiscordBot({
         `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
       )
 
+      const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
+
       await handleOpencodeSession({
         prompt,
         thread,
@@ -816,6 +854,7 @@ export async function startDiscordBot({
         userId: marker.userId,
         agent: marker.agent,
         model: marker.model,
+        sessionStartSource: botThreadStartSource,
       })
     } catch (error) {
       voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)
@@ -834,6 +873,7 @@ export async function startDiscordBot({
   await discordClient.login(token)
 
   startHeapMonitor()
+  const stopTaskRunner = startTaskRunner({ token })
 
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
@@ -845,6 +885,8 @@ export async function startDiscordBot({
     ;(global as any).shuttingDown = true
 
     try {
+      await stopTaskRunner()
+
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
         voiceLogger.log(`[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`)

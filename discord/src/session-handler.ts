@@ -21,6 +21,8 @@ import {
   getPartMessageIds,
   setPartMessage,
   getChannelDirectory,
+  setSessionStartSource,
+  type ScheduledTaskScheduleKind,
 } from './database.js'
 import { getCurrentModelInfo } from './commands/model.js'
 import {
@@ -283,6 +285,11 @@ async function resolveValidatedAgentPreference({
 
 export type DefaultModelSource = 'opencode-config' | 'opencode-recent' | 'opencode-provider-default'
 
+export type SessionStartSourceContext = {
+  scheduleKind: ScheduledTaskScheduleKind
+  scheduledTaskId?: number
+}
+
 /**
  * Get the default model from OpenCode when no user preference is set.
  * Priority (matches OpenCode TUI behavior):
@@ -489,6 +496,7 @@ export async function handleOpencodeSession({
   username,
   userId,
   appId,
+  sessionStartSource,
 }: {
   prompt: string
   thread: ThreadChannel
@@ -507,6 +515,8 @@ export async function handleOpencodeSession({
   /** Discord user ID for system prompt examples */
   userId?: string
   appId?: string
+  /** Metadata for sessions started by scheduled tasks */
+  sessionStartSource?: SessionStartSourceContext
 }): Promise<{ sessionID: string; result: any; port?: number } | undefined> {
   voiceLogger.log(
     `[OPENCODE SESSION] Starting for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
@@ -547,6 +557,7 @@ export async function handleOpencodeSession({
 
   let sessionId = existingSessionId
   let session
+  let createdNewSession = false
 
   if (sessionId) {
     sessionLogger.log(`Attempting to reuse existing session ${sessionId}`)
@@ -572,6 +583,7 @@ export async function handleOpencodeSession({
       directory: sdkDirectory,
     })
     session = sessionResponse.data
+    createdNewSession = true
     sessionLogger.log(`Created new session ${session?.id}`)
   }
 
@@ -581,6 +593,21 @@ export async function handleOpencodeSession({
 
   await setThreadSession(thread.id, session.id)
   sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
+
+  if (createdNewSession && sessionStartSource) {
+    const saveStartSourceResult = await errore.tryAsync(() => {
+      return setSessionStartSource({
+        sessionId: session.id,
+        scheduleKind: sessionStartSource.scheduleKind,
+        scheduledTaskId: sessionStartSource.scheduledTaskId,
+      })
+    })
+    if (saveStartSourceResult instanceof Error) {
+      sessionLogger.warn(
+        `[SESSION] Failed to store start source for session ${session.id}: ${saveStartSourceResult.message}`,
+      )
+    }
+  }
 
   // Store agent preference if provided
   if (agent) {

@@ -46,6 +46,386 @@ export type ThreadWorktree = {
   error_message: string | null
 }
 
+export type ScheduledTaskStatus = 'planned' | 'running' | 'completed' | 'cancelled' | 'failed'
+export type ScheduledTaskScheduleKind = 'at' | 'cron'
+
+export type ScheduledTask = {
+  id: number
+  status: ScheduledTaskStatus
+  schedule_kind: ScheduledTaskScheduleKind
+  run_at: Date | null
+  cron_expr: string | null
+  timezone: string | null
+  next_run_at: Date
+  running_started_at: Date | null
+  last_run_at: Date | null
+  last_error: string | null
+  attempts: number
+  payload_json: string
+  prompt_preview: string
+  channel_id: string | null
+  thread_id: string | null
+  session_id: string | null
+  project_directory: string | null
+  created_at: Date | null
+  updated_at: Date | null
+}
+
+export type SessionStartSource = {
+  session_id: string
+  schedule_kind: ScheduledTaskScheduleKind
+  scheduled_task_id: number | null
+  created_at: Date | null
+  updated_at: Date | null
+}
+
+function toScheduledTask(row: {
+  id: number
+  status: string
+  schedule_kind: string
+  run_at: Date | null
+  cron_expr: string | null
+  timezone: string | null
+  next_run_at: Date
+  running_started_at: Date | null
+  last_run_at: Date | null
+  last_error: string | null
+  attempts: number
+  payload_json: string
+  prompt_preview: string
+  channel_id: string | null
+  thread_id: string | null
+  session_id: string | null
+  project_directory: string | null
+  created_at: Date | null
+  updated_at: Date | null
+}): ScheduledTask {
+  return {
+    id: row.id,
+    status: row.status as ScheduledTaskStatus,
+    schedule_kind: row.schedule_kind as ScheduledTaskScheduleKind,
+    run_at: row.run_at,
+    cron_expr: row.cron_expr,
+    timezone: row.timezone,
+    next_run_at: row.next_run_at,
+    running_started_at: row.running_started_at,
+    last_run_at: row.last_run_at,
+    last_error: row.last_error,
+    attempts: row.attempts,
+    payload_json: row.payload_json,
+    prompt_preview: row.prompt_preview,
+    channel_id: row.channel_id,
+    thread_id: row.thread_id,
+    session_id: row.session_id,
+    project_directory: row.project_directory,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+function toSessionStartSource(row: {
+  session_id: string
+  schedule_kind: string
+  scheduled_task_id: number | null
+  created_at: Date | null
+  updated_at: Date | null
+}): SessionStartSource {
+  return {
+    session_id: row.session_id,
+    schedule_kind: row.schedule_kind as ScheduledTaskScheduleKind,
+    scheduled_task_id: row.scheduled_task_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+// ============================================================================
+// Scheduled Task Functions
+// ============================================================================
+
+export async function createScheduledTask({
+  scheduleKind,
+  runAt,
+  cronExpr,
+  timezone,
+  nextRunAt,
+  payloadJson,
+  promptPreview,
+  channelId,
+  threadId,
+  sessionId,
+  projectDirectory,
+}: {
+  scheduleKind: ScheduledTaskScheduleKind
+  runAt?: Date | null
+  cronExpr?: string | null
+  timezone?: string | null
+  nextRunAt: Date
+  payloadJson: string
+  promptPreview: string
+  channelId?: string | null
+  threadId?: string | null
+  sessionId?: string | null
+  projectDirectory?: string | null
+}): Promise<number> {
+  const prisma = await getPrisma()
+  const row = await prisma.scheduled_tasks.create({
+    data: {
+      status: 'planned',
+      schedule_kind: scheduleKind,
+      run_at: runAt ?? null,
+      cron_expr: cronExpr ?? null,
+      timezone: timezone ?? null,
+      next_run_at: nextRunAt,
+      payload_json: payloadJson,
+      prompt_preview: promptPreview,
+      channel_id: channelId ?? null,
+      thread_id: threadId ?? null,
+      session_id: sessionId ?? null,
+      project_directory: projectDirectory ?? null,
+    },
+    select: { id: true },
+  })
+  return row.id
+}
+
+export async function listScheduledTasks({
+  statuses,
+}: {
+  statuses?: ScheduledTaskStatus[]
+} = {}): Promise<ScheduledTask[]> {
+  const prisma = await getPrisma()
+  const rows = await prisma.scheduled_tasks.findMany({
+    where: statuses && statuses.length > 0 ? { status: { in: statuses } } : undefined,
+    orderBy: [{ next_run_at: 'asc' }, { id: 'asc' }],
+  })
+  return rows.map((row) => toScheduledTask(row))
+}
+
+export async function cancelScheduledTask(taskId: number): Promise<boolean> {
+  const prisma = await getPrisma()
+  const result = await prisma.scheduled_tasks.updateMany({
+    where: {
+      id: taskId,
+      status: {
+        in: ['planned', 'running'],
+      },
+    },
+    data: {
+      status: 'cancelled',
+      running_started_at: null,
+    },
+  })
+  return result.count > 0
+}
+
+export async function getDuePlannedScheduledTasks({
+  now,
+  limit,
+}: {
+  now: Date
+  limit: number
+}): Promise<ScheduledTask[]> {
+  const prisma = await getPrisma()
+  const rows = await prisma.scheduled_tasks.findMany({
+    where: {
+      status: 'planned',
+      next_run_at: {
+        lte: now,
+      },
+    },
+    orderBy: [{ next_run_at: 'asc' }, { id: 'asc' }],
+    take: limit,
+  })
+  return rows.map((row) => toScheduledTask(row))
+}
+
+export async function claimScheduledTaskRunning({
+  taskId,
+  startedAt,
+}: {
+  taskId: number
+  startedAt: Date
+}): Promise<boolean> {
+  const prisma = await getPrisma()
+  const result = await prisma.scheduled_tasks.updateMany({
+    where: {
+      id: taskId,
+      status: 'planned',
+    },
+    data: {
+      status: 'running',
+      running_started_at: startedAt,
+    },
+  })
+  return result.count > 0
+}
+
+export async function recoverStaleRunningScheduledTasks({
+  staleBefore,
+}: {
+  staleBefore: Date
+}): Promise<number> {
+  const prisma = await getPrisma()
+  const result = await prisma.scheduled_tasks.updateMany({
+    where: {
+      status: 'running',
+      running_started_at: {
+        lte: staleBefore,
+      },
+    },
+    data: {
+      status: 'planned',
+      running_started_at: null,
+    },
+  })
+  return result.count
+}
+
+export async function markScheduledTaskOneShotCompleted({
+  taskId,
+  completedAt,
+}: {
+  taskId: number
+  completedAt: Date
+}): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.scheduled_tasks.update({
+    where: { id: taskId },
+    data: {
+      status: 'completed',
+      last_run_at: completedAt,
+      running_started_at: null,
+      last_error: null,
+    },
+  })
+}
+
+export async function markScheduledTaskCronRescheduled({
+  taskId,
+  completedAt,
+  nextRunAt,
+}: {
+  taskId: number
+  completedAt: Date
+  nextRunAt: Date
+}): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.scheduled_tasks.update({
+    where: { id: taskId },
+    data: {
+      status: 'planned',
+      last_run_at: completedAt,
+      running_started_at: null,
+      last_error: null,
+      next_run_at: nextRunAt,
+    },
+  })
+}
+
+export async function markScheduledTaskFailed({
+  taskId,
+  failedAt,
+  errorMessage,
+}: {
+  taskId: number
+  failedAt: Date
+  errorMessage: string
+}): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.scheduled_tasks.update({
+    where: { id: taskId },
+    data: {
+      status: 'failed',
+      last_run_at: failedAt,
+      running_started_at: null,
+      last_error: errorMessage,
+      attempts: {
+        increment: 1,
+      },
+    },
+  })
+}
+
+export async function markScheduledTaskCronRetry({
+  taskId,
+  failedAt,
+  errorMessage,
+  nextRunAt,
+}: {
+  taskId: number
+  failedAt: Date
+  errorMessage: string
+  nextRunAt: Date
+}): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.scheduled_tasks.update({
+    where: { id: taskId },
+    data: {
+      status: 'planned',
+      next_run_at: nextRunAt,
+      last_run_at: failedAt,
+      running_started_at: null,
+      last_error: errorMessage,
+      attempts: {
+        increment: 1,
+      },
+    },
+  })
+}
+
+export async function setSessionStartSource({
+  sessionId,
+  scheduleKind,
+  scheduledTaskId,
+}: {
+  sessionId: string
+  scheduleKind: ScheduledTaskScheduleKind
+  scheduledTaskId?: number
+}): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.session_start_sources.upsert({
+    where: { session_id: sessionId },
+    create: {
+      session_id: sessionId,
+      schedule_kind: scheduleKind,
+      scheduled_task_id: scheduledTaskId ?? null,
+    },
+    update: {
+      schedule_kind: scheduleKind,
+      scheduled_task_id: scheduledTaskId ?? null,
+    },
+  })
+}
+
+export async function getSessionStartSourcesBySessionIds(
+  sessionIds: string[],
+): Promise<Map<string, SessionStartSource>> {
+  if (sessionIds.length === 0) {
+    return new Map<string, SessionStartSource>()
+  }
+  const prisma = await getPrisma()
+  const chunkSize = 500
+  const chunks: string[][] = []
+  for (let index = 0; index < sessionIds.length; index += chunkSize) {
+    chunks.push(sessionIds.slice(index, index + chunkSize))
+  }
+
+  const rowGroups = await Promise.all(
+    chunks.map((chunkSessionIds) => {
+      return prisma.session_start_sources.findMany({
+        where: {
+          session_id: {
+            in: chunkSessionIds,
+          },
+        },
+      })
+    }),
+  )
+  const rows = rowGroups.flatMap((group) => group)
+  return new Map(rows.map((row) => [row.session_id, toSessionStartSource(row)]))
+}
+
 // ============================================================================
 // Channel Model Functions
 // ============================================================================

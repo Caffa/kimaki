@@ -10,6 +10,7 @@ function createCliForIdParsing() {
     .option('-c, --channel <channelId>', 'Discord channel ID')
     .option('--thread <threadId>', 'Thread ID')
     .option('--session <sessionId>', 'Session ID')
+    .option('--send-at <schedule>', 'Schedule')
 
   cli.command('session archive <threadId>', 'Archive a thread')
   cli
@@ -20,6 +21,8 @@ function createCliForIdParsing() {
   cli
     .command('add-project', 'Add a project')
     .option('-g, --guild <guildId>', 'Discord guild/server ID')
+
+  cli.command('task delete <id>', 'Delete task')
 
   return cli
 }
@@ -86,5 +89,25 @@ describe('goke CLI ID parsing', () => {
     expect(typeof result.args[0]).toBe('string')
     expect(result.options.channel).toBe(channelId)
     expect(typeof result.options.channel).toBe('string')
+  })
+
+  test('keeps --send-at cron string intact', () => {
+    const cli = createCliForIdParsing()
+    const cron = '0 9 * * 1'
+
+    const result = cli.parse(['node', 'kimaki', 'send', '--send-at', cron], { run: false })
+
+    expect(result.options.sendAt).toBe(cron)
+    expect(typeof result.options.sendAt).toBe('string')
+  })
+
+  test('keeps task delete ID as string before validation', () => {
+    const cli = createCliForIdParsing()
+    const taskId = '0012345'
+
+    const result = cli.parse(['node', 'kimaki', 'task', 'delete', taskId], { run: false })
+
+    expect(result.args[0]).toBe(taskId)
+    expect(typeof result.args[0]).toBe('string')
   })
 })

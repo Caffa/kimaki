@@ -208,6 +208,10 @@ export type ThreadStartMarker = {
   agent?: string
   /** Model to use (format: provider/model) */
   model?: string
+  /** Schedule kind for sessions started by scheduled tasks */
+  scheduledKind?: 'at' | 'cron'
+  /** Scheduled task ID that triggered this message */
+  scheduledTaskId?: number
 }
 
 export function getOpencodeSystemMessage({
@@ -310,6 +314,35 @@ Important:
 Use --agent to specify which agent to use for the session:
 
 npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
+
+## scheduled sends and task management
+
+Use \`--send-at\` to schedule a one-time or recurring task:
+
+npx -y kimaki send --channel ${channelId} --prompt "Reminder: review open PRs" --send-at "2026-03-01T09:00:00+01:00"
+npx -y kimaki send --channel ${channelId} --prompt "Run weekly test suite and summarize failures" --send-at "0 9 * * 1"
+
+\`--send-at\` supports the same useful options for new threads:
+- \`--notify-only\` to create a reminder thread without auto-starting a session
+- \`--worktree\` to create the scheduled thread as a worktree session
+- \`--agent\` and \`--model\` to control scheduled session behavior
+- \`--user\` to add a specific user to the scheduled thread
+
+\`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
+
+Manage scheduled tasks with:
+
+kimaki task list
+kimaki task delete <id>
+
+\`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
+
+Use case patterns:
+- Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`.
+- Weekly QA: schedule "run full test suite, inspect failures, and post summary".
+- Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, and commits results.
+
+Scheduled tasks can maintain project memory by reading and updating an md file in the repository (for example \`docs/automation-notes.md\`) on each run.
 
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 

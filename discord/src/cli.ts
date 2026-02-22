@@ -39,6 +39,10 @@ import {
   getPrisma,
   upsertForumSyncConfig,
   deleteStaleForumSyncConfigs,
+  createScheduledTask,
+  listScheduledTasks,
+  cancelScheduledTask,
+  getSessionStartSourcesBySessionIds,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -89,6 +93,14 @@ import { queueActionButtonsRequest, type ActionButtonsRequest } from './commands
 import { execAsync } from './worktree-utils.js'
 import { backgroundUpgradeKimaki, upgrade, getCurrentVersion } from './upgrade.js'
 import { startConfiguredForumSync } from './forum-sync/index.js'
+import {
+  getLocalTimeZone,
+  getPromptPreview,
+  parseSendAtValue,
+  serializeScheduledTaskPayload,
+  type ParsedSendAt,
+  type ScheduledTaskPayload,
+} from './task-schedule.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -176,6 +188,40 @@ async function sendDiscordMessageWithOptionalAttachment({
   } finally {
     fs.unlinkSync(tmpFile)
   }
+}
+
+function formatRelativeTime(target: Date): string {
+  const diffMs = target.getTime() - Date.now()
+  if (diffMs <= 0) {
+    return 'due now'
+  }
+
+  const totalSeconds = Math.floor(diffMs / 1000)
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`
+  }
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 24) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+  }
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+}
+
+function formatTaskScheduleLine(schedule: ParsedSendAt): string {
+  if (schedule.scheduleKind === 'at') {
+    return `one-time at ${schedule.runAt.toISOString()}`
+  }
+  return `cron "${schedule.cronExpr}" (${schedule.timezone}) next ${schedule.nextRunAt.toISOString()}`
 }
 
 const EXIT_NO_RESTART = 64
@@ -1917,6 +1963,7 @@ cli
   .option('-u, --user <username>', 'Discord username to add to thread')
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
+  .option('--send-at <schedule>', 'Schedule send for future (ISO date/time or cron expression)')
   .option('--thread <threadId>', 'Post prompt to an existing thread')
   .option('--session <sessionId>', 'Post prompt to thread mapped to an existing session')
   .option('--wait', 'Wait for session to complete, then print session text to stdout')
@@ -1932,6 +1979,7 @@ cli
       user?: string
       agent?: string
       model?: string
+      sendAt?: string
       thread?: string
       session?: string
       wait?: boolean
@@ -1947,6 +1995,7 @@ cli
           session: sessionId,
         } = options
         const { project: projectPath } = options
+        const sendAt = options.sendAt
 
         const existingThreadMode = Boolean(threadId || sessionId)
 
@@ -1967,6 +2016,35 @@ cli
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (sendAt) {
+          if (options.wait) {
+            cliLogger.error('Cannot use --wait with --send-at')
+            process.exit(EXIT_NO_RESTART)
+          }
+          if (prompt.length > 1900) {
+            cliLogger.error('--send-at currently supports prompts up to 1900 characters')
+            process.exit(EXIT_NO_RESTART)
+          }
+        }
+
+        const parsedSchedule = (() => {
+          if (!sendAt) {
+            return null
+          }
+          return parseSendAtValue({
+            value: sendAt,
+            now: new Date(),
+            timezone: getLocalTimeZone(),
+          })
+        })()
+        if (parsedSchedule instanceof Error) {
+          cliLogger.error(parsedSchedule.message)
+          if (parsedSchedule.cause instanceof Error) {
+            cliLogger.error(parsedSchedule.cause.message)
+          }
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -1994,10 +2072,10 @@ cli
           if (options.user) {
             incompatibleFlags.push('--user')
           }
-          if (options.agent) {
+          if (!sendAt && options.agent) {
             incompatibleFlags.push('--agent')
           }
-          if (options.model) {
+          if (!sendAt && options.model) {
             incompatibleFlags.push('--model')
           }
           if (incompatibleFlags.length > 0) {
@@ -2212,6 +2290,39 @@ cli
             throw new Error('Thread parent channel is not configured with a project directory')
           }
 
+          if (parsedSchedule) {
+            const payload: ScheduledTaskPayload = {
+              kind: 'thread',
+              threadId: targetThreadId,
+              prompt,
+              agent: options.agent || null,
+              model: options.model || null,
+              username: null,
+              userId: null,
+            }
+            const taskId = await createScheduledTask({
+              scheduleKind: parsedSchedule.scheduleKind,
+              runAt: parsedSchedule.runAt,
+              cronExpr: parsedSchedule.cronExpr,
+              timezone: parsedSchedule.timezone,
+              nextRunAt: parsedSchedule.nextRunAt,
+              payloadJson: serializeScheduledTaskPayload(payload),
+              promptPreview: getPromptPreview(prompt),
+              channelId: threadData.parent_id,
+              threadId: targetThreadId,
+              sessionId: sessionId || undefined,
+              projectDirectory: channelConfig.directory,
+            })
+
+            const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
+            note(
+              `Task ID: ${taskId}\nTarget thread: ${threadData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${threadUrl}`,
+              '✅ Task Scheduled',
+            )
+            cliLogger.log(threadUrl)
+            process.exit(0)
+          }
+
           const channelAppId = channelConfig.appId || undefined
           if (channelAppId && appId && channelAppId !== appId) {
             throw new Error(
@@ -2327,6 +2438,40 @@ cli
           : undefined
         const threadName = worktreeName ? `${WORKTREE_PREFIX}${baseThreadName}` : baseThreadName
 
+        if (parsedSchedule) {
+          const payload: ScheduledTaskPayload = {
+            kind: 'channel',
+            channelId,
+            prompt,
+            name: name || null,
+            notifyOnly: Boolean(notifyOnly),
+            worktreeName: worktreeName || null,
+            agent: options.agent || null,
+            model: options.model || null,
+            username: resolvedUser?.username || null,
+            userId: resolvedUser?.id || null,
+          }
+          const taskId = await createScheduledTask({
+            scheduleKind: parsedSchedule.scheduleKind,
+            runAt: parsedSchedule.runAt,
+            cronExpr: parsedSchedule.cronExpr,
+            timezone: parsedSchedule.timezone,
+            nextRunAt: parsedSchedule.nextRunAt,
+            payloadJson: serializeScheduledTaskPayload(payload),
+            promptPreview: getPromptPreview(prompt),
+            channelId,
+            projectDirectory,
+          })
+
+          const channelUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}`
+          note(
+            `Task ID: ${taskId}\nTarget channel: #${channelData.name}\nSchedule: ${formatTaskScheduleLine(parsedSchedule)}\n\nURL: ${channelUrl}`,
+            '✅ Task Scheduled',
+          )
+          cliLogger.log(channelUrl)
+          process.exit(0)
+        }
+
         // Embed marker for auto-start sessions (unless --notify-only)
         // Bot parses this YAML to know it should start a session, optionally create a worktree, and set initial user
         const embedMarker: ThreadStartMarker | undefined = notifyOnly
@@ -2395,6 +2540,70 @@ cli
       }
     },
   )
+
+cli
+  .command('task list', 'List scheduled tasks created via send --send-at')
+  .option('--all', 'Include terminal tasks (completed, cancelled, failed)')
+  .action(async (options: { all?: boolean }) => {
+    try {
+      await initDatabase()
+
+      const statuses = options.all
+        ? undefined
+        : (['planned', 'running'] as Array<'planned' | 'running'>)
+      const tasks = await listScheduledTasks({ statuses })
+      if (tasks.length === 0) {
+        cliLogger.log('No scheduled tasks found')
+        process.exit(0)
+      }
+
+      console.log(
+        'id | status | message | channelId | projectName | folderName | timeRemaining | firesAt | cron',
+      )
+
+      tasks.forEach((task) => {
+        const projectDirectory = task.project_directory || ''
+        const projectName = projectDirectory ? path.basename(projectDirectory) : '-'
+        const folderName = projectDirectory ? path.basename(path.dirname(projectDirectory)) : '-'
+        const firesAt = task.schedule_kind === 'at' && task.run_at ? task.run_at.toISOString() : '-'
+        const cronValue = task.schedule_kind === 'cron' ? task.cron_expr || '-' : '-'
+
+        console.log(
+          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${projectName} | ${folderName} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
+        )
+      })
+
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('task delete <id>', 'Cancel a scheduled task by ID')
+  .action(async (id: string) => {
+    try {
+      const taskId = Number.parseInt(id, 10)
+      if (Number.isNaN(taskId) || taskId < 1) {
+        cliLogger.error(`Invalid task ID: ${id}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      await initDatabase()
+      const cancelled = await cancelScheduledTask(taskId)
+      if (!cancelled) {
+        cliLogger.error(`Task ${taskId} not found or already finalized`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log(`Cancelled task ${taskId}`)
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error('Error:', error instanceof Error ? error.message : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
 
 cli
   .command(
@@ -2915,27 +3124,49 @@ cli
           .filter((row) => row.session_id !== '')
           .map((row) => [row.session_id, row.thread_id]),
       )
+      const sessionStartSources = await getSessionStartSourcesBySessionIds(
+        sessions.map((session) => session.id),
+      )
+
+      const scheduleModeLabel = ({ scheduleKind }: { scheduleKind: 'at' | 'cron' }): 'delay' | 'cron' => {
+        if (scheduleKind === 'at') {
+          return 'delay'
+        }
+        return 'cron'
+      }
 
       if (options.json) {
-        const output = sessions.map((session) => ({
-          id: session.id,
-          title: session.title || 'Untitled Session',
-          directory: session.directory,
-          updated: new Date(session.time.updated).toISOString(),
-          source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
-          threadId: sessionToThread.get(session.id) || null,
-        }))
+        const output = sessions.map((session) => {
+          const startSource = sessionStartSources.get(session.id)
+          const startedBy = startSource
+            ? `scheduled-${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}`
+            : null
+          return {
+            id: session.id,
+            title: session.title || 'Untitled Session',
+            directory: session.directory,
+            updated: new Date(session.time.updated).toISOString(),
+            source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
+            threadId: sessionToThread.get(session.id) || null,
+            startedBy,
+            scheduledTaskId: startSource?.scheduled_task_id || null,
+          }
+        })
         console.log(JSON.stringify(output, null, 2))
         process.exit(0)
       }
 
       for (const session of sessions) {
         const threadId = sessionToThread.get(session.id)
+        const startSource = sessionStartSources.get(session.id)
         const source = threadId ? '(kimaki)' : '(opencode)'
+        const startedBy = startSource
+          ? ` | started-by: ${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}${startSource.scheduled_task_id ? ` (#${startSource.scheduled_task_id})` : ''}`
+          : ''
         const updatedAt = new Date(session.time.updated).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}`,
         )
       }
 

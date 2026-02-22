@@ -95,6 +95,35 @@ CREATE TABLE IF NOT EXISTS "global_models" (
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "global_models_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "scheduled_tasks" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "status" TEXT NOT NULL DEFAULT 'planned',
+    "schedule_kind" TEXT NOT NULL,
+    "run_at" DATETIME,
+    "cron_expr" TEXT,
+    "timezone" TEXT,
+    "next_run_at" DATETIME NOT NULL,
+    "running_started_at" DATETIME,
+    "last_run_at" DATETIME,
+    "last_error" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "payload_json" TEXT NOT NULL,
+    "prompt_preview" TEXT NOT NULL,
+    "channel_id" TEXT,
+    "thread_id" TEXT,
+    "session_id" TEXT,
+    "project_directory" TEXT,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE sqlite_sequence(name,seq);
+CREATE TABLE IF NOT EXISTS "session_start_sources" (
+    "session_id" TEXT NOT NULL PRIMARY KEY,
+    "schedule_kind" TEXT NOT NULL,
+    "scheduled_task_id" INTEGER,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "app_id" TEXT NOT NULL,
@@ -104,5 +133,6 @@ CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE sqlite_sequence(name,seq);
+CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
+CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
 CREATE UNIQUE INDEX "forum_sync_configs_app_id_forum_channel_id_key" ON "forum_sync_configs"("app_id", "forum_channel_id");

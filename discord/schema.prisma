@@ -140,6 +140,52 @@ model global_models {
   bot bot_tokens @relation(fields: [app_id], references: [app_id])
 }
 
+enum task_status {
+  planned
+  running
+  completed
+  cancelled
+  failed
+}
+
+enum task_schedule_kind {
+  at
+  cron
+}
+
+model scheduled_tasks {
+  id                 Int                @id @default(autoincrement())
+  status             task_status        @default(planned)
+  schedule_kind      task_schedule_kind
+  run_at             DateTime?
+  cron_expr          String?
+  timezone           String?
+  next_run_at        DateTime
+  running_started_at DateTime?
+  last_run_at        DateTime?
+  last_error         String?
+  attempts           Int                @default(0)
+  payload_json       String
+  prompt_preview     String
+  channel_id         String?
+  thread_id          String?
+  session_id         String?
+  project_directory  String?
+  created_at         DateTime?          @default(now())
+  updated_at         DateTime?          @default(now()) @updatedAt
+
+  @@index([status, next_run_at])
+  @@index([channel_id, status])
+}
+
+model session_start_sources {
+  session_id         String             @id
+  schedule_kind      task_schedule_kind
+  scheduled_task_id  Int?
+  created_at         DateTime?          @default(now())
+  updated_at         DateTime?          @default(now()) @updatedAt
+}
+
 model forum_sync_configs {
   id               Int       @id @default(autoincrement())
   app_id           String
