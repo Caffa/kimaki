@@ -501,7 +501,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
       }),
       kimaki_archive_thread: tool({
         description:
-          'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread and only after your final message contains no new information the user needs to read (for example, after confirming a git push). If you archive too early, the user may miss that message notification in Discord. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',
+          'Archive the current Discord thread to hide it from the Discord left sidebar. Only call this when the user explicitly asks to close or archive the thread and only after your final message contains no new information the user needs to read (for example, after confirming a git push). If the user asks to set a reminder or scheduled task and it is successfully created, archive the thread after sending the final confirmation. If you archive too early, the user may miss that message notification in Discord. This tool also aborts the current session, so it should ALWAYS be called as the last tool in your response.',
         args: {},
         async execute(_args, context) {
           const prisma = await getPrisma()
