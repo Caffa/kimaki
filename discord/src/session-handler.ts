@@ -1960,56 +1960,71 @@ export async function handleOpencodeSession({
             : ''
         let contextInfo = ''
         const folderName = path.basename(sdkDirectory)
-        const branchResult = await errore.tryAsync(() => {
-          return execAsync('git symbolic-ref --short HEAD', {
-            cwd: sdkDirectory,
-          })
-        })
+
+        // Run git branch, token fetch, and provider list in parallel to
+        // minimize footer latency (matters for archive-thread 5s delay race)
+        const [branchResult, contextResult] = await Promise.all([
+          errore.tryAsync(() => {
+            return execAsync('git symbolic-ref --short HEAD', {
+              cwd: sdkDirectory,
+            })
+          }),
+          errore.tryAsync(async () => {
+            // Fetch final token count from API since message.updated events can arrive
+            // after session.idle due to race conditions in event ordering
+            const [messagesResult, providersResult] = await Promise.all([
+              tokensUsedInSession === 0
+                ? errore.tryAsync(() => {
+                    return getClient().session.messages({
+                      sessionID: session.id,
+                      directory: sdkDirectory,
+                    })
+                  })
+                : null,
+              errore.tryAsync(() => {
+                return getClient().provider.list({
+                  directory: sdkDirectory,
+                })
+              }),
+            ])
+
+            if (messagesResult && !(messagesResult instanceof Error)) {
+              const messages = messagesResult.data || []
+              const lastAssistant = [...messages]
+                .reverse()
+                .find((m) => m.info.role === 'assistant')
+              if (lastAssistant && 'tokens' in lastAssistant.info) {
+                const tokens = lastAssistant.info.tokens as {
+                  input: number
+                  output: number
+                  reasoning: number
+                  cache: { read: number; write: number }
+                }
+                tokensUsedInSession =
+                  tokens.input +
+                  tokens.output +
+                  tokens.reasoning +
+                  tokens.cache.read +
+                  tokens.cache.write
+              }
+            }
+
+            if (providersResult && !(providersResult instanceof Error)) {
+              const provider = providersResult.data?.all?.find(
+                (p) => p.id === usedProviderID,
+              )
+              const model = provider?.models?.[usedModel || '']
+              if (model?.limit?.context) {
+                const percentage = Math.round(
+                  (tokensUsedInSession / model.limit.context) * 100,
+                )
+                contextInfo = ` ⋅ ${percentage}%`
+              }
+            }
+          }),
+        ])
         const branchName =
           branchResult instanceof Error ? '' : branchResult.stdout.trim()
-
-        const contextResult = await errore.tryAsync(async () => {
-          // Fetch final token count from API since message.updated events can arrive
-          // after session.idle due to race conditions in event ordering
-          if (tokensUsedInSession === 0) {
-            const messagesResponse = await getClient().session.messages({
-              sessionID: session.id,
-              directory: sdkDirectory,
-            })
-            const messages = messagesResponse.data || []
-            const lastAssistant = [...messages]
-              .reverse()
-              .find((m) => m.info.role === 'assistant')
-            if (lastAssistant && 'tokens' in lastAssistant.info) {
-              const tokens = lastAssistant.info.tokens as {
-                input: number
-                output: number
-                reasoning: number
-                cache: { read: number; write: number }
-              }
-              tokensUsedInSession =
-                tokens.input +
-                tokens.output +
-                tokens.reasoning +
-                tokens.cache.read +
-                tokens.cache.write
-            }
-          }
-
-          const providersResponse = await getClient().provider.list({
-            directory: sdkDirectory,
-          })
-          const provider = providersResponse.data?.all?.find(
-            (p) => p.id === usedProviderID,
-          )
-          const model = provider?.models?.[usedModel || '']
-          if (model?.limit?.context) {
-            const percentage = Math.round(
-              (tokensUsedInSession / model.limit.context) * 100,
-            )
-            contextInfo = ` ⋅ ${percentage}%`
-          }
-        })
         if (contextResult instanceof Error) {
           sessionLogger.error(
             'Failed to fetch provider info for context percentage:',
