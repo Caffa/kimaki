@@ -886,3 +886,24 @@ export async function deleteForumSyncConfig({
     where: { app_id: appId, forum_channel_id: forumChannelId },
   })
 }
+
+/** Delete forum sync configs that share the same outputDir but have a different forumChannelId.
+ * This cleans up stale entries left behind when a forum channel is deleted and recreated. */
+export async function deleteStaleForumSyncConfigs({
+  appId,
+  forumChannelId,
+  outputDir,
+}: {
+  appId: string
+  forumChannelId: string
+  outputDir: string
+}) {
+  const prisma = await getPrisma()
+  await prisma.forum_sync_configs.deleteMany({
+    where: {
+      app_id: appId,
+      output_dir: outputDir,
+      NOT: { forum_channel_id: forumChannelId },
+    },
+  })
+}

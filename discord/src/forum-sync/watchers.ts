@@ -364,6 +364,8 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
 
   registerDiscordSyncListeners({ discordClient })
 
+  // Process each config independently so one stale/deleted forum channel
+  // doesn't block the watcher from starting for other valid configs.
   for (const entry of loadedConfig) {
     const runtimeState = buildRuntimeState({
       forumChannelId: entry.forumChannelId,
@@ -374,11 +376,8 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
 
     const ensureResult = await ensureDirectory({ directory: entry.outputDir })
     if (ensureResult instanceof Error) {
-      return new ForumSyncOperationError({
-        forumChannelId: entry.forumChannelId,
-        reason: `failed to create ${entry.outputDir}`,
-        cause: ensureResult,
-      })
+      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: failed to create ${entry.outputDir}`)
+      continue
     }
 
     const fileToDiscordResult = await syncFilesToForum({
@@ -387,7 +386,10 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
       outputDir: entry.outputDir,
       runtimeState,
     })
-    if (fileToDiscordResult instanceof Error) return fileToDiscordResult
+    if (fileToDiscordResult instanceof Error) {
+      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: FS->Discord sync failed: ${fileToDiscordResult.message}`)
+      continue
+    }
 
     const discordToFileResult = await syncForumToFiles({
       discordClient,
@@ -396,10 +398,16 @@ export async function startConfiguredForumSync({ discordClient, appId }: StartFo
       forceFullRefresh: true,
       runtimeState,
     })
-    if (discordToFileResult instanceof Error) return discordToFileResult
+    if (discordToFileResult instanceof Error) {
+      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: Discord->FS sync failed: ${discordToFileResult.message}`)
+      continue
+    }
 
     const watcherResult = await startWatcherForRuntimeState({ runtimeState, discordClient })
-    if (watcherResult instanceof Error) return watcherResult
+    if (watcherResult instanceof Error) {
+      forumLogger.warn(`Skipping forum ${entry.forumChannelId}: watcher failed: ${watcherResult.message}`)
+      continue
+    }
 
     forumLogger.log(
       `Forum sync started for ${entry.forumChannelId} (${entry.direction}) -> ${entry.outputDir}`,

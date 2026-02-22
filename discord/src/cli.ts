@@ -38,6 +38,7 @@ import {
   getThreadIdBySessionId,
   getPrisma,
   upsertForumSyncConfig,
+  deleteStaleForumSyncConfigs,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -1146,18 +1147,29 @@ async function ensureMemoryForumSync({
   appId: string
   botName?: string
 }) {
+  cliLogger.log('ensureMemoryForumSync: starting...')
   const guild = guilds[0]
   if (!guild) {
     cliLogger.warn('No guild available, skipping memory forum setup')
     return
   }
+  cliLogger.log(`ensureMemoryForumSync: guild=${guild.name}, ensuring forum channel...`)
   const forumChannel = await ensureMemoryForumChannel({ guild, botName })
+  cliLogger.log(`ensureMemoryForumSync: forum channel=${forumChannel.name} (${forumChannel.id})`)
   const memoryDir = path.join(getDataDir(), 'memory')
   await upsertForumSyncConfig({
     appId,
     forumChannelId: forumChannel.id,
     outputDir: memoryDir,
     direction: 'bidirectional',
+  })
+  // Clean up stale configs left behind when the forum channel was deleted and recreated.
+  // Without this, startConfiguredForumSync would iterate over the stale config first,
+  // fail to resolve the deleted channel, and skip starting the watcher entirely.
+  await deleteStaleForumSyncConfigs({
+    appId,
+    forumChannelId: forumChannel.id,
+    outputDir: memoryDir,
   })
   cliLogger.log(`Memory forum sync configured: #${forumChannel.name} (${forumChannel.id})`)
 }

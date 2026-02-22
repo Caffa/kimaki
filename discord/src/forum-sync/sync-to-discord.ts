@@ -7,7 +7,7 @@ import path from 'node:path'
 import type { Client, ForumChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
 import { extractStarterContent, getStringValue, parseFrontmatter, toStringArray } from './markdown.js'
-import { loadExistingForumFiles, resolveForumChannel } from './discord-operations.js'
+import { resolveForumChannel } from './discord-operations.js'
 import { syncSingleThreadToFile } from './sync-to-files.js'
 import {
   ForumSyncOperationError,
@@ -52,6 +52,44 @@ function stripSystemFieldsFromUnsyncedFile({
 
 function isValidDiscordSnowflake({ value }: { value: string }) {
   return /^\d{17,20}$/.test(value)
+}
+
+async function collectMarkdownEntries({
+  dir,
+  outputDir,
+}: {
+  dir: string
+  outputDir: string
+}): Promise<Array<{ filePath: string; subfolder?: string }>> {
+  const exists = await fs.promises.access(dir).then(() => true).catch(() => false)
+  if (!exists) return []
+
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+  const relativeSub = path.relative(outputDir, dir)
+  const subfolder = relativeSub && relativeSub !== '.' ? relativeSub : undefined
+
+  const markdownFiles: Array<{ filePath: string; subfolder?: string }> = entries
+    .filter((entry) => {
+      return entry.isFile() && entry.name.endsWith('.md')
+    })
+    .map((entry) => {
+      return { filePath: path.join(dir, entry.name), subfolder }
+    })
+
+  const nestedEntries = await Promise.all(
+    entries
+      .filter((entry) => {
+        return entry.isDirectory()
+      })
+      .map(async (entry) => {
+        return await collectMarkdownEntries({
+          dir: path.join(dir, entry.name),
+          outputDir,
+        })
+      }),
+  )
+
+  return [...markdownFiles, ...nestedEntries.flat()]
 }
 
 function resolveTagIds({
@@ -349,21 +387,15 @@ export async function syncFilesToForum({
   const forumChannel = await resolveForumChannel({ discordClient, forumChannelId })
   if (forumChannel instanceof Error) return forumChannel
 
-  // Load existing files (with subfolder info) when no explicit paths given.
   // When changedFilePaths is provided (from file watcher), derive subfolder from path.
-  const existingFiles = changedFilePaths
-    ? undefined
-    : await loadExistingForumFiles({ outputDir })
+  // Otherwise, recursively scan all markdown files in outputDir.
   const changedEntries: Array<{ filePath: string; subfolder?: string }> = changedFilePaths
     ? changedFilePaths.map((filePath) => {
         const rel = path.relative(outputDir, path.dirname(filePath))
         const subfolder = rel && rel !== '.' ? rel : undefined
         return { filePath, subfolder }
       })
-    : (existingFiles || []).map((existing) => ({
-        filePath: existing.filePath,
-        subfolder: existing.subfolder,
-      }))
+    : await collectMarkdownEntries({ dir: outputDir, outputDir })
 
   // Resolve channel names for subfolders (each subfolder name is a Discord channel ID).
   // Cache resolutions to avoid redundant API calls.
@@ -404,7 +436,14 @@ export async function syncFilesToForum({
       project,
       projectChannelId,
     })
-    if (upsertResult instanceof Error) return upsertResult
+    // Keep syncing other files even if one file has stale/bad metadata
+    // (e.g. threadId that no longer exists). A single bad file should not
+    // block watcher startup for the whole memory directory.
+    if (upsertResult instanceof Error) {
+      forumLogger.warn(`Skipping ${filePath}: ${upsertResult.message}`)
+      result.skipped += 1
+      continue
+    }
 
     if (upsertResult === 'created') {
       result.created += 1
@@ -421,7 +460,10 @@ export async function syncFilesToForum({
       forumChannel,
       filePath,
     })
-    if (deleteResult instanceof Error) return deleteResult
+    if (deleteResult instanceof Error) {
+      forumLogger.warn(`Skipping delete ${filePath}: ${deleteResult.message}`)
+      continue
+    }
     result.deleted += 1
   }
 
