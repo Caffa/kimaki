@@ -254,6 +254,8 @@ Only users with these Discord permissions can send messages to the bot:
 - Manage Server permission
 - "Kimaki" role (case-insensitive)
 
+Other Discord bots are ignored by default. To allow another bot to trigger sessions (for multi-agent orchestration), assign it the "Kimaki" role.
+
 ## upgrading kimaki
 
 Use built-in upgrade commands when the user explicitly asks to update kimaki:

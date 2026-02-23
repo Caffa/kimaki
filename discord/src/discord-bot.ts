@@ -282,8 +282,13 @@ export async function startDiscordBot({
         ? promptMarker?.model
         : undefined
 
+      // Allow bot messages through if the bot has the "Kimaki" role assigned.
+      // This enables multi-agent orchestration where other bots (e.g. an
+      // orchestrator) can @mention Kimaki and trigger sessions like a human.
       if (message.author?.bot && !isCliInjectedPrompt) {
-        return
+        if (!hasKimakiBotPermission(message.member)) {
+          return
+        }
       }
 
       // Ignore messages that start with a mention of another user (not the bot).
