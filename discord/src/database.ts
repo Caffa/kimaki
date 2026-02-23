@@ -726,6 +726,8 @@ export async function getThreadWorktree(
 
 /**
  * Create a pending worktree entry for a thread.
+ * Ensures the parent thread_sessions row exists first (with empty session_id)
+ * to satisfy the FK constraint. The real session_id is set later by setThreadSession().
  */
 export async function createPendingWorktree({
   threadId,
@@ -737,6 +739,11 @@ export async function createPendingWorktree({
   projectDirectory: string
 }): Promise<void> {
   const prisma = await getPrisma()
+  await prisma.thread_sessions.upsert({
+    where: { thread_id: threadId },
+    create: { thread_id: threadId, session_id: '' },
+    update: {},
+  })
   await prisma.thread_worktrees.upsert({
     where: { thread_id: threadId },
     create: {
