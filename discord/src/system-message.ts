@@ -163,6 +163,8 @@ Use kebab-case topic slugs. One file per topic. Examples: \`auth-architecture.md
 Always list existing files first before creating a new one. If a related file exists, append to it instead of creating a new file.
 Use the Edit tool to append, never overwrite unless you read the file first and preserve all existing content.
 
+NEVER add secrets in memory .md files. each memory is synced in Discord as a discord forum thread.
+
 ### frontmatter format
 When creating a NEW memory file, use only these frontmatter fields:
 \`\`\`
@@ -301,7 +303,7 @@ Use --worktree to create a git worktree for the session:
 
 npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
 
-Important: 
+Important:
 - The prompt passed to \`--worktree\` is the task for the new thread running inside that worktree.
 - Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
 - Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
