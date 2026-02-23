@@ -1,7 +1,6 @@
 // Prisma client initialization with libsql adapter.
-// Connects via the in-process Hrana server when running (bot process),
-// or falls back to direct file: access (CLI subcommands).
-// The getHranaUrl() check determines which mode is active.
+// Uses KIMAKI_DB_URL env var when set (plugin process → Hrana HTTP),
+// otherwise falls back to direct file: access (bot process, CLI subcommands).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -10,7 +9,6 @@ import { PrismaClient, Prisma } from './generated/client.js'
 import { getDataDir } from './config.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { fileURLToPath } from 'node:url'
-import { getHranaUrl } from './hrana-server.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -40,14 +38,15 @@ export function getPrisma(): Promise<PrismaClient> {
 
 /**
  * Build the libsql connection URL.
- * Uses the Hrana HTTP endpoint when the server is running (bot process),
- * otherwise falls back to direct file: access (CLI subcommands).
+ * KIMAKI_DB_URL is set by the bot when spawning opencode plugin processes,
+ * pointing them at the in-process Hrana HTTP server. Future-proof for remote
+ * opencode processes on different machines.
+ * Without the env var (bot process, CLI subcommands), uses direct file: access.
  */
 function getDbUrl(): string {
-  const url = getHranaUrl()
-  if (url) return url
-
-  // Fallback: direct file access for CLI subcommands that don't start the server
+  if (process.env.KIMAKI_DB_URL) {
+    return process.env.KIMAKI_DB_URL
+  }
   const dataDir = getDataDir()
   const dbPath = path.join(dataDir, 'discord-sessions.db')
   return `file:${dbPath}`
@@ -58,7 +57,6 @@ async function initializePrisma(): Promise<PrismaClient> {
   const isFileMode = dbUrl.startsWith('file:')
 
   if (isFileMode) {
-    // Ensure data directory exists for file mode
     const dataDir = getDataDir()
     try {
       fs.mkdirSync(dataDir, { recursive: true })
@@ -73,13 +71,15 @@ async function initializePrisma(): Promise<PrismaClient> {
   dbLogger.log(`Opening database via: ${dbUrl}`)
 
   const adapter = new PrismaLibSql({ url: dbUrl })
-
   const prisma = new PrismaClient({ adapter })
 
   try {
     if (isFileMode) {
-      // PRAGMAs only apply to direct file connections.
-      // The hrana server manages WAL mode and timeouts on the server side.
+      // WAL mode allows concurrent reads while writing instead of blocking.
+      // busy_timeout makes SQLite retry for 5s instead of immediately failing with SQLITE_BUSY.
+      // The Hrana server (serving the plugin process) sets the same pragmas on its own connection.
+      // PRAGMAs are skipped for HTTP connections — they're connection-scoped and the Hrana
+      // server already configures them on its own libsql Database handle.
       await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL')
       await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000')
     }

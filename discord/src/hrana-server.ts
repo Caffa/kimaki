@@ -46,13 +46,12 @@ let server: http.Server | null = null
 let hranaUrl: string | null = null
 
 /**
- * Get the current Hrana HTTP URL.
- * Returns null if the server hasn't been started (CLI subcommands fall back to file:).
+ * Get the Hrana HTTP URL for injecting into plugin child processes.
+ * Returns null if the server hasn't been started yet.
+ * Only used for KIMAKI_DB_URL env var in opencode.ts — the bot process
+ * itself always uses direct file: access via Prisma.
  */
 export function getHranaUrl(): string | null {
-  if (process.env.KIMAKI_DB_URL) {
-    return process.env.KIMAKI_DB_URL
-  }
   return hranaUrl
 }
 
