@@ -281,7 +281,9 @@ To start a new thread/session in this channel pro-grammatically, run:
 
 npx -y kimaki send --channel ${channelId} --prompt "your prompt here"${username ? ` --user "${username}"` : ''}
 
-You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts (optionally \`--worktree\` for isolation), then come back and collect the results.
+You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts, then come back and collect the results.
+
+IMPORTANT: NEVER use \`--worktree\` unless the user explicitly asks for a worktree. Default to creating normal threads without worktrees.
 
 To send a prompt to an existing thread instead of creating a new one:
 
@@ -299,11 +301,12 @@ Use --notify-only to create a notification thread without starting an AI session
 
 npx -y kimaki send --channel ${channelId} --prompt "User cancelled subscription" --notify-only
 
-Use --worktree to create a git worktree for the session:
+Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
 npx -y kimaki send --channel ${channelId} --prompt "Add dark mode support" --worktree dark-mode${username ? ` --user "${username}"` : ''}
 
 Important:
+- NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
 - The prompt passed to \`--worktree\` is the task for the new thread running inside that worktree.
 - Do NOT tell that prompt to "create a new worktree" again, or it can create recursive worktree threads.
 - Ask the new session to operate on its current checkout only (e.g. "validate current worktree", "run checks in this repo").
@@ -323,7 +326,7 @@ When using a date for \`--send-at\`, it must be UTC in ISO format ending with \`
 
 \`--send-at\` supports the same useful options for new threads:
 - \`--notify-only\` to create a reminder thread without auto-starting a session
-- \`--worktree\` to create the scheduled thread as a worktree session
+- \`--worktree\` to create the scheduled thread as a worktree session (only if the user explicitly asks for a worktree)
 - \`--agent\` and \`--model\` to control scheduled session behavior
 - \`--user\` to add a specific user to the scheduled thread
 
@@ -355,6 +358,8 @@ Scheduled tasks can maintain project memory by reading and updating an md file i
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 
 ## creating worktrees
+
+ONLY create worktrees when the user explicitly asks for one. Never proactively use \`--worktree\` for normal tasks.
 
 When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
 
