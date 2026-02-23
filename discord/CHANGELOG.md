@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.68
+
+### Patch Changes
+
+- feat: **`kimaki_action_buttons` tool** - AI can now show Discord buttons for quick confirmations; buttons are dismissed automatically when user sends a new message
+- feat: **persistent memory** - `--memory` flag enables a project-scoped memory folder synced as a Discord forum channel, with system prompt instructions injected each session
+- feat: **global memory scope** - memory forum threads can be tagged as global to share context across all projects
+- feat: **scheduled tasks** - `kimaki send --send-at` allows scheduling messages to run at a future UTC time, with cron-style recurring tasks supported
+- feat: **forum markdown sync engine** - bidirectional sync between Discord forum channels and local markdown files, replacing `forum-sync.json` with SQLite-backed config
+- feat: **session origin tracking** - track where sessions were started (slash command, message, scheduled task, etc.) for better diagnostics
+- feat: **project list improvements** - `kimaki project list` now shows Discord channel name and folder name
+- fix: **action button rendering** - render action buttons after stream flush and hide tool call output during button wait
+- fix: **agent/model preference snapshots** - correctly snapshot thread agent and model preferences at session start
+- fix: **archive-thread race** - parallelize footer async calls to eliminate archive-thread race condition
+- fix: **session idle race** - resolve deferred session idle race in interactive flows (permissions, questions, file uploads)
+- fix: **worktree parent row** - ensure `thread_sessions` parent row exists before creating worktree child row
+- fix: **file attachments in bot-initiated threads** - read file attachments correctly when thread is started by the bot
+- fix: **resume stuck forever** - fix `/resume` command getting stuck on "Loading N messages..." indefinitely
+- fix: **interactive UI echo** - prevent user messages from being echoed back when flushing interactive UI state
+- fix: **duplicate part output** - prevent duplicate part output on interrupted/replayed runs
+- fix: **send-at UTC format** - require explicit UTC date format for scheduled task timestamps
+- fix: **startup timeout errors** - include opencode stderr tail in startup timeout error messages for easier debugging
+- perf: **non-blocking quick-start** - bot startup is now non-blocking so the ready message appears faster
+
 ## 0.4.67
 
 ### Patch Changes
