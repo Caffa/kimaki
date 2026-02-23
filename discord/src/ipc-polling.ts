@@ -10,6 +10,7 @@ import {
   claimPendingIpcRequests,
   completeIpcRequest,
   cancelAllPendingIpcRequests,
+  cancelStaleProcessingRequests,
 } from './database.js'
 import { showFileUploadButton } from './commands/file-upload.js'
 import { queueActionButtonsRequest } from './commands/action-buttons.js'
@@ -83,15 +84,22 @@ async function dispatchRequest({ req, discordClient }: {
         return new IpcDispatchError({ requestId: req.id, reason: 'Channel is not a thread' })
       }
 
-      const filePaths = await showFileUploadButton({
+      // Fire-and-forget: showFileUploadButton waits for user interaction
+      // (button click + modal + file download) which can take minutes.
+      // Don't block the dispatch loop — complete the IPC request asynchronously.
+      showFileUploadButton({
         thread,
         sessionId: req.session_id,
         directory: parsed.directory || '',
         prompt: parsed.prompt || 'Please upload files',
         maxFiles: Math.min(10, Math.max(1, parsed.maxFiles || 5)),
       })
-
-      await completeIpcRequest({ id: req.id, response: JSON.stringify({ filePaths }) })
+        .then((filePaths) => { return completeIpcRequest({ id: req.id, response: JSON.stringify({ filePaths }) }) })
+        .catch((e) => {
+          ipcLogger.error('[IPC] File upload error:', e instanceof Error ? e.message : String(e))
+          return completeIpcRequest({ id: req.id, response: JSON.stringify({ error: e instanceof Error ? e.message : 'File upload failed' }) })
+        })
+        .catch(() => {})
       return
     }
 
@@ -144,6 +152,12 @@ async function dispatchRequest({ req, discordClient }: {
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 
+// Cancel requests stuck in 'processing' longer than 5 minutes (e.g. hung
+// file upload where the user never clicks). Checked every 30 seconds.
+const STALE_TTL_MS = 5 * 60 * 1000
+const STALE_CHECK_INTERVAL_MS = 30 * 1000
+let lastStaleCheck = 0
+
 /**
  * Start polling the ipc_requests table for pending requests from the plugin.
  * Claims rows atomically (pending -> processing) to prevent duplicate dispatch.
@@ -159,9 +173,18 @@ export async function startIpcPolling({ discordClient }: { discordClient: Client
     if (polling) return
     polling = true
 
+    // Periodically sweep requests stuck in 'processing' past the TTL
+    const now = Date.now()
+    if (now - lastStaleCheck > STALE_CHECK_INTERVAL_MS) {
+      lastStaleCheck = now
+      await cancelStaleProcessingRequests({ ttlMs: STALE_TTL_MS })
+        .catch((e) => { ipcLogger.warn('Stale sweep failed:', (e as Error).message) })
+    }
+
     const claimed = await claimPendingIpcRequests()
       .catch((e) => new IpcDispatchError({ requestId: 'poll', reason: 'Claim failed', cause: e }))
     if (claimed instanceof Error) {
+      ipcLogger.error('IPC claim failed:', claimed.message)
       polling = false
       return
     }
@@ -170,7 +193,7 @@ export async function startIpcPolling({ discordClient }: { discordClient: Client
       const result = await dispatchRequest({ req, discordClient })
         .catch((e) => new IpcDispatchError({ requestId: req.id, reason: 'Dispatch threw', cause: e }))
       if (result instanceof Error) {
-        ipcLogger.error(`[IPC] Dispatch error for ${req.type}:`, result.message)
+        ipcLogger.error(`IPC dispatch error for ${req.type}:`, result.message)
       }
     }
 

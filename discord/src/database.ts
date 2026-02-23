@@ -1467,6 +1467,22 @@ export async function getIpcRequestById({ id }: { id: string }) {
   return prisma.ipc_requests.findUnique({ where: { id } })
 }
 
+/** Cancel IPC requests stuck in 'processing' longer than the TTL (e.g. hung file upload). */
+export async function cancelStaleProcessingRequests({ ttlMs }: { ttlMs: number }) {
+  const prisma = await getPrisma()
+  const cutoff = new Date(Date.now() - ttlMs)
+  return prisma.ipc_requests.updateMany({
+    where: {
+      status: 'processing',
+      updated_at: { lt: cutoff },
+    },
+    data: {
+      status: 'cancelled' as const,
+      response: JSON.stringify({ error: 'Request timed out' }),
+    },
+  })
+}
+
 /** Cancel all pending IPC requests (on startup cleanup and shutdown). */
 export async function cancelAllPendingIpcRequests() {
   const prisma = await getPrisma()

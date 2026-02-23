@@ -363,8 +363,11 @@ export function createHranaHandler(database: Database.Database): http.RequestLis
     }
     if (req.method === 'POST' && req.url === '/v2/pipeline') {
       const chunks: Buffer[] = []
+      let aborted = false
+      req.on('error', () => { aborted = true; res.destroy() })
       req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
       req.on('end', () => {
+        if (aborted) return
         const parseResult = errore.try({
           try: () => JSON.parse(Buffer.concat(chunks).toString()) as HranaPipelineRequest,
           catch: (e) => e as Error,
