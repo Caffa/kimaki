@@ -2241,6 +2241,7 @@ export async function handleOpencodeSession({
               sessionId: session.id,
               channelId,
               guildId: thread.guildId,
+              threadId: thread.id,
               worktree,
               channelTopic,
               username,

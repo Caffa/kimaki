@@ -215,6 +215,7 @@ export function getOpencodeSystemMessage({
   sessionId,
   channelId,
   guildId,
+  threadId,
   worktree,
   channelTopic,
   username,
@@ -224,6 +225,8 @@ export function getOpencodeSystemMessage({
   channelId?: string
   /** Discord server/guild ID for discord_list_users tool */
   guildId?: string
+  /** Discord thread ID (the thread this session runs in) */
+  threadId?: string
   worktree?: WorktreeInfo
   channelTopic?: string
   /** Current Discord username */
@@ -244,7 +247,7 @@ Set \`hasSideEffect: true\` for any command that writes files, modifies repo sta
 Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
 This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${userId ? `\nCurrent Discord user ID is: ${userId} (mention with <@${userId}>)` : ''}
+Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${userId ? `\nCurrent Discord user ID is: ${userId} (mention with <@${userId}>)` : ''}
 
 ## permissions
 
@@ -354,6 +357,11 @@ Use case patterns:
 - Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
 - Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention ${username ? `@${username}` : '@username'} only when failures require review".
 - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
+- Thread reminders: when the user says "remind me about this in 2 hours" (or any duration), use \`--send-at\` with \`--thread\` to resurface the current thread. Compute the future UTC time and send a mention so Discord shows a notification:
+
+npx -y kimaki send --session ${sessionId} --prompt "Reminder: <@${userId || 'USER_ID'}> you asked to be reminded about this thread." --send-at "<future_UTC_time>" --notify-only
+
+Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session. The \`<@userId>\` mention ensures the user gets a Discord notification.
 
 Scheduled tasks can maintain project memory by reading and updating an md file in the repository (for example \`docs/automation-notes.md\`) on each run.
 
