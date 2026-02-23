@@ -1380,3 +1380,98 @@ export async function deleteStaleForumSyncConfigs({
     },
   })
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOT INSTANCE - single-instance enforcement via PID tracking
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function upsertBotInstance({ pid }: { pid: number }) {
+  const prisma = await getPrisma()
+  await prisma.bot_instances.upsert({
+    where: { id: 1 },
+    update: { pid, started_at: new Date() },
+    create: { id: 1, pid, started_at: new Date() },
+  })
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IPC REQUESTS - plugin <-> bot communication via DB polling
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function createIpcRequest({
+  type,
+  sessionId,
+  threadId,
+  payload,
+}: {
+  type: import('./generated/client.js').ipc_request_type
+  sessionId: string
+  threadId: string
+  payload: string
+}) {
+  const prisma = await getPrisma()
+  return prisma.ipc_requests.create({
+    data: {
+      type,
+      session_id: sessionId,
+      thread_id: threadId,
+      payload,
+    },
+  })
+}
+
+/**
+ * Atomically claim pending IPC requests by updating status to 'processing'
+ * only for rows that are still 'pending'. Returns the claimed rows.
+ * This prevents duplicate dispatch when poll ticks overlap.
+ */
+export async function claimPendingIpcRequests() {
+  const prisma = await getPrisma()
+  const pending = await prisma.ipc_requests.findMany({
+    where: { status: 'pending' },
+    orderBy: { created_at: 'asc' },
+  })
+  if (pending.length === 0) return pending
+
+  // Atomically claim each one (updateMany with status guard)
+  const claimed: typeof pending = []
+  for (const req of pending) {
+    const result = await prisma.ipc_requests.updateMany({
+      where: { id: req.id, status: 'pending' },
+      data: { status: 'processing' },
+    })
+    if (result.count > 0) {
+      claimed.push(req)
+    }
+  }
+  return claimed
+}
+
+export async function completeIpcRequest({
+  id,
+  response,
+}: {
+  id: string
+  response: string
+}) {
+  const prisma = await getPrisma()
+  return prisma.ipc_requests.update({
+    where: { id },
+    data: { response, status: 'completed' as const },
+  })
+}
+
+export async function getIpcRequestById({ id }: { id: string }) {
+  const prisma = await getPrisma()
+  return prisma.ipc_requests.findUnique({ where: { id } })
+}
+
+/** Cancel all pending IPC requests (on startup cleanup and shutdown). */
+export async function cancelAllPendingIpcRequests() {
+  const prisma = await getPrisma()
+  await prisma.ipc_requests.updateMany({
+    where: { status: { in: ['pending', 'processing'] } },
+    data: { status: 'cancelled' as const, response: JSON.stringify({ error: 'Bot shutting down' }) },
+  })
+}

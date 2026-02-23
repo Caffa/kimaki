@@ -47,6 +47,7 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
+  upsertBotInstance,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -86,15 +87,13 @@ import {
 } from './discord-utils.js'
 import {
   spawn,
-  spawnSync,
   execSync,
   type ExecSyncOptions,
 } from 'node:child_process'
-import http from 'node:http'
+
 import {
   setDataDir,
   getDataDir,
-  getLockPort,
   setDefaultVerbosity,
   setDefaultMentionMode,
   setCritiqueEnabled,
@@ -104,14 +103,6 @@ import {
   getProjectsDir,
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
-import {
-  showFileUploadButton,
-  type FileUploadRequest,
-} from './commands/file-upload.js'
-import {
-  queueActionButtonsRequest,
-  type ActionButtonsRequest,
-} from './commands/action-buttons.js'
 import { execAsync } from './worktree-utils.js'
 import {
   backgroundUpgradeKimaki,
@@ -119,6 +110,8 @@ import {
   getCurrentVersion,
 } from './upgrade.js'
 import { startConfiguredForumSync } from './forum-sync/index.js'
+import { startHranaServer } from './hrana-server.js'
+import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import {
   getLocalTimeZone,
   getPromptPreview,
@@ -426,328 +419,6 @@ function startCaffeinate() {
 const cli = goke('kimaki')
 
 process.title = 'kimaki'
-
-async function killProcessOnPort(port: number): Promise<boolean> {
-  const isWindows = process.platform === 'win32'
-  const myPid = process.pid
-
-  try {
-    if (isWindows) {
-      // Windows: find PID using netstat, then kill
-      const result = spawnSync(
-        'cmd',
-        [
-          '/c',
-          `for /f "tokens=5" %a in ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') do @echo %a`,
-        ],
-        {
-          shell: false,
-          encoding: 'utf-8',
-        },
-      )
-      const pids = result.stdout
-        ?.trim()
-        .split('\n')
-        .map((p) => p.trim())
-        .filter((p) => /^\d+$/.test(p))
-      // Filter out our own PID and take the first (oldest)
-      const targetPid = pids?.find((p) => parseInt(p, 10) !== myPid)
-      if (targetPid) {
-        cliLogger.log(`Killing existing kimaki process (PID: ${targetPid})`)
-        spawnSync('taskkill', ['/F', '/PID', targetPid], { shell: false })
-        return true
-      }
-    } else {
-      // Unix: use lsof with -sTCP:LISTEN to only find the listening process
-      const result = spawnSync(
-        'lsof',
-        ['-i', `:${port}`, '-sTCP:LISTEN', '-t'],
-        {
-          shell: false,
-          encoding: 'utf-8',
-        },
-      )
-      const pids = result.stdout
-        ?.trim()
-        .split('\n')
-        .map((p) => p.trim())
-        .filter((p) => /^\d+$/.test(p))
-      // Filter out our own PID and take the first (oldest)
-      const targetPid = pids?.find((p) => parseInt(p, 10) !== myPid)
-      if (targetPid) {
-        const pid = parseInt(targetPid, 10)
-        cliLogger.log(`Stopping existing kimaki process (PID: ${pid})`)
-        process.kill(pid, 'SIGKILL')
-        return true
-      }
-    }
-  } catch (e) {
-    cliLogger.debug(`Failed to kill process on port ${port}:`, e)
-  }
-  return false
-}
-
-async function checkSingleInstance(): Promise<void> {
-  const lockPort = getLockPort()
-  try {
-    const response = await fetch(`http://127.0.0.1:${lockPort}`, {
-      signal: AbortSignal.timeout(1000),
-    })
-    if (response.ok) {
-      cliLogger.log(
-        `Another kimaki instance detected for data dir: ${getDataDir()}`,
-      )
-      await killProcessOnPort(lockPort)
-      // Wait a moment for port to be released
-      await new Promise((resolve) => {
-        setTimeout(resolve, 500)
-      })
-    }
-  } catch (error) {
-    cliLogger.debug(
-      'Lock port check failed:',
-      error instanceof Error ? error.message : String(error),
-    )
-    cliLogger.debug('No other kimaki instance detected on lock port')
-  }
-}
-
-// Set after Discord login. Used by the lock server /file-upload route.
-let discordClientRef: import('discord.js').Client | null = null
-
-async function startLockServer(): Promise<void> {
-  const lockPort = getLockPort()
-  return new Promise((resolve, reject) => {
-    const server = http.createServer(async (req, res) => {
-      // POST /file-upload - handle file upload requests from the opencode plugin
-      if (req.method === 'POST' && req.url === '/file-upload') {
-        if (!discordClientRef) {
-          res.writeHead(503, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: 'Discord client not ready' }))
-          return
-        }
-
-        let body = ''
-        req.on('data', (chunk: Buffer) => {
-          body += chunk.toString()
-        })
-
-        // Track if the client (plugin) disconnected so we don't write to closed socket.
-        // Use res.on('close') not req.on('close') because req 'close' fires after body
-        // is received (normal flow), while res 'close' fires on socket teardown.
-        let clientDisconnected = false
-        res.on('close', () => {
-          if (!res.writableFinished) {
-            clientDisconnected = true
-          }
-        })
-
-        req.on('end', async () => {
-          try {
-            const parsed = JSON.parse(body)
-            // Validate required fields
-            const request: FileUploadRequest = {
-              sessionId: String(parsed.sessionId || ''),
-              threadId: String(parsed.threadId || ''),
-              directory: String(parsed.directory || ''),
-              prompt: String(parsed.prompt || 'Please upload files'),
-              maxFiles: Math.min(10, Math.max(1, Number(parsed.maxFiles) || 5)),
-            }
-            if (!request.sessionId || !request.threadId || !request.directory) {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  error:
-                    'Missing required fields: sessionId, threadId, directory',
-                }),
-              )
-              return
-            }
-
-            const thread = await discordClientRef!.channels.fetch(
-              request.threadId,
-            )
-            if (!thread || !thread.isThread()) {
-              res.writeHead(404, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: 'Thread not found' }))
-              return
-            }
-
-            const filePaths = await showFileUploadButton({
-              thread,
-              sessionId: request.sessionId,
-              directory: request.directory,
-              prompt: request.prompt,
-              maxFiles: request.maxFiles,
-            })
-
-            if (clientDisconnected) {
-              return
-            }
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ filePaths }))
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
-            cliLogger.error('[FILE-UPLOAD] Error handling request:', message)
-            if (clientDisconnected) {
-              return
-            }
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: message }))
-          }
-        })
-        return
-      }
-
-      // POST /action-buttons - queue action buttons for session-handler to render
-      if (req.method === 'POST' && req.url === '/action-buttons') {
-        if (!discordClientRef) {
-          res.writeHead(503, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: 'Discord client not ready' }))
-          return
-        }
-
-        let body = ''
-        req.on('data', (chunk: Buffer) => {
-          body += chunk.toString()
-        })
-
-        let clientDisconnected = false
-        res.on('close', () => {
-          if (!res.writableFinished) {
-            clientDisconnected = true
-          }
-        })
-
-        req.on('end', async () => {
-          try {
-            const parsed = JSON.parse(body) as {
-              sessionId?: unknown
-              threadId?: unknown
-              directory?: unknown
-              buttons?: unknown
-            }
-
-            const parsedButtons = Array.isArray(parsed.buttons)
-              ? parsed.buttons
-                  .map((value) => {
-                    if (!value || typeof value !== 'object') {
-                      return null
-                    }
-                    const maybeLabel =
-                      'label' in value && typeof value.label === 'string'
-                        ? value.label
-                        : ''
-                    const maybeColor =
-                      'color' in value && typeof value.color === 'string'
-                        ? value.color
-                        : undefined
-                    const safeColor =
-                      maybeColor === 'white' ||
-                      maybeColor === 'blue' ||
-                      maybeColor === 'green' ||
-                      maybeColor === 'red'
-                        ? maybeColor
-                        : undefined
-                    const label = maybeLabel.trim().slice(0, 80)
-                    if (!label) {
-                      return null
-                    }
-                    return {
-                      label,
-                      color: safeColor,
-                    }
-                  })
-                  .filter((value) => {
-                    return value !== null
-                  })
-                  .slice(0, 3)
-              : []
-
-            const request: ActionButtonsRequest = {
-              sessionId:
-                typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
-              threadId:
-                typeof parsed.threadId === 'string' ? parsed.threadId : '',
-              directory:
-                typeof parsed.directory === 'string' ? parsed.directory : '',
-              buttons: parsedButtons,
-            }
-
-            if (!request.sessionId || !request.threadId || !request.directory) {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  error:
-                    'Missing required fields: sessionId, threadId, directory',
-                }),
-              )
-              return
-            }
-
-            if (request.buttons.length === 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  error: 'At least one valid button is required',
-                }),
-              )
-              return
-            }
-
-            const thread = await discordClientRef!.channels.fetch(
-              request.threadId,
-            )
-            if (!thread || !thread.isThread()) {
-              res.writeHead(404, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: 'Thread not found' }))
-              return
-            }
-
-            queueActionButtonsRequest(request)
-
-            if (clientDisconnected) {
-              return
-            }
-
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ ok: true }))
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
-            cliLogger.error('[ACTION-BUTTONS] Error handling request:', message)
-            if (clientDisconnected) {
-              return
-            }
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: message }))
-          }
-        })
-        return
-      }
-
-      res.writeHead(200)
-      res.end('kimaki')
-    })
-    server.listen(lockPort, '127.0.0.1')
-    server.once('listening', () => {
-      cliLogger.debug(`Lock server started on port ${lockPort}`)
-      resolve()
-    })
-    server.on('error', async (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        cliLogger.log('Port still in use, retrying...')
-        await killProcessOnPort(lockPort)
-        await new Promise((r) => {
-          setTimeout(r, 500)
-        })
-        // Retry once
-        server.listen(lockPort, '127.0.0.1')
-      } else {
-        reject(err)
-      }
-    })
-  })
-}
 
 type CliOptions = {
   restart?: boolean
@@ -1467,8 +1138,23 @@ async function run({
   backgroundUpgradeOpencode()
   backgroundUpgradeKimaki()
 
-  // Initialize database
+  // Start in-process Hrana server before database init. Required for the bot
+  // process because it serves as both the DB server and the single-instance
+  // lock (binds the fixed lock port). Without it, IPC and lock enforcement
+  // don't work. CLI subcommands skip the server and use file: directly.
+  const hranaResult = await startHranaServer({
+    dbPath: path.join(getDataDir(), 'discord-sessions.db'),
+  })
+  if (hranaResult instanceof Error) {
+    cliLogger.error('Failed to start hrana server:', hranaResult.message)
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
+
+  // Register this process as the active bot instance
+  await upsertBotInstance({ pid: process.pid })
 
   let appId: string
   let token: string
@@ -1640,7 +1326,10 @@ async function run({
     })
 
     cliLogger.log('Connected to Discord!')
-    discordClientRef = discordClient
+    // Start IPC polling now that Discord client is ready.
+    // Register cleanup on process exit since the shutdown handler lives in discord-bot.ts.
+    await startIpcPolling({ discordClient })
+    process.on('exit', stopIpcPolling)
   } catch (error) {
     cliLogger.log('Failed to connect to Discord')
     cliLogger.error(
@@ -2075,8 +1764,8 @@ cli
           process.exit(0)
         }
 
-        await checkSingleInstance()
-        await startLockServer()
+        // Single-instance enforcement is handled by the hrana server binding the lock port.
+        // startHranaServer() in run() evicts any existing instance before binding.
         await run({
           restart: options.restart,
           addChannels: options.addChannels,

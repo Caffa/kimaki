@@ -28,6 +28,7 @@ export const LogPrefix = {
   HEAP: 'HEAP',
   GENAI_WORKER: 'GENAI_W',
   INTERACTION: 'INTERACT',
+  IPC: 'IPC',
   LOGIN: 'LOGIN',
   MARKDOWN: 'MARKDOWN',
   MODEL: 'MODEL',

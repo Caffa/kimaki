@@ -19,10 +19,10 @@ import {
 import { getBotToken } from './database.js'
 import {
   getDataDir,
-  getLockPort,
   getMemoryEnabled,
   getVerboseOpencodeServer,
 } from './config.js'
+import { getHranaUrl } from './hrana-server.js'
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -283,17 +283,10 @@ export async function initializeOpencodeForDirectory(
   }
   if (getMemoryEnabled()) {
     const globalMemoryDir = path
-      .join(getDataDir(), 'memory', 'global')
+      .join(getDataDir(), 'memory')
       .replaceAll('\\', '/')
     externalDirectoryPermissions[globalMemoryDir] = 'allow'
     externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
-    if (options?.channelId) {
-      const scopedMemoryDir = path
-        .join(getDataDir(), 'memory', options.channelId)
-        .replaceAll('\\', '/')
-      externalDirectoryPermissions[scopedMemoryDir] = 'allow'
-      externalDirectoryPermissions[`${scopedMemoryDir}/*`] = 'allow'
-    }
   }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
@@ -352,8 +345,8 @@ export async function initializeOpencodeForDirectory(
         OPENCODE_PORT: port.toString(),
         KIMAKI_DATA_DIR: getDataDir(),
         ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
-        KIMAKI_LOCK_PORT: getLockPort().toString(),
         ...(getMemoryEnabled() && { KIMAKI_MEMORY_ENABLED: '1' }),
+        ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
       },
     },
   )

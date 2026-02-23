@@ -1,13 +1,10 @@
 // File upload tool handler - Shows Discord modal with FileUploadBuilder.
-// When the AI uses the kimaki_file_upload tool, the plugin POSTs to the bot's
-// lock server HTTP endpoint. The bot shows a button in the thread, user clicks
-// it to open a modal with a native file picker. Uploaded files are downloaded
-// to the project directory and paths returned to the AI.
-//
-// Architecture: The plugin tool (running in OpenCode's process) communicates
-// with the Discord bot via HTTP. The bot holds the HTTP response open until
-// the user completes the upload or the request is cancelled. This bridges the
-// gap between the plugin process and Discord's interaction-based UI.
+// When the AI uses the kimaki_file_upload tool, the plugin inserts a row into
+// the ipc_requests DB table. The bot polls this table, picks up the request,
+// and shows a button in the thread. User clicks it to open a modal with a
+// native file picker. Uploaded files are downloaded to the project directory.
+// The bot writes file paths back to ipc_requests.response, and the plugin
+// polls until the response appears.
 
 import {
   ButtonBuilder,

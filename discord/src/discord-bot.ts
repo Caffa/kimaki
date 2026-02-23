@@ -15,6 +15,7 @@ import {
   getThreadSession,
   setThreadSession,
   getPrisma,
+  cancelAllPendingIpcRequests,
 } from './database.js'
 import {
   initializeOpencodeForDirectory,
@@ -62,6 +63,7 @@ import {
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
+import { stopHranaServer } from './hrana-server.js'
 
 export {
   initDatabase,
@@ -1011,6 +1013,9 @@ export async function startDiscordBot({
     try {
       await stopTaskRunner()
 
+      // Cancel pending IPC requests so plugin tools don't hang
+      await cancelAllPendingIpcRequests().catch((e) => { discordLogger.warn('Failed to cancel pending IPC requests:', (e as Error).message) })
+
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
         voiceLogger.log(
@@ -1038,7 +1043,10 @@ export async function startDiscordBot({
       getOpencodeServers().clear()
 
       discordLogger.log('Closing database...')
-      closeDatabase()
+      await closeDatabase()
+
+      discordLogger.log('Stopping hrana server...')
+      await stopHranaServer()
 
       discordLogger.log('Destroying Discord client...')
       discordClient.destroy()

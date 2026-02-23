@@ -30,7 +30,7 @@ function tool<Args extends z.ZodRawShape>(input: {
 import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import { REST, Routes } from 'discord.js'
 import * as errore from 'errore'
-import { getPrisma } from './database.js'
+import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
@@ -49,28 +49,6 @@ const logger = createLogger(LogPrefix.OPENCODE)
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
 const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
-
-type TimeoutSignalHandle = {
-  signal: AbortSignal
-  cleanup: () => void
-}
-
-function createTimeoutSignal({
-  timeoutMs,
-}: {
-  timeoutMs: number
-}): TimeoutSignalHandle {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => {
-    controller.abort(new errore.AbortError(`Timed out after ${timeoutMs}ms`))
-  }, timeoutMs)
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timeout)
-    },
-  }
-}
 
 type GitState = {
   key: string
@@ -320,11 +298,6 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             ),
         },
         async execute({ prompt, maxFiles }, context) {
-          const lockPort = process.env.KIMAKI_LOCK_PORT
-          if (!lockPort) {
-            return 'File upload not available: bot communication port not configured'
-          }
-
           const prisma = await getPrisma()
           const row = await prisma.thread_sessions.findFirst({
             where: { session_id: context.sessionID },
@@ -335,65 +308,46 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             return 'Could not find thread for current session'
           }
 
-          const timeout = createTimeoutSignal({
-            timeoutMs: FILE_UPLOAD_TIMEOUT_MS,
+          // Insert IPC request for the bot to pick up via polling
+          const ipcRow = await createIpcRequest({
+            type: 'file_upload',
+            sessionId: context.sessionID,
+            threadId: row.thread_id,
+            payload: JSON.stringify({
+              prompt,
+              maxFiles: maxFiles || DEFAULT_FILE_UPLOAD_MAX_FILES,
+              directory: context.directory,
+            }),
           })
-          const responseResult = await errore.tryAsync({
-            try: async () => {
-              return fetch(`http://127.0.0.1:${lockPort}/file-upload`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  sessionId: context.sessionID,
-                  threadId: row.thread_id,
-                  directory: context.directory,
-                  prompt,
-                  maxFiles: maxFiles || DEFAULT_FILE_UPLOAD_MAX_FILES,
-                }),
-                signal: timeout.signal,
-              })
-            },
-            catch: (error) => {
-              return new Error('File upload request failed', { cause: error })
-            },
-          })
-          timeout.cleanup()
 
-          if (errore.isAbortError(responseResult)) {
-            return 'File upload timed out - user did not upload files within the time limit'
-          }
-          if (responseResult instanceof Error) {
-            return `File upload failed: ${responseResult.message}`
-          }
-
-          const response = responseResult
-          const bodyResult = await errore.tryAsync({
-            try: async () => {
-              return (await response.json()) as {
+          // Poll for response from the bot process
+          const deadline = Date.now() + FILE_UPLOAD_TIMEOUT_MS
+          const POLL_INTERVAL_MS = 300
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => {
+              setTimeout(resolve, POLL_INTERVAL_MS)
+            })
+            const updated = await getIpcRequestById({ id: ipcRow.id })
+            if (!updated || updated.status === 'cancelled') {
+              return 'File upload was cancelled'
+            }
+            if (updated.response) {
+              const parsed = JSON.parse(updated.response) as {
                 filePaths?: string[]
                 error?: string
               }
-            },
-            catch: (error) => {
-              return new Error('File upload service returned invalid JSON', {
-                cause: error,
-              })
-            },
-          })
-          if (bodyResult instanceof Error) {
-            return `File upload failed: ${bodyResult.message}`
+              if (parsed.error) {
+                return `File upload failed: ${parsed.error}`
+              }
+              const filePaths = parsed.filePaths || []
+              if (filePaths.length === 0) {
+                return 'No files were uploaded (user may have cancelled or sent a new message)'
+              }
+              return `Files uploaded successfully:\n${filePaths.join('\n')}`
+            }
           }
 
-          if (!response.ok || bodyResult.error) {
-            return `File upload failed: ${bodyResult.error || 'Unknown error'}`
-          }
-
-          const filePaths = bodyResult.filePaths || []
-          if (filePaths.length === 0) {
-            return 'No files were uploaded (user may have cancelled or sent a new message)'
-          }
-
-          return `Files uploaded successfully:\n${filePaths.join('\n')}`
+          return 'File upload timed out - user did not upload files within the time limit'
         },
       }),
       kimaki_action_buttons: tool({
@@ -437,11 +391,6 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             ),
         },
         async execute({ buttons }, context) {
-          const lockPort = process.env.KIMAKI_LOCK_PORT
-          if (!lockPort) {
-            return 'Action buttons unavailable: bot communication port not configured'
-          }
-
           const prisma = await getPrisma()
           const row = await prisma.thread_sessions.findFirst({
             where: { session_id: context.sessionID },
@@ -452,53 +401,38 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             return 'Could not find thread for current session'
           }
 
-          const timeout = createTimeoutSignal({
-            timeoutMs: ACTION_BUTTON_TIMEOUT_MS,
+          // Insert IPC request for the bot to pick up via polling
+          const ipcRow = await createIpcRequest({
+            type: 'action_buttons',
+            sessionId: context.sessionID,
+            threadId: row.thread_id,
+            payload: JSON.stringify({
+              buttons,
+              directory: context.directory,
+            }),
           })
-          const responseResult = await fetch(
-            `http://127.0.0.1:${lockPort}/action-buttons`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                sessionId: context.sessionID,
-                threadId: row.thread_id,
-                directory: context.directory,
-                buttons,
-              }),
-              signal: timeout.signal,
-            },
-          ).catch(
-            (e) => new Error('Action button request failed', { cause: e }),
-          )
-          timeout.cleanup()
 
-          if (errore.isAbortError(responseResult)) {
-            return 'Action button request timed out'
-          }
-          if (responseResult instanceof Error) {
-            return `Action button request failed: ${responseResult.message}`
+          // Wait for bot to acknowledge (status changes from pending to processing/completed)
+          const deadline = Date.now() + ACTION_BUTTON_TIMEOUT_MS
+          const POLL_INTERVAL_MS = 200
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => {
+              setTimeout(resolve, POLL_INTERVAL_MS)
+            })
+            const updated = await getIpcRequestById({ id: ipcRow.id })
+            if (!updated || updated.status === 'cancelled') {
+              return 'Action button request was cancelled'
+            }
+            if (updated.response) {
+              const parsed = JSON.parse(updated.response) as { ok?: boolean; error?: string }
+              if (parsed.error) {
+                return `Action button request failed: ${parsed.error}`
+              }
+              return `Action button(s) shown: ${buttons.map((button) => button.label).join(', ')}`
+            }
           }
 
-          const bodyResult = await responseResult
-            .json()
-            .then((json) => json as { ok?: boolean; error?: string })
-            .catch(
-              (e) =>
-                new Error('Action button service returned invalid JSON', {
-                  cause: e,
-                }),
-            )
-
-          if (bodyResult instanceof Error) {
-            return `Action button request failed: ${bodyResult.message}`
-          }
-
-          if (!responseResult.ok || bodyResult.error) {
-            return `Action button request failed: ${bodyResult.error || 'Unknown error'}`
-          }
-
-          return `Action button(s) shown: ${buttons.map((button) => button.label).join(', ')}`
+          return 'Action button request timed out'
         },
       }),
       kimaki_archive_thread: tool({

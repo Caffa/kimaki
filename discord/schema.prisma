@@ -15,6 +15,7 @@ model thread_sessions {
   part_messages   part_messages[]
   scheduled_tasks scheduled_tasks[]
   thread_worktree thread_worktrees?
+  ipc_requests    ipc_requests[]
 }
 
 model part_messages {
@@ -210,4 +211,44 @@ model forum_sync_configs {
   bot bot_tokens @relation(fields: [app_id], references: [app_id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([app_id, forum_channel_id])
+}
+
+// Tracks the current bot process for single-instance enforcement.
+// On startup the bot upserts its PID here. Single-instance is enforced by
+// sqld binding the lock port; this table is a secondary record for diagnostics.
+model bot_instances {
+  id         Int       @id @default(1)
+  pid        Int
+  started_at DateTime  @default(now())
+}
+
+enum ipc_request_type {
+  file_upload
+  action_buttons
+}
+
+enum ipc_request_status {
+  pending
+  processing
+  completed
+  cancelled
+}
+
+// IPC bridge between the opencode plugin process and the Discord bot process.
+// Replaces the old HTTP lock server for file-upload and action-buttons requests.
+// Plugin inserts a pending row, bot polls and dispatches, then writes the response.
+model ipc_requests {
+  id         String             @id @default(uuid())
+  type       ipc_request_type
+  session_id String
+  thread_id  String
+  payload    String             // JSON-encoded request data
+  response   String?            // JSON-encoded response, null while pending
+  status     ipc_request_status @default(pending)
+  created_at DateTime           @default(now())
+  updated_at DateTime           @default(now()) @updatedAt
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+
+  @@index([status, created_at])
 }
