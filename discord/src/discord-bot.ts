@@ -282,10 +282,16 @@ export async function startDiscordBot({
         ? promptMarker?.model
         : undefined
 
+      // Always ignore our own messages (unless CLI-injected prompt above).
+      // Without this, assigning the Kimaki role to the bot itself would loop.
+      if (isSelfBotMessage && !isCliInjectedPrompt) {
+        return
+      }
+
       // Allow bot messages through if the bot has the "Kimaki" role assigned.
       // This enables multi-agent orchestration where other bots (e.g. an
       // orchestrator) can @mention Kimaki and trigger sessions like a human.
-      if (message.author?.bot && !isCliInjectedPrompt) {
+      if (message.author?.bot) {
         if (!hasKimakiBotPermission(message.member)) {
           return
         }
