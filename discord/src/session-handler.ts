@@ -15,6 +15,7 @@ import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import {
   getSessionAgent,
+  getSessionModel,
   getVariantCascade,
   getChannelAgent,
   setSessionAgent,
@@ -28,7 +29,10 @@ import {
   setSessionStartSource,
   type ScheduledTaskScheduleKind,
 } from './database.js'
-import { getCurrentModelInfo } from './commands/model.js'
+import {
+  ensureSessionPreferencesSnapshot,
+  getCurrentModelInfo,
+} from './commands/model.js'
 import {
   initializeOpencodeForDirectory,
   getOpencodeServers,
@@ -265,10 +269,26 @@ async function resolveValidatedAgentPreference({
   channelId?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
 }): Promise<string | undefined> {
-  const agentPreference =
-    agent ||
-    (await getSessionAgent(sessionId)) ||
-    (channelId ? await getChannelAgent(channelId) : undefined)
+  const agentPreference = await (async (): Promise<string | undefined> => {
+    if (agent) {
+      return agent
+    }
+
+    const sessionAgent = await getSessionAgent(sessionId)
+    if (sessionAgent) {
+      return sessionAgent
+    }
+
+    const sessionModel = await getSessionModel(sessionId)
+    if (sessionModel) {
+      return undefined
+    }
+
+    if (!channelId) {
+      return undefined
+    }
+    return getChannelAgent(channelId)
+  })()
   if (!agentPreference) {
     return undefined
   }
@@ -667,6 +687,11 @@ export async function handleOpencodeSession({
   await setThreadSession(thread.id, session.id)
   sessionLogger.log(`Stored session ${session.id} for thread ${thread.id}`)
 
+  const channelInfo = channelId
+    ? await getChannelDirectory(channelId)
+    : undefined
+  const resolvedAppId = channelInfo?.appId ?? appId
+
   if (createdNewSession && sessionStartSource) {
     const saveStartSourceResult = await errore.tryAsync(() => {
       return setSessionStartSource({
@@ -689,6 +714,16 @@ export async function handleOpencodeSession({
       `Set agent preference for session ${session.id}: ${agent}`,
     )
   }
+
+  await ensureSessionPreferencesSnapshot({
+    sessionId: session.id,
+    channelId,
+    appId: resolvedAppId,
+    getClient,
+    agentOverride: agent,
+    modelOverride: model,
+    force: createdNewSession,
+  })
 
   const existingController = abortControllers.get(session.id)
   if (existingController) {
@@ -784,18 +819,14 @@ export async function handleOpencodeSession({
 
   // Snapshot model+agent early so user changes (e.g. /agent) during the async gap
   // (debounce, previous handler wait, event subscribe) don't affect this request.
-  // Parallelize: agent preference and channel directory lookup are independent.
-  const [earlyAgentResult, channelInfo] = await Promise.all([
-    errore.tryAsync(() => {
-      return resolveValidatedAgentPreference({
-        agent,
-        sessionId: session.id,
-        channelId,
-        getClient,
-      })
-    }),
-    channelId ? getChannelDirectory(channelId) : Promise.resolve(undefined),
-  ])
+  const earlyAgentResult = await errore.tryAsync(() => {
+    return resolveValidatedAgentPreference({
+      agent,
+      sessionId: session.id,
+      channelId,
+      getClient,
+    })
+  })
   if (earlyAgentResult instanceof Error) {
     await sendThreadMessage(
       thread,
@@ -809,8 +840,6 @@ export async function handleOpencodeSession({
       `[AGENT] Resolved agent preference early: ${earlyAgentPreference}`,
     )
   }
-
-  const resolvedAppId = channelInfo?.appId ?? appId
 
   // Model resolution and variant cascade are independent - run in parallel.
   // Variant cascade only needs resolvedAppId (available now). Variant validation

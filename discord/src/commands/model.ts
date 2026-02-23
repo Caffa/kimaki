@@ -14,6 +14,7 @@ import crypto from 'node:crypto'
 import {
   setChannelModel,
   setSessionModel,
+  setSessionAgent,
   getChannelModel,
   getSessionModel,
   getSessionAgent,
@@ -112,6 +113,97 @@ function parseModelId(
     return { providerID, modelID }
   }
   return undefined
+}
+
+export async function ensureSessionPreferencesSnapshot({
+  sessionId,
+  channelId,
+  appId,
+  getClient,
+  agentOverride,
+  modelOverride,
+  force,
+}: {
+  sessionId: string
+  channelId?: string
+  appId?: string
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  agentOverride?: string
+  modelOverride?: string
+  force?: boolean
+}): Promise<void> {
+  const [sessionAgentPreference, sessionModelPreference] = await Promise.all([
+    getSessionAgent(sessionId),
+    getSessionModel(sessionId),
+  ])
+  const shouldBootstrapSessionPreferences =
+    force || (!sessionAgentPreference && !sessionModelPreference)
+  if (!shouldBootstrapSessionPreferences) {
+    return
+  }
+
+  const bootstrappedAgent =
+    agentOverride ||
+    sessionAgentPreference ||
+    (channelId ? await getChannelAgent(channelId) : undefined)
+  if (!sessionAgentPreference && bootstrappedAgent) {
+    await setSessionAgent(sessionId, bootstrappedAgent)
+    modelLogger.log(
+      `[MODEL] Snapshotted session agent ${bootstrappedAgent} for session ${sessionId}`,
+    )
+  }
+
+  if (sessionModelPreference) {
+    return
+  }
+
+  if (modelOverride) {
+    const parsedModelOverride = parseModelId(modelOverride)
+    if (parsedModelOverride) {
+      const bootstrappedVariant = await getVariantCascade({
+        sessionId,
+        channelId,
+        appId,
+      })
+      await setSessionModel({
+        sessionId,
+        modelId: modelOverride,
+        variant: bootstrappedVariant ?? null,
+      })
+      modelLogger.log(
+        `[MODEL] Snapshotted explicit session model ${modelOverride} for session ${sessionId}`,
+      )
+      return
+    }
+    modelLogger.warn(
+      `[MODEL] Ignoring invalid explicit model override "${modelOverride}" for session ${sessionId}`,
+    )
+  }
+
+  const bootstrappedModel = await getCurrentModelInfo({
+    sessionId,
+    channelId,
+    appId,
+    agentPreference: bootstrappedAgent,
+    getClient,
+  })
+  if (bootstrappedModel.type === 'none') {
+    return
+  }
+
+  const bootstrappedVariant = await getVariantCascade({
+    sessionId,
+    channelId,
+    appId,
+  })
+  await setSessionModel({
+    sessionId,
+    modelId: bootstrappedModel.model,
+    variant: bootstrappedVariant ?? null,
+  })
+  modelLogger.log(
+    `[MODEL] Snapshotted session model ${bootstrappedModel.model} for session ${sessionId}`,
+  )
 }
 
 /**
@@ -295,6 +387,15 @@ export async function handleModelCommand({
 
     const effectiveAppId = channelAppId || appId
 
+    if (isThread && sessionId) {
+      await ensureSessionPreferencesSnapshot({
+        sessionId,
+        channelId: targetChannelId,
+        appId: effectiveAppId,
+        getClient,
+      })
+    }
+
     // Parallelize: fetch providers, current model info, and variant cascade at the same time.
     // getCurrentModelInfo does DB lookups first (fast) and only hits provider.list as fallback.
     const [providersResponse, currentModelInfo, cascadeVariant] =
@@ -338,7 +439,7 @@ export async function handleModelCommand({
     const currentModelText = (() => {
       switch (currentModelInfo.type) {
         case 'session':
-          return `**Current (session override):** \`${currentModelInfo.model}\``
+          return `**Current (this thread):** \`${currentModelInfo.model}\``
         case 'agent':
           return `**Current (agent "${currentModelInfo.agentName}"):** \`${currentModelInfo.model}\``
         case 'channel':
