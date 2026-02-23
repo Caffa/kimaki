@@ -140,6 +140,19 @@ for the log prefixes always use short names
 kimaki will also output logs to the file discord/kimaki.log
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
+## opencode plugin and env vars
+
+the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getMemoryEnabled()`, `getDataDir()`, etc.) is not available there.
+
+to pass bot-process state to the plugin, use `KIMAKI_*` env vars set in `opencode.ts` when spawning the server process. current env vars:
+
+- `KIMAKI_DATA_DIR`: data directory path
+- `KIMAKI_BOT_TOKEN`: discord bot token
+- `KIMAKI_LOCK_PORT`: lock server port for bot communication
+- `KIMAKI_MEMORY_ENABLED`: `"1"` when memory is enabled via `--memory` flag
+
+when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
+
 ## skills folder
 
 skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
