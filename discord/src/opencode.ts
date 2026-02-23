@@ -353,6 +353,7 @@ export async function initializeOpencodeForDirectory(
         KIMAKI_DATA_DIR: getDataDir(),
         ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
+        ...(getMemoryEnabled() && { KIMAKI_MEMORY_ENABLED: '1' }),
       },
     },
   )

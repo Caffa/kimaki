@@ -134,31 +134,34 @@ If needed, restart kimaki with the \`--memory\` option.
   return `
 ## memory
 
-Persistent memory has two scopes:
+You wake up fresh each session with no memory of prior work.
+These directories are your continuity:
 - Channel memory: \`${memoryDir}\`
 - Global memory: \`${globalMemoryDir}\`
-Both directories contain markdown files that persist knowledge across sessions and projects.
-Use regular Read, Write, and Edit tools to manage memory files. No special memory tools are needed.
+Use regular Read, Write, Edit, Grep tools to manage memory files. No special memory tools needed.
 
-### when to read memory
-Before answering questions about prior work, decisions, preferences, or project context, list existing files in both memory scopes and read relevant ones first.
-At the start of complex tasks, check if there is prior context that could inform your approach.
+### session startup (mandatory)
 
-### when to write memory
-After making important decisions, completing significant tasks, or learning user-specific patterns and preferences, write or update the relevant memory file in the correct scope.
-Include enough context that a future session can understand the decision without the original conversation.
+Before doing anything else in a new session:
+1. List files in both memory directories
+2. Grep for the user's topic across memory files if the request relates to prior work, decisions, preferences, or project context
+3. Read any files that match the current task
 
-### scope rules
-- Use channel memory for project/thread-specific notes.
-- Use global memory for reusable preferences or conventions that should be available across all channels.
+Do not ask permission. Do not skip this step. Do not mention you are doing it.
+If no memory files exist yet, proceed normally.
+
+### writing memory (mandatory)
+
+Mental notes do not survive session restarts. Files do.
+- After important decisions, completing significant tasks, or learning user preferences: update or create the relevant memory file
+- When someone says "remember this": write it to a memory file immediately
+- Include enough context that a future session can understand the decision without the original conversation
+- Use channel memory for project-specific notes, global memory for cross-project preferences
 
 ### filename conventions
-Use kebab-case topic slugs as filenames. One file per topic. Examples:
-- \`auth-architecture.md\` - authentication design decisions
-- \`api-conventions.md\` - API naming patterns and preferences
-- \`deployment-setup.md\` - deployment configuration notes
-- \`user-preferences.md\` - coding style, tooling preferences
-- \`project-{name}-context.md\` - project-specific knowledge (use the actual project name)
+Use kebab-case topic slugs. One file per topic. Examples: \`auth-architecture.md\`, \`api-conventions.md\`, \`user-preferences.md\`
+Always list existing files first before creating a new one. If a related file exists, append to it instead of creating a new file.
+Use the Edit tool to append, never overwrite unless you read the file first and preserve all existing content.
 
 ### frontmatter format
 When creating a NEW memory file, use only these frontmatter fields:
@@ -172,14 +175,6 @@ tags:
 NEVER write these fields in frontmatter - they are system-managed and will cause sync errors:
 threadId, forumChannelId, lastSyncedAt, lastMessageId, messageCount, author, authorId, createdAt, lastUpdated, project, projectChannelId.
 When editing an EXISTING memory file that already has system frontmatter, only modify the body content below the closing \`---\`. Never touch the frontmatter block.
-
-### collision prevention
-Multiple sessions may run concurrently against this memory directory.
-- **Always list existing files first** before creating a new one. If a file with a related topic already exists, append to it instead of creating a new file.
-- **Use the Edit tool to append**, never overwrite an existing file with Write unless you have read it first and are preserving all existing content.
-- **Never use session IDs, thread IDs, timestamps, or sequential numbers in filenames.** Use only descriptive topic slugs.
-- **Each file must have a unique topic scope** documented in its first line as a comment. Two files should never cover the same topic.
-- If you need to write about a subtopic of an existing file, add a section to that file rather than creating a separate file.
 `
 }
 

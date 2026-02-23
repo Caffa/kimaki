@@ -161,6 +161,8 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   // Per-session state for synthetic part injection
   const sessionGitStates = new Map<string, GitState>()
   const sessionLastMessageTime = new Map<string, number>()
+  // Track whether we've already sent the memory startup reminder for each session
+  const sessionMemoryNudgeSent = new Set<string>()
 
   return {
     tool: {
@@ -573,6 +575,31 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             }
           }
 
+          // -- Memory startup reminder --
+          // On the first user message in a session, remind the model to check
+          // memory directories for prior context. Fires once per session.
+          // Inspired by openclaw's "Mandatory recall step" pattern: stacking
+          // prompt nudges (system prompt + synthetic reminder) makes compliance
+          // very likely even though neither is enforced by code.
+          // KIMAKI_MEMORY_ENABLED is passed as env var from the bot process
+          // (opencode.ts) because the plugin runs in the opencode process,
+          // not the bot process — so config.ts state is not available here.
+          const memoryEnabled = process.env.KIMAKI_MEMORY_ENABLED === '1'
+          if (
+            memoryEnabled &&
+            !sessionMemoryNudgeSent.has(sessionID)
+          ) {
+            sessionMemoryNudgeSent.add(sessionID)
+            output.parts.push({
+              id: crypto.randomUUID(),
+              sessionID,
+              messageID,
+              type: 'text' as const,
+              text: '<system-reminder>Session started. Check memory directories for prior context before responding. List files in channel and global memory directories, then grep or read relevant ones. Do not mention you are doing this.</system-reminder>',
+              synthetic: true,
+            })
+          }
+
           // -- Time since last message --
           // If more than 10 minutes passed since the last user message in this session,
           // inject current time context so the model is aware of the gap.
@@ -612,6 +639,22 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
                 text: `[${elapsedStr} since last message | UTC: ${utcStr} | Local (${localTz}): ${localStr}]`,
                 synthetic: true,
               })
+
+              // -- Memory save reminder on idle gap --
+              // When the user comes back after a long break, remind the model
+              // to save any important context from the previous conversation
+              // before starting the new task. This is kimaki's approximation
+              // of openclaw's pre-compaction memory flush.
+              if (memoryEnabled) {
+                output.parts.push({
+                  id: crypto.randomUUID(),
+                  sessionID,
+                  messageID,
+                  type: 'text' as const,
+                  text: '<system-reminder>Long gap since last message. If the previous conversation had important decisions, context, or learnings worth preserving, write them to memory files before starting the new task.</system-reminder>',
+                  synthetic: true,
+                })
+              }
             }
           }
         },
@@ -641,6 +684,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
           sessionGitStates.delete(id)
           sessionLastMessageTime.delete(id)
+          sessionMemoryNudgeSent.delete(id)
         },
         catch: (error) => {
           return new Error('event hook failed', { cause: error })
