@@ -4,7 +4,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Client, ForumChannel } from 'discord.js'
+import { MessageFlags, type Client, type ForumChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
 import {
   extractStarterContent,
@@ -125,6 +125,35 @@ function resolveTagIds({
     .map((tag) => tag.id)
 }
 
+/** Ensure all requested tag names exist on the forum channel, creating any missing ones. */
+async function ensureForumTags({
+  forumChannel,
+  tagNames,
+}: {
+  forumChannel: ForumChannel
+  tagNames: string[]
+}): Promise<void> {
+  if (tagNames.length === 0) return
+  const existingNames = new Set(
+    forumChannel.availableTags.map((tag) => tag.name.toLowerCase().trim()),
+  )
+  const missing = tagNames.filter(
+    (name) => !existingNames.has(name.toLowerCase().trim()),
+  )
+  if (missing.length === 0) return
+  // Discord forums allow up to 20 tags
+  const available = forumChannel.availableTags
+  if (available.length + missing.length > 20) return
+  await forumChannel
+    .setAvailableTags(
+      [...available, ...missing.map((name) => ({ name }))],
+      `Auto-create tags: ${missing.join(', ')}`,
+    )
+    .catch((cause) => {
+      forumLogger.warn(`Failed to create forum tags [${missing.join(', ')}]: ${cause instanceof Error ? cause.message : cause}`)
+    })
+}
+
 function hasTagName({ tags, tagName }: { tags: string[]; tagName: string }) {
   return tags.some(
     (tag) => tag.toLowerCase().trim() === tagName.toLowerCase().trim(),
@@ -208,6 +237,7 @@ async function upsertThreadFromFile({
   if (Number.isFinite(lastSyncedAt) && stat.mtimeMs <= lastSyncedAt)
     return 'skipped'
 
+  await ensureForumTags({ forumChannel, tagNames: allTags })
   const tagIds = resolveTagIds({ forumChannel, tagNames: allTags })
 
   // No threadId in frontmatter -> create a new thread
@@ -265,7 +295,10 @@ async function createNewThread({
   const created = await forumChannel.threads
     .create({
       name: title.slice(0, 100) || 'Untitled post',
-      message: { content: safeStarterContent.slice(0, 2_000) },
+      message: {
+        content: safeStarterContent.slice(0, 2_000),
+        flags: MessageFlags.SuppressEmbeds,
+      },
       appliedTags: tagIds,
     })
     .catch(
@@ -368,7 +401,10 @@ async function updateExistingThread({
 
   if (starterMessage && starterMessage.content !== safeStarterContent) {
     const editResult = await starterMessage
-      .edit({ content: safeStarterContent.slice(0, 2_000) })
+      .edit({
+        content: safeStarterContent.slice(0, 2_000),
+        flags: MessageFlags.SuppressEmbeds,
+      })
       .catch(
         (cause) =>
           new ForumSyncOperationError({

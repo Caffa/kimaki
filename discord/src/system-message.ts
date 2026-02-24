@@ -158,6 +158,11 @@ Mental notes do not survive session restarts. Files do.
 - Include enough context that a future session can understand the decision without the original conversation
 - Use channel memory for project-specific notes, global memory for cross-project preferences
 
+### size limits
+
+Each memory file is synced as a Discord forum thread. The starter message has a **2000 character limit** (including frontmatter). Content beyond 2000 chars is truncated and lost in Discord.
+Keep memory files small and focused. Prefer many small files over one large file. If a file grows past ~1500 chars of body content, split it into separate topic files.
+
 ### filename conventions
 Use kebab-case topic slugs. One file per topic. Examples: \`auth-architecture.md\`, \`api-conventions.md\`, \`user-preferences.md\`
 Always list existing files first before creating a new one. If a related file exists, append to it instead of creating a new file.
