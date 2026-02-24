@@ -135,8 +135,13 @@ export function formatMessageSection({
 // Channel mention footer stored in the Discord starter message so
 // projectChannelId survives a full re-sync from Discord (no local files).
 // Uses <#id> so Discord renders it as a clickable channel link.
-const PROJECT_CHANNEL_FOOTER_RE = /\nchannel: <#(\d{17,20})>\s*$/
+// Matches at start-of-string or after a newline so it works even when the
+// footer is the only content in the message (e.g. empty body).
+const PROJECT_CHANNEL_FOOTER_RE = /(?:^|\n)channel: <#(\d{17,20})>\s*$/
+const MAX_STARTER_MESSAGE_LENGTH = 2_000
 
+/** Append a channel mention footer, truncating the body so the total
+ *  never exceeds Discord's 2000-char starter message limit. */
 export function appendProjectChannelFooter({
   content,
   projectChannelId,
@@ -145,7 +150,13 @@ export function appendProjectChannelFooter({
   projectChannelId?: string
 }): string {
   if (!projectChannelId) return content
-  return `${content}\nchannel: <#${projectChannelId}>`
+  const footer = `\nchannel: <#${projectChannelId}>`
+  const maxContentLength = MAX_STARTER_MESSAGE_LENGTH - footer.length
+  const truncated =
+    content.length > maxContentLength
+      ? content.slice(0, maxContentLength)
+      : content
+  return `${truncated}${footer}`
 }
 
 export function extractProjectChannelFromContent({ content }: { content: string }): {
@@ -155,7 +166,7 @@ export function extractProjectChannelFromContent({ content }: { content: string 
   const match = content.match(PROJECT_CHANNEL_FOOTER_RE)
   if (!match) return { cleanContent: content }
   return {
-    cleanContent: content.replace(PROJECT_CHANNEL_FOOTER_RE, ''),
+    cleanContent: content.replace(PROJECT_CHANNEL_FOOTER_RE, '').trim(),
     projectChannelId: match[1],
   }
 }

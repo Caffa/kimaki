@@ -220,11 +220,13 @@ async function upsertThreadFromFile({
       ? [...tagsWithScope, project]
       : tagsWithScope
   const starterContent = extractStarterContent({ body: parsed.body })
-  const starterWithFooter = appendProjectChannelFooter({
-    content: starterContent,
+  // Resolve fallback BEFORE appending footer so an empty body doesn't
+  // produce a message that is just the channel footer.
+  const baseContent = starterContent || title || 'Untitled post'
+  const safeStarterContent = appendProjectChannelFooter({
+    content: baseContent,
     projectChannelId,
   })
-  const safeStarterContent = starterWithFooter || title || 'Untitled post'
 
   const stat = await fs.promises.stat(filePath).catch((cause) => {
     return new ForumSyncOperationError({
