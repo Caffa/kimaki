@@ -84,11 +84,7 @@ import {
   uploadFilesToDiscord,
   stripMentions,
 } from './discord-utils.js'
-import {
-  spawn,
-  execSync,
-  type ExecSyncOptions,
-} from 'node:child_process'
+import { spawn, execSync, type ExecSyncOptions } from 'node:child_process'
 
 import {
   setDataDir,

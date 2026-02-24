@@ -424,7 +424,10 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
               return 'Action button request was cancelled'
             }
             if (updated.response) {
-              const parsed = JSON.parse(updated.response) as { ok?: boolean; error?: string }
+              const parsed = JSON.parse(updated.response) as {
+                ok?: boolean
+                error?: string
+              }
               if (parsed.error) {
                 return `Action button request failed: ${parsed.error}`
               }
@@ -519,10 +522,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
           // (opencode.ts) because the plugin runs in the opencode process,
           // not the bot process — so config.ts state is not available here.
           const memoryEnabled = process.env.KIMAKI_MEMORY_ENABLED === '1'
-          if (
-            memoryEnabled &&
-            !sessionMemoryNudgeSent.has(sessionID)
-          ) {
+          if (memoryEnabled && !sessionMemoryNudgeSent.has(sessionID)) {
             sessionMemoryNudgeSent.add(sessionID)
             output.parts.push({
               id: crypto.randomUUID(),

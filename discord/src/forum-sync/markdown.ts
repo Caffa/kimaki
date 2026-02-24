@@ -159,7 +159,11 @@ export function appendProjectChannelFooter({
   return `${truncated}${footer}`
 }
 
-export function extractProjectChannelFromContent({ content }: { content: string }): {
+export function extractProjectChannelFromContent({
+  content,
+}: {
+  content: string
+}): {
   cleanContent: string
   projectChannelId?: string
 } {

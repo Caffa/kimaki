@@ -17,11 +17,26 @@ async function migrateSchema(prisma: PrismaClient) {
   const sql = fs.readFileSync(schemaPath, 'utf-8')
   const statements = sql
     .split(';')
-    .map((s) => s.split('\n').filter((line) => !line.trimStart().startsWith('--')).join('\n').trim())
-    .filter((s) => s.length > 0 && !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s))
-    .map((s) => s
-      .replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
-      .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'))
+    .map((s) =>
+      s
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+        .trim(),
+    )
+    .filter(
+      (s) =>
+        s.length > 0 &&
+        !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s),
+    )
+    .map((s) =>
+      s
+        .replace(
+          /^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i,
+          'CREATE UNIQUE INDEX IF NOT EXISTS',
+        )
+        .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
+    )
   for (const statement of statements) {
     await prisma.$executeRawUnsafe(statement)
   }
@@ -31,15 +46,35 @@ describe('hrana-server', () => {
   let testServer: http.Server | null = null
   let testDb: Database.Database | null = null
   let prisma: PrismaClient | null = null
-  const dbPath = path.join(process.cwd(), `tmp/test-hrana-${crypto.randomUUID().slice(0, 8)}.db`)
+  const dbPath = path.join(
+    process.cwd(),
+    `tmp/test-hrana-${crypto.randomUUID().slice(0, 8)}.db`,
+  )
 
   afterAll(async () => {
     if (prisma) await prisma.$disconnect()
-    if (testServer) await new Promise<void>((resolve) => { testServer!.close(() => { resolve() }) })
+    if (testServer)
+      await new Promise<void>((resolve) => {
+        testServer!.close(() => {
+          resolve()
+        })
+      })
     if (testDb) testDb.close()
-    try { fs.unlinkSync(dbPath) } catch (e) { console.warn('cleanup:', dbPath, (e as Error).message) }
-    try { fs.unlinkSync(dbPath + '-wal') } catch (e) { console.warn('cleanup:', dbPath + '-wal', (e as Error).message) }
-    try { fs.unlinkSync(dbPath + '-shm') } catch (e) { console.warn('cleanup:', dbPath + '-shm', (e as Error).message) }
+    try {
+      fs.unlinkSync(dbPath)
+    } catch (e) {
+      console.warn('cleanup:', dbPath, (e as Error).message)
+    }
+    try {
+      fs.unlinkSync(dbPath + '-wal')
+    } catch (e) {
+      console.warn('cleanup:', dbPath + '-wal', (e as Error).message)
+    }
+    try {
+      fs.unlinkSync(dbPath + '-shm')
+    } catch (e) {
+      console.warn('cleanup:', dbPath + '-shm', (e as Error).message)
+    }
   })
 
   test('prisma CRUD through hrana server', async () => {
@@ -54,7 +89,10 @@ describe('hrana-server', () => {
     await new Promise<void>((resolve, reject) => {
       const srv = http.createServer(createHranaHandler(database))
       srv.on('error', reject)
-      srv.listen(port, '127.0.0.1', () => { testServer = srv; resolve() })
+      srv.listen(port, '127.0.0.1', () => {
+        testServer = srv
+        resolve()
+      })
     })
 
     const adapter = new PrismaLibSql({ url: `http://127.0.0.1:${port}` })
@@ -63,23 +101,37 @@ describe('hrana-server', () => {
 
     // Create
     const created = await prisma.thread_sessions.create({
-      data: { thread_id: 'hrana-test-thread', session_id: 'hrana-test-session' },
+      data: {
+        thread_id: 'hrana-test-thread',
+        session_id: 'hrana-test-session',
+      },
     })
     expect(created.thread_id).toMatchInlineSnapshot(`"hrana-test-thread"`)
     expect(created.session_id).toMatchInlineSnapshot(`"hrana-test-session"`)
 
     // Read
-    const found = await prisma.thread_sessions.findUnique({ where: { thread_id: 'hrana-test-thread' } })
+    const found = await prisma.thread_sessions.findUnique({
+      where: { thread_id: 'hrana-test-thread' },
+    })
     expect(found?.session_id).toMatchInlineSnapshot(`"hrana-test-session"`)
 
     // Update
-    await prisma.thread_sessions.update({ where: { thread_id: 'hrana-test-thread' }, data: { session_id: 'updated-session' } })
-    const updated = await prisma.thread_sessions.findUnique({ where: { thread_id: 'hrana-test-thread' } })
+    await prisma.thread_sessions.update({
+      where: { thread_id: 'hrana-test-thread' },
+      data: { session_id: 'updated-session' },
+    })
+    const updated = await prisma.thread_sessions.findUnique({
+      where: { thread_id: 'hrana-test-thread' },
+    })
     expect(updated?.session_id).toMatchInlineSnapshot(`"updated-session"`)
 
     // Delete
-    await prisma.thread_sessions.delete({ where: { thread_id: 'hrana-test-thread' } })
-    const deleted = await prisma.thread_sessions.findUnique({ where: { thread_id: 'hrana-test-thread' } })
+    await prisma.thread_sessions.delete({
+      where: { thread_id: 'hrana-test-thread' },
+    })
+    const deleted = await prisma.thread_sessions.findUnique({
+      where: { thread_id: 'hrana-test-thread' },
+    })
     expect(deleted).toBeNull()
   }, 30_000)
 
@@ -93,16 +145,24 @@ describe('hrana-server', () => {
     if (!prisma) throw new Error('prisma not initialized')
 
     const [s1, s2] = await prisma.$transaction([
-      prisma.thread_sessions.create({ data: { thread_id: 'batch-1', session_id: 'sess-1' } }),
-      prisma.thread_sessions.create({ data: { thread_id: 'batch-2', session_id: 'sess-2' } }),
+      prisma.thread_sessions.create({
+        data: { thread_id: 'batch-1', session_id: 'sess-1' },
+      }),
+      prisma.thread_sessions.create({
+        data: { thread_id: 'batch-2', session_id: 'sess-2' },
+      }),
     ])
     expect(s1.thread_id).toMatchInlineSnapshot(`"batch-1"`)
     expect(s2.thread_id).toMatchInlineSnapshot(`"batch-2"`)
 
-    const count = await prisma.thread_sessions.count({ where: { thread_id: { in: ['batch-1', 'batch-2'] } } })
+    const count = await prisma.thread_sessions.count({
+      where: { thread_id: { in: ['batch-1', 'batch-2'] } },
+    })
     expect(count).toBe(2)
 
-    await prisma.thread_sessions.deleteMany({ where: { thread_id: { in: ['batch-1', 'batch-2'] } } })
+    await prisma.thread_sessions.deleteMany({
+      where: { thread_id: { in: ['batch-1', 'batch-2'] } },
+    })
   }, 30_000)
 
   test('schema migration DDL via $executeRawUnsafe', async () => {
@@ -185,21 +245,21 @@ describe('hrana-server', () => {
     if (!prisma) throw new Error('prisma not initialized')
 
     // PRAGMA that returns a value — journal_mode should be WAL
-    const journalMode = await prisma.$queryRawUnsafe<Array<{ journal_mode: string }>>(
-      'PRAGMA journal_mode',
-    )
+    const journalMode = await prisma.$queryRawUnsafe<
+      Array<{ journal_mode: string }>
+    >('PRAGMA journal_mode')
     expect(journalMode[0]?.journal_mode).toMatchInlineSnapshot(`"wal"`)
 
     // PRAGMA busy_timeout returns the current timeout value
-    const busyTimeout = await prisma.$queryRawUnsafe<Array<{ busy_timeout: number }>>(
-      'PRAGMA busy_timeout',
-    )
+    const busyTimeout = await prisma.$queryRawUnsafe<
+      Array<{ busy_timeout: number }>
+    >('PRAGMA busy_timeout')
     expect(busyTimeout[0]?.busy_timeout).toMatchInlineSnapshot(`undefined`)
 
     // PRAGMA table_info returns column metadata
-    const tableInfo = await prisma.$queryRawUnsafe<Array<{ name: string; type: string }>>(
-      `PRAGMA table_info('ipc_requests')`,
-    )
+    const tableInfo = await prisma.$queryRawUnsafe<
+      Array<{ name: string; type: string }>
+    >(`PRAGMA table_info('ipc_requests')`)
     const colNames = tableInfo.map((c) => c.name)
     expect(colNames).toMatchInlineSnapshot(`
       [
@@ -276,8 +336,12 @@ describe('hrana-server', () => {
     `)
 
     // Cleanup
-    await prisma.ipc_requests.deleteMany({ where: { thread_id: 'ipc-test-thread' } })
-    await prisma.thread_sessions.delete({ where: { thread_id: 'ipc-test-thread' } })
+    await prisma.ipc_requests.deleteMany({
+      where: { thread_id: 'ipc-test-thread' },
+    })
+    await prisma.thread_sessions.delete({
+      where: { thread_id: 'ipc-test-thread' },
+    })
   }, 30_000)
 
   test('interactive $transaction (callback form)', async () => {
@@ -343,12 +407,14 @@ describe('hrana-server', () => {
     if (!prisma) throw new Error('prisma not initialized')
 
     // Verify rollback: if the callback throws, no rows should be committed
-    const txError = await prisma.$transaction(async (tx) => {
-      await tx.thread_sessions.create({
-        data: { thread_id: 'tx-rollback-1', session_id: 'sess-rollback' },
+    const txError = await prisma
+      .$transaction(async (tx) => {
+        await tx.thread_sessions.create({
+          data: { thread_id: 'tx-rollback-1', session_id: 'sess-rollback' },
+        })
+        throw new Error('intentional rollback')
       })
-      throw new Error('intentional rollback')
-    }).catch((e: Error) => e)
+      .catch((e: Error) => e)
 
     expect(txError).toBeInstanceOf(Error)
     expect((txError as Error).message).toContain('intentional rollback')

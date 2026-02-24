@@ -1501,7 +1501,11 @@ export async function getIpcRequestById({ id }: { id: string }) {
 }
 
 /** Cancel IPC requests stuck in 'processing' longer than the TTL (e.g. hung file upload). */
-export async function cancelStaleProcessingRequests({ ttlMs }: { ttlMs: number }) {
+export async function cancelStaleProcessingRequests({
+  ttlMs,
+}: {
+  ttlMs: number
+}) {
   const prisma = await getPrisma()
   const cutoff = new Date(Date.now() - ttlMs)
   return prisma.ipc_requests.updateMany({
@@ -1521,6 +1525,9 @@ export async function cancelAllPendingIpcRequests() {
   const prisma = await getPrisma()
   await prisma.ipc_requests.updateMany({
     where: { status: { in: ['pending', 'processing'] } },
-    data: { status: 'cancelled' as const, response: JSON.stringify({ error: 'Bot shutting down' }) },
+    data: {
+      status: 'cancelled' as const,
+      response: JSON.stringify({ error: 'Bot shutting down' }),
+    },
   })
 }

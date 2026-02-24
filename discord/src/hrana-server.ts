@@ -68,7 +68,9 @@ export async function startHranaServer({ dbPath }: { dbPath: string }) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   await evictExistingInstance({ port })
 
-  hranaLogger.log(`Starting hrana server on 127.0.0.1:${port} with db: ${dbPath}`)
+  hranaLogger.log(
+    `Starting hrana server on 127.0.0.1:${port} with db: ${dbPath}`,
+  )
 
   const database = new Database(dbPath)
   database.exec('PRAGMA journal_mode = WAL')
@@ -80,12 +82,15 @@ export async function startHranaServer({ dbPath }: { dbPath: string }) {
   const started = await new Promise<ServerStartError | true>((resolve) => {
     const srv = http.createServer(handler)
     srv.on('error', (err: NodeJS.ErrnoException) => {
-      resolve(new ServerStartError({
-        port,
-        reason: err.code === 'EADDRINUSE'
-          ? `Port ${port} still in use after eviction`
-          : err.message,
-      }))
+      resolve(
+        new ServerStartError({
+          port,
+          reason:
+            err.code === 'EADDRINUSE'
+              ? `Port ${port} still in use after eviction`
+              : err.message,
+        }),
+      )
     })
     srv.listen(port, '127.0.0.1', () => {
       server = srv
@@ -109,7 +114,11 @@ export async function startHranaServer({ dbPath }: { dbPath: string }) {
 export async function stopHranaServer() {
   if (server) {
     hranaLogger.log('Stopping hrana server...')
-    await new Promise<void>((resolve) => { server!.close(() => { resolve() }) })
+    await new Promise<void>((resolve) => {
+      server!.close(() => {
+        resolve()
+      })
+    })
     server = null
   }
   if (db) {
@@ -184,8 +193,10 @@ function encodeValue(val: unknown): HranaValue {
     return { type: 'float', value: val }
   }
   if (typeof val === 'string') return { type: 'text', value: val }
-  if (Buffer.isBuffer(val)) return { type: 'blob', base64: val.toString('base64') }
-  if (val instanceof Uint8Array) return { type: 'blob', base64: Buffer.from(val).toString('base64') }
+  if (Buffer.isBuffer(val))
+    return { type: 'blob', base64: val.toString('base64') }
+  if (val instanceof Uint8Array)
+    return { type: 'blob', base64: Buffer.from(val).toString('base64') }
   return { type: 'text', value: String(val) }
 }
 
@@ -208,7 +219,10 @@ function getSqliteErrorCode(err: Error): string {
   return (err as unknown as { code?: string }).code ?? 'SQLITE_ERROR'
 }
 
-function resolveStmtSql(stmt: HranaStmt, sqlStore: Map<number, string>): string {
+function resolveStmtSql(
+  stmt: HranaStmt,
+  sqlStore: Map<number, string>,
+): string {
   if (stmt.sql != null) return stmt.sql
   if (stmt.sql_id != null) return sqlStore.get(stmt.sql_id) ?? ''
   return ''
@@ -225,7 +239,11 @@ function bindParams(stmt: HranaStmt): unknown[] {
   return (stmt.args ?? []).map(decodeValue)
 }
 
-function executeStmt(database: Database.Database, stmt: HranaStmt, sqlStore: Map<number, string>): HranaExecuteResult {
+function executeStmt(
+  database: Database.Database,
+  stmt: HranaStmt,
+  sqlStore: Map<number, string>,
+): HranaExecuteResult {
   const sql = resolveStmtSql(stmt, sqlStore)
   const prepared = database.prepare(sql)
   const params = bindParams(stmt)
@@ -246,9 +264,8 @@ function executeStmt(database: Database.Database, stmt: HranaStmt, sqlStore: Map
     cols: [],
     rows: [],
     affected_row_count: result.changes,
-    last_insert_rowid: result.lastInsertRowid != null
-      ? result.lastInsertRowid.toString()
-      : null,
+    last_insert_rowid:
+      result.lastInsertRowid != null ? result.lastInsertRowid.toString() : null,
   }
 }
 
@@ -260,28 +277,51 @@ function evaluateCondition(
   stepErrors: Array<{ message: string; code: string } | null>,
 ): boolean {
   if (!cond) return true
-  if (cond.type === 'ok') return stepErrors[cond.step!] === null && stepResults[cond.step!] !== null
-  if (cond.type === 'not') return !evaluateCondition(cond.cond, stepResults, stepErrors)
-  if (cond.type === 'and') return (cond.conds ?? []).every((c) => evaluateCondition(c, stepResults, stepErrors))
-  if (cond.type === 'or') return (cond.conds ?? []).some((c) => evaluateCondition(c, stepResults, stepErrors))
+  if (cond.type === 'ok')
+    return stepErrors[cond.step!] === null && stepResults[cond.step!] !== null
+  if (cond.type === 'not')
+    return !evaluateCondition(cond.cond, stepResults, stepErrors)
+  if (cond.type === 'and')
+    return (cond.conds ?? []).every((c) =>
+      evaluateCondition(c, stepResults, stepErrors),
+    )
+  if (cond.type === 'or')
+    return (cond.conds ?? []).some((c) =>
+      evaluateCondition(c, stepResults, stepErrors),
+    )
   return true
 }
 
 // ── Request handlers ─────────────────────────────────────────────────────
 
-function handleExecute(database: Database.Database, req: HranaRequest, sqlStore: Map<number, string>) {
-  if (!req.stmt) return { type: 'error' as const, error: { message: 'Missing stmt', code: 'HRANA_PROTO_ERROR' } }
+function handleExecute(
+  database: Database.Database,
+  req: HranaRequest,
+  sqlStore: Map<number, string>,
+) {
+  if (!req.stmt)
+    return {
+      type: 'error' as const,
+      error: { message: 'Missing stmt', code: 'HRANA_PROTO_ERROR' },
+    }
   const result = errore.try({
     try: () => executeStmt(database, req.stmt!, sqlStore),
     catch: (e) => e as Error,
   })
   if (result instanceof Error) {
-    return { type: 'error' as const, error: { message: result.message, code: getSqliteErrorCode(result) } }
+    return {
+      type: 'error' as const,
+      error: { message: result.message, code: getSqliteErrorCode(result) },
+    }
   }
   return { type: 'ok' as const, response: { type: 'execute', result } }
 }
 
-function handleBatch(database: Database.Database, req: HranaRequest, sqlStore: Map<number, string>) {
+function handleBatch(
+  database: Database.Database,
+  req: HranaRequest,
+  sqlStore: Map<number, string>,
+) {
   const steps = req.batch?.steps ?? []
   const stepResults: Array<HranaExecuteResult | null> = []
   const stepErrors: Array<{ message: string; code: string } | null> = []
@@ -298,7 +338,10 @@ function handleBatch(database: Database.Database, req: HranaRequest, sqlStore: M
     })
     if (result instanceof Error) {
       stepResults.push(null)
-      stepErrors.push({ message: result.message, code: getSqliteErrorCode(result) })
+      stepErrors.push({
+        message: result.message,
+        code: getSqliteErrorCode(result),
+      })
     } else {
       stepResults.push(result)
       stepErrors.push(null)
@@ -307,28 +350,45 @@ function handleBatch(database: Database.Database, req: HranaRequest, sqlStore: M
 
   return {
     type: 'ok' as const,
-    response: { type: 'batch', result: { step_results: stepResults, step_errors: stepErrors } },
+    response: {
+      type: 'batch',
+      result: { step_results: stepResults, step_errors: stepErrors },
+    },
   }
 }
 
-function handleSequence(database: Database.Database, req: HranaRequest, sqlStore: Map<number, string>) {
+function handleSequence(
+  database: Database.Database,
+  req: HranaRequest,
+  sqlStore: Map<number, string>,
+) {
   const sql = req.sql ?? (req.sql_id != null ? sqlStore.get(req.sql_id) : null)
   if (!sql) return { type: 'ok' as const, response: { type: 'sequence' } }
   const result = errore.try({
-    try: () => { database.exec(sql) },
+    try: () => {
+      database.exec(sql)
+    },
     catch: (e) => e as Error,
   })
   if (result instanceof Error) {
-    return { type: 'error' as const, error: { message: result.message, code: getSqliteErrorCode(result) } }
+    return {
+      type: 'error' as const,
+      error: { message: result.message, code: getSqliteErrorCode(result) },
+    }
   }
   return { type: 'ok' as const, response: { type: 'sequence' } }
 }
 
-function processRequest(database: Database.Database, req: HranaRequest, sqlStore: Map<number, string>) {
+function processRequest(
+  database: Database.Database,
+  req: HranaRequest,
+  sqlStore: Map<number, string>,
+) {
   if (req.type === 'execute') return handleExecute(database, req, sqlStore)
   if (req.type === 'batch') return handleBatch(database, req, sqlStore)
   if (req.type === 'sequence') return handleSequence(database, req, sqlStore)
-  if (req.type === 'close') return { type: 'ok' as const, response: { type: 'close' } }
+  if (req.type === 'close')
+    return { type: 'ok' as const, response: { type: 'close' } }
   if (req.type === 'store_sql') {
     if (req.sql_id != null && req.sql != null) sqlStore.set(req.sql_id, req.sql)
     return { type: 'ok' as const, response: { type: 'store_sql' } }
@@ -337,7 +397,13 @@ function processRequest(database: Database.Database, req: HranaRequest, sqlStore
     if (req.sql_id != null) sqlStore.delete(req.sql_id)
     return { type: 'ok' as const, response: { type: 'close_sql' } }
   }
-  return { type: 'error' as const, error: { message: `Unknown request type: ${req.type}`, code: 'HRANA_PROTO_ERROR' } }
+  return {
+    type: 'error' as const,
+    error: {
+      message: `Unknown request type: ${req.type}`,
+      code: 'HRANA_PROTO_ERROR',
+    },
+  }
 }
 
 // ── HTTP handler ─────────────────────────────────────────────────────────
@@ -348,7 +414,9 @@ function processRequest(database: Database.Database, req: HranaRequest, sqlStore
 let batonCounter = 0
 const streamStores = new Map<string, Map<number, string>>()
 
-export function createHranaHandler(database: Database.Database): http.RequestListener {
+export function createHranaHandler(
+  database: Database.Database,
+): http.RequestListener {
   return (req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -363,27 +431,48 @@ export function createHranaHandler(database: Database.Database): http.RequestLis
     if (req.method === 'POST' && req.url === '/v2/pipeline') {
       const chunks: Buffer[] = []
       let aborted = false
-      req.on('error', () => { aborted = true; res.destroy() })
-      req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      req.on('error', () => {
+        aborted = true
+        res.destroy()
+      })
+      req.on('data', (chunk: Buffer) => {
+        chunks.push(chunk)
+      })
       req.on('end', () => {
         if (aborted) return
         const parseResult = errore.try({
-          try: () => JSON.parse(Buffer.concat(chunks).toString()) as HranaPipelineRequest,
+          try: () =>
+            JSON.parse(
+              Buffer.concat(chunks).toString(),
+            ) as HranaPipelineRequest,
           catch: (e) => e as Error,
         })
         if (parseResult instanceof Error) {
           res.writeHead(400, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ error: { message: parseResult.message, code: 'HRANA_PROTO_ERROR' } }))
+          res.end(
+            JSON.stringify({
+              error: {
+                message: parseResult.message,
+                code: 'HRANA_PROTO_ERROR',
+              },
+            }),
+          )
           return
         }
 
         // Resolve or create per-stream SQL store keyed by baton
         const incoming = parseResult.baton
-        const sqlStore = (incoming ? streamStores.get(incoming) : undefined) ?? new Map<number, string>()
+        const sqlStore =
+          (incoming ? streamStores.get(incoming) : undefined) ??
+          new Map<number, string>()
         if (incoming) streamStores.delete(incoming)
 
-        const results = (parseResult.requests ?? []).map((r) => processRequest(database, r, sqlStore))
-        const hasClose = (parseResult.requests ?? []).some((r) => r.type === 'close')
+        const results = (parseResult.requests ?? []).map((r) =>
+          processRequest(database, r, sqlStore),
+        )
+        const hasClose = (parseResult.requests ?? []).some(
+          (r) => r.type === 'close',
+        )
 
         const baton = hasClose ? null : `b${++batonCounter}`
         if (baton) streamStores.set(baton, sqlStore)
@@ -408,20 +497,26 @@ export function createHranaHandler(database: Database.Database): http.RequestLis
 export async function evictExistingInstance({ port }: { port: number }) {
   const url = `http://127.0.0.1:${port}/health`
 
-  const probe = await fetch(url, { signal: AbortSignal.timeout(1000) })
-    .catch((e) => new FetchError({ url, cause: e }))
+  const probe = await fetch(url, { signal: AbortSignal.timeout(1000) }).catch(
+    (e) => new FetchError({ url, cause: e }),
+  )
   if (probe instanceof Error) return
 
-  const body = await (probe.json() as Promise<{ pid?: number }>)
-    .catch((e) => new FetchError({ url, cause: e }))
+  const body = await (probe.json() as Promise<{ pid?: number }>).catch(
+    (e) => new FetchError({ url, cause: e }),
+  )
   if (body instanceof Error) return
 
   const targetPid = body.pid
   if (!targetPid || targetPid === process.pid) return
 
-  hranaLogger.log(`Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`)
+  hranaLogger.log(
+    `Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`,
+  )
   const killResult = errore.try({
-    try: () => { process.kill(targetPid, 'SIGTERM') },
+    try: () => {
+      process.kill(targetPid, 'SIGTERM')
+    },
     catch: (e) => e as Error,
   })
   if (killResult instanceof Error) {
@@ -429,17 +524,24 @@ export async function evictExistingInstance({ port }: { port: number }) {
     return
   }
 
-  await new Promise((resolve) => { setTimeout(resolve, 1000) })
+  await new Promise((resolve) => {
+    setTimeout(resolve, 1000)
+  })
 
   // Verify it's gone — if still alive, escalate to SIGKILL
-  const secondProbe = await fetch(url, { signal: AbortSignal.timeout(500) })
-    .catch((e) => new FetchError({ url, cause: e }))
+  const secondProbe = await fetch(url, {
+    signal: AbortSignal.timeout(500),
+  }).catch((e) => new FetchError({ url, cause: e }))
   if (secondProbe instanceof Error) return
 
   hranaLogger.log(`PID ${targetPid} still alive after SIGTERM, sending SIGKILL`)
   errore.try({
-    try: () => { process.kill(targetPid, 'SIGKILL') },
+    try: () => {
+      process.kill(targetPid, 'SIGKILL')
+    },
     catch: (e) => e as Error,
   })
-  await new Promise((resolve) => { setTimeout(resolve, 1000) })
+  await new Promise((resolve) => {
+    setTimeout(resolve, 1000)
+  })
 }

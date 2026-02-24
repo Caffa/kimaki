@@ -33,7 +33,9 @@ describe('extractTranscription', () => {
   test('returns NoResponseContentError for empty content', () => {
     const result = extractTranscription([])
     expect(result).toBeInstanceOf(Error)
-    expect((result as Error).message).toMatchInlineSnapshot(`"No response content from model"`)
+    expect((result as Error).message).toMatchInlineSnapshot(
+      `"No response content from model"`,
+    )
   })
 
   test('returns EmptyTranscriptionError for empty transcription string', () => {
@@ -46,7 +48,9 @@ describe('extractTranscription', () => {
       },
     ])
     expect(result).toBeInstanceOf(Error)
-    expect((result as Error).message).toMatchInlineSnapshot(`"Model returned empty transcription"`)
+    expect((result as Error).message).toMatchInlineSnapshot(
+      `"Model returned empty transcription"`,
+    )
   })
 
   test('returns TranscriptionError when content has no tool call or text', () => {
@@ -57,13 +61,20 @@ describe('extractTranscription', () => {
       },
     ])
     expect(result).toBeInstanceOf(Error)
-    expect((result as Error).message).toMatchInlineSnapshot(`"Transcription failed: Model did not produce a transcription"`)
+    expect((result as Error).message).toMatchInlineSnapshot(
+      `"Transcription failed: Model did not produce a transcription"`,
+    )
   })
 })
 
 describe('transcribeAudio with real API', () => {
   const apiKey = process.env.GEMINI_API_KEY
-  const audioPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.mp3')
+  const audioPath = path.join(
+    import.meta.dirname,
+    '..',
+    'scripts',
+    'example-audio.mp3',
+  )
 
   test('transcribes example audio file', { timeout: 30_000 }, async () => {
     if (!apiKey) {
@@ -76,11 +87,11 @@ describe('transcribeAudio with real API', () => {
     }
 
     const audio = fs.readFileSync(audioPath)
-      const result = await transcribeAudio({
-        audio,
-        prompt: 'test project',
-        apiKey,
-      })
+    const result = await transcribeAudio({
+      audio,
+      prompt: 'test project',
+      apiKey,
+    })
 
     expect(result).toBeTypeOf('string')
     expect((result as string).length).toBeGreaterThan(0)

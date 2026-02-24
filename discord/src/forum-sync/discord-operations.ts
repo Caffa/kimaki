@@ -39,16 +39,14 @@ export function getCanonicalThreadFilePath({
 }
 
 export async function ensureDirectory({ directory }: { directory: string }) {
-  const result = await fs.promises
-    .mkdir(directory, { recursive: true })
-    .catch(
-      (cause) =>
-        new ForumSyncOperationError({
-          forumChannelId: 'unknown',
-          reason: directory,
-          cause,
-        }),
-    )
+  const result = await fs.promises.mkdir(directory, { recursive: true }).catch(
+    (cause) =>
+      new ForumSyncOperationError({
+        forumChannelId: 'unknown',
+        reason: directory,
+        cause,
+      }),
+  )
   if (result instanceof Error) return result
 }
 

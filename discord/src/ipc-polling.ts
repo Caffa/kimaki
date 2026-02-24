@@ -28,7 +28,12 @@ class IpcDispatchError extends createTaggedError({
 
 // ── Button parsing ───────────────────────────────────────────────────────
 
-const VALID_COLORS = new Set<ActionButtonColor>(['white', 'blue', 'green', 'red'])
+const VALID_COLORS = new Set<ActionButtonColor>([
+  'white',
+  'blue',
+  'green',
+  'red',
+])
 
 type ParsedButton = { label: string; color?: ActionButtonColor }
 
@@ -37,11 +42,15 @@ function parseButtons(raw: unknown): ParsedButton[] {
   const results: ParsedButton[] = []
   for (const value of raw) {
     if (!value || typeof value !== 'object') continue
-    const label = (typeof value.label === 'string' ? value.label : '').trim().slice(0, 80)
+    const label = (typeof value.label === 'string' ? value.label : '')
+      .trim()
+      .slice(0, 80)
     if (!label) continue
-    const color = typeof value.color === 'string' && VALID_COLORS.has(value.color as ActionButtonColor)
-      ? (value.color as ActionButtonColor)
-      : undefined
+    const color =
+      typeof value.color === 'string' &&
+      VALID_COLORS.has(value.color as ActionButtonColor)
+        ? (value.color as ActionButtonColor)
+        : undefined
     results.push({ label, color })
     if (results.length >= 3) break
   }
@@ -58,30 +67,63 @@ type ClaimedRequest = {
   payload: string
 }
 
-async function dispatchRequest({ req, discordClient }: {
+async function dispatchRequest({
+  req,
+  discordClient,
+}: {
   req: ClaimedRequest
   discordClient: Client
 }) {
   switch (req.type) {
     case 'file_upload': {
       const parsed = errore.try({
-        try: () => JSON.parse(req.payload) as { prompt?: string; maxFiles?: number; directory?: string },
-        catch: (e) => new IpcDispatchError({ requestId: req.id, reason: 'Invalid payload JSON', cause: e }),
+        try: () =>
+          JSON.parse(req.payload) as {
+            prompt?: string
+            maxFiles?: number
+            directory?: string
+          },
+        catch: (e) =>
+          new IpcDispatchError({
+            requestId: req.id,
+            reason: 'Invalid payload JSON',
+            cause: e,
+          }),
       })
       if (parsed instanceof Error) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: parsed.message }) })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: parsed.message }),
+        })
         return parsed
       }
 
-      const thread = await discordClient.channels.fetch(req.thread_id)
-        .catch((e) => new IpcDispatchError({ requestId: req.id, reason: 'Thread fetch failed', cause: e }))
+      const thread = await discordClient.channels
+        .fetch(req.thread_id)
+        .catch(
+          (e) =>
+            new IpcDispatchError({
+              requestId: req.id,
+              reason: 'Thread fetch failed',
+              cause: e,
+            }),
+        )
       if (thread instanceof Error) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: 'Thread not found' }) })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: 'Thread not found' }),
+        })
         return thread
       }
       if (!thread?.isThread()) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: 'Thread not found' }) })
-        return new IpcDispatchError({ requestId: req.id, reason: 'Channel is not a thread' })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: 'Thread not found' }),
+        })
+        return new IpcDispatchError({
+          requestId: req.id,
+          reason: 'Channel is not a thread',
+        })
       }
 
       // Fire-and-forget: showFileUploadButton waits for user interaction
@@ -94,10 +136,23 @@ async function dispatchRequest({ req, discordClient }: {
         prompt: parsed.prompt || 'Please upload files',
         maxFiles: Math.min(10, Math.max(1, parsed.maxFiles || 5)),
       })
-        .then((filePaths) => { return completeIpcRequest({ id: req.id, response: JSON.stringify({ filePaths }) }) })
+        .then((filePaths) => {
+          return completeIpcRequest({
+            id: req.id,
+            response: JSON.stringify({ filePaths }),
+          })
+        })
         .catch((e) => {
-          ipcLogger.error('[IPC] File upload error:', e instanceof Error ? e.message : String(e))
-          return completeIpcRequest({ id: req.id, response: JSON.stringify({ error: e instanceof Error ? e.message : 'File upload failed' }) })
+          ipcLogger.error(
+            '[IPC] File upload error:',
+            e instanceof Error ? e.message : String(e),
+          )
+          return completeIpcRequest({
+            id: req.id,
+            response: JSON.stringify({
+              error: e instanceof Error ? e.message : 'File upload failed',
+            }),
+          })
         })
         .catch(() => {})
       return
@@ -105,29 +160,58 @@ async function dispatchRequest({ req, discordClient }: {
 
     case 'action_buttons': {
       const parsed = errore.try({
-        try: () => JSON.parse(req.payload) as { buttons?: unknown; directory?: string },
-        catch: (e) => new IpcDispatchError({ requestId: req.id, reason: 'Invalid payload JSON', cause: e }),
+        try: () =>
+          JSON.parse(req.payload) as { buttons?: unknown; directory?: string },
+        catch: (e) =>
+          new IpcDispatchError({
+            requestId: req.id,
+            reason: 'Invalid payload JSON',
+            cause: e,
+          }),
       })
       if (parsed instanceof Error) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: parsed.message }) })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: parsed.message }),
+        })
         return parsed
       }
 
       const buttons = parseButtons(parsed.buttons)
       if (buttons.length === 0) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: 'No valid buttons' }) })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: 'No valid buttons' }),
+        })
         return
       }
 
-      const thread = await discordClient.channels.fetch(req.thread_id)
-        .catch((e) => new IpcDispatchError({ requestId: req.id, reason: 'Thread fetch failed', cause: e }))
+      const thread = await discordClient.channels
+        .fetch(req.thread_id)
+        .catch(
+          (e) =>
+            new IpcDispatchError({
+              requestId: req.id,
+              reason: 'Thread fetch failed',
+              cause: e,
+            }),
+        )
       if (thread instanceof Error) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: 'Thread not found' }) })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: 'Thread not found' }),
+        })
         return thread
       }
       if (!thread?.isThread()) {
-        await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: 'Thread not found' }) })
-        return new IpcDispatchError({ requestId: req.id, reason: 'Channel is not a thread' })
+        await completeIpcRequest({
+          id: req.id,
+          response: JSON.stringify({ error: 'Thread not found' }),
+        })
+        return new IpcDispatchError({
+          requestId: req.id,
+          reason: 'Channel is not a thread',
+        })
       }
 
       queueActionButtonsRequest({
@@ -137,12 +221,18 @@ async function dispatchRequest({ req, discordClient }: {
         buttons,
       })
 
-      await completeIpcRequest({ id: req.id, response: JSON.stringify({ ok: true }) })
+      await completeIpcRequest({
+        id: req.id,
+        response: JSON.stringify({ ok: true }),
+      })
       return
     }
 
     default: {
-      await completeIpcRequest({ id: req.id, response: JSON.stringify({ error: `Unknown IPC type: ${req.type}` }) })
+      await completeIpcRequest({
+        id: req.id,
+        response: JSON.stringify({ error: `Unknown IPC type: ${req.type}` }),
+      })
       return
     }
   }
@@ -163,10 +253,15 @@ let lastStaleCheck = 0
  * Claims rows atomically (pending -> processing) to prevent duplicate dispatch.
  * Uses an in-flight guard to prevent overlapping poll ticks.
  */
-export async function startIpcPolling({ discordClient }: { discordClient: Client }) {
+export async function startIpcPolling({
+  discordClient,
+}: {
+  discordClient: Client
+}) {
   // Clean up stale requests from previous runs before first poll tick
-  await cancelAllPendingIpcRequests()
-    .catch((e) => { ipcLogger.warn('Failed to cancel stale IPC requests:', (e as Error).message) })
+  await cancelAllPendingIpcRequests().catch((e) => {
+    ipcLogger.warn('Failed to cancel stale IPC requests:', (e as Error).message)
+  })
 
   let polling = false
   pollingInterval = setInterval(async () => {
@@ -177,12 +272,21 @@ export async function startIpcPolling({ discordClient }: { discordClient: Client
     const now = Date.now()
     if (now - lastStaleCheck > STALE_CHECK_INTERVAL_MS) {
       lastStaleCheck = now
-      await cancelStaleProcessingRequests({ ttlMs: STALE_TTL_MS })
-        .catch((e) => { ipcLogger.warn('Stale sweep failed:', (e as Error).message) })
+      await cancelStaleProcessingRequests({ ttlMs: STALE_TTL_MS }).catch(
+        (e) => {
+          ipcLogger.warn('Stale sweep failed:', (e as Error).message)
+        },
+      )
     }
 
-    const claimed = await claimPendingIpcRequests()
-      .catch((e) => new IpcDispatchError({ requestId: 'poll', reason: 'Claim failed', cause: e }))
+    const claimed = await claimPendingIpcRequests().catch(
+      (e) =>
+        new IpcDispatchError({
+          requestId: 'poll',
+          reason: 'Claim failed',
+          cause: e,
+        }),
+    )
     if (claimed instanceof Error) {
       ipcLogger.error('IPC claim failed:', claimed.message)
       polling = false
@@ -190,8 +294,14 @@ export async function startIpcPolling({ discordClient }: { discordClient: Client
     }
 
     for (const req of claimed) {
-      const result = await dispatchRequest({ req, discordClient })
-        .catch((e) => new IpcDispatchError({ requestId: req.id, reason: 'Dispatch threw', cause: e }))
+      const result = await dispatchRequest({ req, discordClient }).catch(
+        (e) =>
+          new IpcDispatchError({
+            requestId: req.id,
+            reason: 'Dispatch threw',
+            cause: e,
+          }),
+      )
       if (result instanceof Error) {
         ipcLogger.error(`IPC dispatch error for ${req.type}:`, result.message)
       }

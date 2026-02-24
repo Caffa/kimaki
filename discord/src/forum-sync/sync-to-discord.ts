@@ -151,7 +151,9 @@ async function ensureForumTags({
       `Auto-create tags: ${missing.join(', ')}`,
     )
     .catch((cause) => {
-      forumLogger.warn(`Failed to create forum tags [${missing.join(', ')}]: ${cause instanceof Error ? cause.message : cause}`)
+      forumLogger.warn(
+        `Failed to create forum tags [${missing.join(', ')}]: ${cause instanceof Error ? cause.message : cause}`,
+      )
     })
 }
 

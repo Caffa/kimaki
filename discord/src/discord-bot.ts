@@ -1014,7 +1014,12 @@ export async function startDiscordBot({
       await stopTaskRunner()
 
       // Cancel pending IPC requests so plugin tools don't hang
-      await cancelAllPendingIpcRequests().catch((e) => { discordLogger.warn('Failed to cancel pending IPC requests:', (e as Error).message) })
+      await cancelAllPendingIpcRequests().catch((e) => {
+        discordLogger.warn(
+          'Failed to cancel pending IPC requests:',
+          (e as Error).message,
+        )
+      })
 
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {

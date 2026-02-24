@@ -202,7 +202,8 @@ export function transcribeAudio({
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
-  const apiKey = apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+  const apiKey =
+    apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
   if (!model && !apiKey) {
     return Promise.resolve(

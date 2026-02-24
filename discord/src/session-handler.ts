@@ -1006,7 +1006,9 @@ export async function handleOpencodeSession({
     if (abortController.signal.aborted) {
       return
     }
-    sessionLogger.log(`[SESSION IDLE] Session ${session.id} is idle, ending stream`)
+    sessionLogger.log(
+      `[SESSION IDLE] Session ${session.id} is idle, ending stream`,
+    )
     sessionLogger.log(
       `[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`,
     )
