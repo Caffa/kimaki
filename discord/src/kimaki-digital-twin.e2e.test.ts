@@ -154,20 +154,22 @@ e2eTest(
         discordClient: botClient,
       })
 
-      const createdThread = await discord.expect().threadCreated({
+      await discord.user(testUserId).sendMessage({
+        channelId: textChannelId,
+        content: 'Reply with exactly: kimaki digital twin ok',
+      })
+
+      const createdThread = await discord.waitForThread({
         parentChannelId: textChannelId,
-        timeoutMs: 60_000,
-        trigger: async () => {
-          await discord.user(testUserId).sendMessage({
-            channelId: textChannelId,
-            content: 'Reply with exactly: kimaki digital twin ok',
-          })
+        timeout: 60_000,
+        predicate: (thread) => {
+          return thread.name === 'Reply with exactly: kimaki digital twin ok'
         },
       })
 
-      const botReply = await discord.expect().botReply({
+      const botReply = await discord.waitForBotReply({
         channelId: createdThread.id,
-        timeoutMs: 120_000,
+        timeout: 120_000,
       })
 
       expect(createdThread.id.length).toBeGreaterThan(0)
