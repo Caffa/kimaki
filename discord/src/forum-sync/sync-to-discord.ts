@@ -7,6 +7,7 @@ import path from 'node:path'
 import { MessageFlags, type Client, type ForumChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
 import {
+  appendProjectChannelFooter,
   extractStarterContent,
   getStringValue,
   parseFrontmatter,
@@ -219,7 +220,11 @@ async function upsertThreadFromFile({
       ? [...tagsWithScope, project]
       : tagsWithScope
   const starterContent = extractStarterContent({ body: parsed.body })
-  const safeStarterContent = starterContent || title || 'Untitled post'
+  const starterWithFooter = appendProjectChannelFooter({
+    content: starterContent,
+    projectChannelId,
+  })
+  const safeStarterContent = starterWithFooter || title || 'Untitled post'
 
   const stat = await fs.promises.stat(filePath).catch((cause) => {
     return new ForumSyncOperationError({

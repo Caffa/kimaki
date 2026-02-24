@@ -131,3 +131,31 @@ export function formatMessageSection({
   const editedSuffix = section.editedAt ? ` (edited ${section.editedAt})` : ''
   return `**${section.authorName}** (${section.authorId}) - ${section.createdAt}${editedSuffix}\n\n${section.content}`
 }
+
+// Channel mention footer stored in the Discord starter message so
+// projectChannelId survives a full re-sync from Discord (no local files).
+// Uses <#id> so Discord renders it as a clickable channel link.
+const PROJECT_CHANNEL_FOOTER_RE = /\nchannel: <#(\d{17,20})>\s*$/
+
+export function appendProjectChannelFooter({
+  content,
+  projectChannelId,
+}: {
+  content: string
+  projectChannelId?: string
+}): string {
+  if (!projectChannelId) return content
+  return `${content}\nchannel: <#${projectChannelId}>`
+}
+
+export function extractProjectChannelFromContent({ content }: { content: string }): {
+  cleanContent: string
+  projectChannelId?: string
+} {
+  const match = content.match(PROJECT_CHANNEL_FOOTER_RE)
+  if (!match) return { cleanContent: content }
+  return {
+    cleanContent: content.replace(PROJECT_CHANNEL_FOOTER_RE, ''),
+    projectChannelId: match[1],
+  }
+}

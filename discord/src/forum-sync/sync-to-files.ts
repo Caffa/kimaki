@@ -8,6 +8,7 @@ import type { ForumChannel, ThreadChannel } from 'discord.js'
 import { createLogger } from '../logger.js'
 import {
   buildMessageSections,
+  extractProjectChannelFromContent,
   formatMessageSection,
   getStringValue,
   stringifyFrontmatter,
@@ -129,14 +130,31 @@ export async function syncSingleThreadToFile({
   const messages = await fetchThreadMessages({ thread })
   if (messages instanceof Error) return messages
 
+  // Extract projectChannelId from the starter message footer if not already known.
+  // This allows Discord -> file sync to reconstruct the correct subfolder
+  // even when no local .md file exists (e.g. fresh machine, deleted files).
+  let resolvedProjectChannelId = projectChannelId
+  let resolvedSubfolder = subfolder
+  const sections = buildMessageSections({ messages })
+  const firstSection = sections[0]
+  if (firstSection) {
+    const { cleanContent, projectChannelId: footerChannelId } =
+      extractProjectChannelFromContent({ content: firstSection.content })
+    firstSection.content = cleanContent
+    if (footerChannelId && !resolvedProjectChannelId) {
+      resolvedProjectChannelId = footerChannelId
+    }
+    if (resolvedProjectChannelId && !resolvedSubfolder) {
+      resolvedSubfolder = resolvedProjectChannelId
+    }
+  }
+
   // Ensure subfolder directory exists when writing into a nested path
-  if (subfolder) {
-    const subDir = path.join(outputDir, subfolder)
+  if (resolvedSubfolder) {
+    const subDir = path.join(outputDir, resolvedSubfolder)
     const ensureResult = await ensureDirectory({ directory: subDir })
     if (ensureResult instanceof Error) return ensureResult
   }
-
-  const sections = buildMessageSections({ messages })
   const body = sections
     .map((section) => formatMessageSection({ section }))
     .join('\n\n---\n\n')
@@ -145,13 +163,13 @@ export async function syncSingleThreadToFile({
     forumChannel,
     sections,
     project,
-    projectChannelId,
+    projectChannelId: resolvedProjectChannelId,
   })
   const markdown = stringifyFrontmatter({ frontmatter, body })
   const targetPath = getCanonicalThreadFilePath({
     outputDir,
     threadId: thread.id,
-    subfolder,
+    subfolder: resolvedSubfolder,
   })
 
   addIgnoredPath({ runtimeState, filePath: targetPath })
