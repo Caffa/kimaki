@@ -160,3 +160,14 @@ when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` en
 ## skills folder
 
 skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
+
+## discord-digital-twin e2e style
+
+when writing discord e2e tests, prefer adding reusable automation methods to `DigitalDiscord` instead of creating per-test helper functions in kimaki.
+
+aim for a playwright-like style in tests:
+
+- actor methods for actions: `discord.user(userId).sendMessage(...)`, `runSlashCommand(...)`, `clickButton(...)`, etc
+- expect/wait methods for assertions: `discord.expect().threadCreated(...)`, `discord.expect().botReply(...)`, `discord.expect().interactionAck(...)`
+
+if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*` so future tests can reuse it.

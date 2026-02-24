@@ -3,7 +3,6 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { setTimeout as wait } from 'node:timers/promises'
 import { expect, test } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin'
@@ -66,27 +65,6 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
       version: '10',
     },
   })
-}
-
-async function waitForNewThread({
-  discord,
-  parentChannelId,
-  timeoutMs,
-}: {
-  discord: DigitalDiscord
-  parentChannelId: string
-  timeoutMs: number
-}): Promise<{ id: string }> {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    const threads = await discord.getThreads(parentChannelId)
-    const firstThread = threads[0]
-    if (firstThread) {
-      return firstThread
-    }
-    await wait(250)
-  }
-  throw new Error('Timed out waiting for thread creation')
 }
 
 async function cleanupOpencodeServers() {
@@ -176,21 +154,20 @@ e2eTest(
         discordClient: botClient,
       })
 
-      await discord.simulateUserMessage({
-        channelId: textChannelId,
-        userId: testUserId,
-        content: 'Reply with exactly: kimaki digital twin ok',
-      })
-
-      const createdThread = await waitForNewThread({
-        discord,
+      const createdThread = await discord.expect().threadCreated({
         parentChannelId: textChannelId,
         timeoutMs: 60_000,
+        trigger: async () => {
+          await discord.user(testUserId).sendMessage({
+            channelId: textChannelId,
+            content: 'Reply with exactly: kimaki digital twin ok',
+          })
+        },
       })
 
-      const botReply = await discord.waitForBotMessage({
+      const botReply = await discord.expect().botReply({
         channelId: createdThread.id,
-        timeout: 120_000,
+        timeoutMs: 120_000,
       })
 
       expect(createdThread.id.length).toBeGreaterThan(0)
