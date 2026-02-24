@@ -19,6 +19,7 @@ import {
 import { getBotToken } from './database.js'
 import {
   getDataDir,
+  getLockPort,
   getMemoryEnabled,
   getVerboseOpencodeServer,
 } from './config.js'
@@ -344,6 +345,7 @@ export async function initializeOpencodeForDirectory(
         } satisfies Config),
         OPENCODE_PORT: port.toString(),
         KIMAKI_DATA_DIR: getDataDir(),
+        KIMAKI_LOCK_PORT: getLockPort().toString(),
         ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
         ...(getMemoryEnabled() && { KIMAKI_MEMORY_ENABLED: '1' }),
         ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),

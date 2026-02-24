@@ -115,10 +115,19 @@ const DEFAULT_LOCK_PORT = 29988
 
 /**
  * Derive a lock port from the data directory path.
+ * If KIMAKI_LOCK_PORT is set to a valid TCP port, it takes precedence.
  * Returns 29988 for the default ~/.kimaki directory (backwards compatible).
  * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
  */
 export function getLockPort(): number {
+  const envPortRaw = process.env['KIMAKI_LOCK_PORT']
+  if (envPortRaw) {
+    const envPort = Number.parseInt(envPortRaw, 10)
+    if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {
+      return envPort
+    }
+  }
+
   const dir = getDataDir()
 
   // Use original port for default data dir (backwards compatible)

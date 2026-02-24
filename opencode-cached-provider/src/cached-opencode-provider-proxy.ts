@@ -657,7 +657,8 @@ export class CachedOpencodeProviderProxy {
     request: Request
     targetUrl: URL
   }) {
-    const proxyRequest = new Request(targetUrl, request)
+    const targetUrlString = targetUrl.toString()
+    const proxyRequest = new Request(targetUrlString, request)
     const headers = new Headers(proxyRequest.headers)
 
     headers.delete('host')
@@ -677,7 +678,7 @@ export class CachedOpencodeProviderProxy {
       headers.set(this.upstreamApiKeyHeader, this.upstreamApiKey)
     }
 
-    const forwardedRequest = new Request(targetUrl, {
+    const forwardedRequest = new Request(targetUrlString, {
       method: proxyRequest.method,
       headers,
       body: proxyRequest.body,

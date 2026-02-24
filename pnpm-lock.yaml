@@ -160,6 +160,12 @@ importers:
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
+      discord-digital-twin:
+        specifier: workspace:*
+        version: link:../discord-digital-twin
+      opencode-cached-provider:
+        specifier: workspace:*
+        version: link:../opencode-cached-provider
       prisma:
         specifier: 7.3.0
         version: 7.3.0(@types/react@19.2.14)(better-sqlite3@12.3.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.2)
