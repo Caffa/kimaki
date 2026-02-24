@@ -70,6 +70,7 @@ The Discord team publishes an official OpenAPI 3.1 spec:
 - **API version**: v10
 
 To download locally:
+
 ```bash
 npx opensrc discord/discord-api-spec
 ```
@@ -165,11 +166,11 @@ import type {
 
 ```ts
 import {
-  GatewayOpcodes,         // Dispatch=0, Heartbeat=1, Identify=2, etc.
-  GatewayDispatchEvents,  // 'READY', 'MESSAGE_CREATE', etc. (60+ events)
-  GatewayCloseCodes,      // UnknownError=4000..DisallowedIntents=4014
-  GatewayIntentBits,      // Guilds, GuildMessages, MessageContent, etc.
-  GatewayVersion,         // '10'
+  GatewayOpcodes, // Dispatch=0, Heartbeat=1, Identify=2, etc.
+  GatewayDispatchEvents, // 'READY', 'MESSAGE_CREATE', etc. (60+ events)
+  GatewayCloseCodes, // UnknownError=4000..DisallowedIntents=4014
+  GatewayIntentBits, // Guilds, GuildMessages, MessageContent, etc.
+  GatewayVersion, // '10'
 } from 'discord-api-types/v10'
 
 import type {
@@ -209,18 +210,18 @@ The naming convention is `REST{Method}API{Resource}{Action}{Suffix}`:
 import type {
   // Messages
   RESTPostAPIChannelMessageJSONBody,
-  RESTPostAPIChannelMessageResult,    // = APIMessage
+  RESTPostAPIChannelMessageResult, // = APIMessage
   RESTGetAPIChannelMessagesQuery,
-  RESTGetAPIChannelMessagesResult,    // = APIMessage[]
-  RESTGetAPIChannelMessageResult,     // = APIMessage
+  RESTGetAPIChannelMessagesResult, // = APIMessage[]
+  RESTGetAPIChannelMessageResult, // = APIMessage
   RESTPatchAPIChannelMessageJSONBody,
-  RESTPatchAPIChannelMessageResult,   // = APIMessage
+  RESTPatchAPIChannelMessageResult, // = APIMessage
 
   // Channels
-  RESTGetAPIChannelResult,            // = APIChannel
+  RESTGetAPIChannelResult, // = APIChannel
   RESTPatchAPIChannelJSONBody,
-  RESTPatchAPIChannelResult,          // = APIChannel
-  RESTDeleteAPIChannelResult,         // = APIChannel
+  RESTPatchAPIChannelResult, // = APIChannel
+  RESTDeleteAPIChannelResult, // = APIChannel
 
   // Threads
   RESTPostAPIChannelThreadsJSONBody,
@@ -228,13 +229,13 @@ import type {
   RESTPostAPIChannelMessagesThreadsJSONBody,
 
   // Typing (returns 204 no content)
-  RESTPostAPIChannelTypingResult,     // = never
+  RESTPostAPIChannelTypingResult, // = never
 
   // Reactions (returns 204 no content)
-  RESTPutAPIChannelMessageReactionResult,  // = never
+  RESTPutAPIChannelMessageReactionResult, // = never
 
   // Gateway
-  RESTGetAPIGatewayBotResult,         // = APIGatewayBotInfo
+  RESTGetAPIGatewayBotResult, // = APIGatewayBotInfo
 } from 'discord-api-types/v10'
 ```
 
@@ -247,27 +248,27 @@ paths to implement:
 import { Routes } from 'discord-api-types/v10'
 
 // Examples:
-Routes.channel('123')                           // '/channels/123'
-Routes.channelMessages('123')                   // '/channels/123/messages'
-Routes.channelMessage('123', '456')             // '/channels/123/messages/456'
-Routes.channelTyping('123')                     // '/channels/123/typing'
-Routes.channelMessageOwnReaction('ch','msg','emoji')
-Routes.threads('123')                           // '/channels/123/threads'
-Routes.threads('123', '456')                    // '/channels/123/messages/456/threads'
-Routes.threadMembers('123')                     // '/channels/123/thread-members'
-Routes.guild('123')                             // '/guilds/123'
-Routes.guildChannels('123')                     // '/guilds/123/channels'
-Routes.guildMembers('123')                      // '/guilds/123/members'
-Routes.guildMembersSearch('123')                // '/guilds/123/members/search'
-Routes.guildRoles('123')                        // '/guilds/123/roles'
-Routes.user()                                   // '/users/@me'
-Routes.user('123')                              // '/users/123'
-Routes.gatewayBot()                             // '/gateway/bot'
-Routes.applicationCommands('app')               // '/applications/app/commands'
-Routes.applicationGuildCommands('app','guild')  // '/applications/app/guilds/guild/commands'
-Routes.interactionCallback('id','token')        // '/interactions/id/token/callback'
-Routes.webhook('id','token')                    // '/webhooks/id/token'
-Routes.webhookMessage('id','token','msg')       // '/webhooks/id/token/messages/msg'
+Routes.channel('123') // '/channels/123'
+Routes.channelMessages('123') // '/channels/123/messages'
+Routes.channelMessage('123', '456') // '/channels/123/messages/456'
+Routes.channelTyping('123') // '/channels/123/typing'
+Routes.channelMessageOwnReaction('ch', 'msg', 'emoji')
+Routes.threads('123') // '/channels/123/threads'
+Routes.threads('123', '456') // '/channels/123/messages/456/threads'
+Routes.threadMembers('123') // '/channels/123/thread-members'
+Routes.guild('123') // '/guilds/123'
+Routes.guildChannels('123') // '/guilds/123/channels'
+Routes.guildMembers('123') // '/guilds/123/members'
+Routes.guildMembersSearch('123') // '/guilds/123/members/search'
+Routes.guildRoles('123') // '/guilds/123/roles'
+Routes.user() // '/users/@me'
+Routes.user('123') // '/users/123'
+Routes.gatewayBot() // '/gateway/bot'
+Routes.applicationCommands('app') // '/applications/app/commands'
+Routes.applicationGuildCommands('app', 'guild') // '/applications/app/guilds/guild/commands'
+Routes.interactionCallback('id', 'token') // '/interactions/id/token/callback'
+Routes.webhook('id', 'token') // '/webhooks/id/token'
+Routes.webhookMessage('id', 'token', 'msg') // '/webhooks/id/token/messages/msg'
 ```
 
 ### Existing Mock Server Packages (for reference only)
@@ -298,6 +299,7 @@ would be a massive maintenance burden with no real benefit -- our only
 client is discord.js, which already sends well-formed payloads.
 
 Instead, we use a simpler approach:
+
 - **Return type annotations** on every serializer function and route handler.
   The compiler rejects missing or wrong fields at the function boundary.
 - **No blanket `as Type` casts on return objects**. These bypass the return
@@ -357,7 +359,7 @@ const app = new Spiceflow({ basePath: '/api/v10' })
     path: '/channels/:channel_id/messages',
     async handler({ params, request }): Promise<APIMessage> {
       // params.channel_id is already typed by Spiceflow from the path
-      const body = await request.json() as RESTPostAPIChannelMessageJSONBody
+      const body = (await request.json()) as RESTPostAPIChannelMessageJSONBody
       const dbMessage = await createMessage(params.channel_id, body)
       // dispatch MESSAGE_CREATE to WS clients
       state.dispatch('MESSAGE_CREATE', messageToAPI(dbMessage))
@@ -388,10 +390,7 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import { WebSocketServer, WebSocket } from 'ws'
 import { handleForNode } from 'spiceflow/_node-server'
-import {
-  GatewayOpcodes,
-  GatewayDispatchEvents,
-} from 'discord-api-types/v10'
+import { GatewayOpcodes, GatewayDispatchEvents } from 'discord-api-types/v10'
 import type {
   GatewaySendPayload,
   GatewayIdentifyData,
@@ -422,7 +421,11 @@ class DiscordGateway {
   private loadState: () => Promise<GatewayState>
   private port: number
 
-  constructor({ httpServer, port, loadState }: {
+  constructor({
+    httpServer,
+    port,
+    loadState,
+  }: {
     httpServer: http.Server
     port: number
     loadState: () => Promise<GatewayState>
@@ -430,7 +433,9 @@ class DiscordGateway {
     this.port = port
     this.loadState = loadState
     this.wss = new WebSocketServer({ server: httpServer, path: '/gateway' })
-    this.wss.on('connection', (ws) => { this.handleConnection(ws) })
+    this.wss.on('connection', (ws) => {
+      this.handleConnection(ws)
+    })
   }
 
   // --- public methods (called by REST routes and test utilities) ---
@@ -558,7 +563,10 @@ class DiscordGateway {
       resume_gateway_url: `ws://localhost:${this.port}/gateway`,
       application: {
         id: state.botUser.id,
-        flags: ApplicationFlags.GatewayPresence | ApplicationFlags.GatewayGuildMembers | ApplicationFlags.GatewayMessageContent,
+        flags:
+          ApplicationFlags.GatewayPresence |
+          ApplicationFlags.GatewayGuildMembers |
+          ApplicationFlags.GatewayMessageContent,
       },
     }
     this.sendDispatch(client, GatewayDispatchEvents.Ready, readyData)
@@ -590,11 +598,7 @@ class DiscordGateway {
         guild_scheduled_events: emptyScheduledEvents,
         soundboard_sounds: emptySoundboardSounds,
       }
-      this.sendDispatch(
-        client,
-        GatewayDispatchEvents.GuildCreate,
-        guildData,
-      )
+      this.sendDispatch(client, GatewayDispatchEvents.GuildCreate, guildData)
     }
   }
 }
@@ -604,8 +608,8 @@ interface GatewayState {
   botUser: APIUser
   guilds: Array<{
     id: string
-    apiGuild: APIGuild       // serialized from DB
-    joinedAt: string         // ISO8601
+    apiGuild: APIGuild // serialized from DB
+    joinedAt: string // ISO8601
     members: APIGuildMember[]
     channels: APIChannel[]
   }>
@@ -668,7 +672,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
   rest: {
-    api: 'http://localhost:PORT/api',  // overrides https://discord.com/api
+    api: 'http://localhost:PORT/api', // overrides https://discord.com/api
     version: '10',
   },
 })
@@ -688,6 +692,7 @@ There is no direct gateway URL override. Instead, discord.js fetches
 `GET /api/v10/gateway/bot` and connects to the `url` field in the response.
 
 Our `/gateway/bot` endpoint returns:
+
 ```json
 {
   "url": "ws://localhost:PORT/gateway",
@@ -748,27 +753,27 @@ Client                                  Server
 
 ### Opcodes
 
-| Op | Name | Direction | Description |
-|----|------|-----------|-------------|
-| 0 | Dispatch | Server -> Client | Event dispatched (has `t` name and `s` sequence) |
-| 1 | Heartbeat | Both | Keep-alive ping/pong |
-| 2 | Identify | Client -> Server | Initial auth with token + intents |
-| 3 | Presence Update | Client -> Server | Update bot presence |
-| 4 | Voice State Update | Client -> Server | Join/leave voice (skip) |
-| 6 | Resume | Client -> Server | Resume disconnected session |
-| 7 | Reconnect | Server -> Client | Server tells client to reconnect |
-| 8 | Request Guild Members | Client -> Server | Request offline members |
-| 9 | Invalid Session | Server -> Client | Session invalidated |
-| 10 | Hello | Server -> Client | First message with heartbeat_interval |
-| 11 | Heartbeat ACK | Server -> Client | Confirms heartbeat received |
+| Op  | Name                  | Direction        | Description                                      |
+| --- | --------------------- | ---------------- | ------------------------------------------------ |
+| 0   | Dispatch              | Server -> Client | Event dispatched (has `t` name and `s` sequence) |
+| 1   | Heartbeat             | Both             | Keep-alive ping/pong                             |
+| 2   | Identify              | Client -> Server | Initial auth with token + intents                |
+| 3   | Presence Update       | Client -> Server | Update bot presence                              |
+| 4   | Voice State Update    | Client -> Server | Join/leave voice (skip)                          |
+| 6   | Resume                | Client -> Server | Resume disconnected session                      |
+| 7   | Reconnect             | Server -> Client | Server tells client to reconnect                 |
+| 8   | Request Guild Members | Client -> Server | Request offline members                          |
+| 9   | Invalid Session       | Server -> Client | Session invalidated                              |
+| 10  | Hello                 | Server -> Client | First message with heartbeat_interval            |
+| 11  | Heartbeat ACK         | Server -> Client | Confirms heartbeat received                      |
 
 ### Payload Format
 
 ```ts
 // All Gateway messages have this shape:
 interface GatewayPayload {
-  op: number        // opcode
-  d?: unknown       // payload data
+  op: number // opcode
+  d?: unknown // payload data
   s?: number | null // sequence number (only for op 0)
   t?: string | null // event name (only for op 0)
 }
@@ -776,16 +781,16 @@ interface GatewayPayload {
 
 ### Timing Details
 
-| Parameter | Value | Notes |
-|---|---|---|
-| `heartbeat_interval` | 45000 ms | Sent in Hello; for test server, use a shorter value like 30000 or even 10000 |
-| First heartbeat jitter | `interval * random(0, 1)` | Client waits this before first heartbeat |
-| Hello sent | Immediately on connect | No delay |
-| Identify timeout | Not formally specified | If not sent, connection just idles |
-| READY sent | Immediately after valid Identify | No artificial delay needed |
-| GUILD_CREATE sent | After READY | One per guild, sent sequentially |
-| Gateway rate limit | 120 events per 60 seconds | Client -> Server direction |
-| Max payload size | 4096 bytes | Client -> Server direction |
+| Parameter              | Value                            | Notes                                                                        |
+| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------- |
+| `heartbeat_interval`   | 45000 ms                         | Sent in Hello; for test server, use a shorter value like 30000 or even 10000 |
+| First heartbeat jitter | `interval * random(0, 1)`        | Client waits this before first heartbeat                                     |
+| Hello sent             | Immediately on connect           | No delay                                                                     |
+| Identify timeout       | Not formally specified           | If not sent, connection just idles                                           |
+| READY sent             | Immediately after valid Identify | No artificial delay needed                                                   |
+| GUILD_CREATE sent      | After READY                      | One per guild, sent sequentially                                             |
+| Gateway rate limit     | 120 events per 60 seconds        | Client -> Server direction                                                   |
+| Max payload size       | 4096 bytes                       | Client -> Server direction                                                   |
 
 ### Hello Payload (op 10)
 
@@ -801,7 +806,11 @@ interface GatewayPayload {
   "d": {
     "token": "Bot fake-token",
     "intents": 33281,
-    "properties": { "os": "linux", "browser": "discord.js", "device": "discord.js" },
+    "properties": {
+      "os": "linux",
+      "browser": "discord.js",
+      "device": "discord.js"
+    },
     "compress": false,
     "large_threshold": 50,
     "shard": [0, 1]
@@ -815,7 +824,9 @@ Required fields in `d`: `token`, `properties`, `intents`.
 
 ```json
 {
-  "op": 0, "s": 1, "t": "READY",
+  "op": 0,
+  "s": 1,
+  "t": "READY",
   "d": {
     "v": 10,
     "user": {
@@ -828,9 +839,7 @@ Required fields in `d`: `token`, `properties`, `intents`.
       "flags": 0,
       "global_name": "TestBot"
     },
-    "guilds": [
-      { "id": "GUILD_ID", "unavailable": true }
-    ],
+    "guilds": [{ "id": "GUILD_ID", "unavailable": true }],
     "session_id": "random-session-id",
     "resume_gateway_url": "ws://localhost:PORT/gateway",
     "shard": [0, 1],
@@ -845,7 +854,9 @@ Sent after READY for each guild. This is a full guild object with extras:
 
 ```json
 {
-  "op": 0, "s": 2, "t": "GUILD_CREATE",
+  "op": 0,
+  "s": 2,
+  "t": "GUILD_CREATE",
   "d": {
     "id": "GUILD_ID",
     "name": "Test Server",
@@ -915,7 +926,9 @@ Sent after READY for each guild. This is a full guild object with extras:
 
 ```json
 {
-  "op": 0, "s": 42, "t": "MESSAGE_CREATE",
+  "op": 0,
+  "s": 42,
+  "t": "MESSAGE_CREATE",
   "d": {
     "id": "MSG_SNOWFLAKE",
     "channel_id": "CHANNEL_ID",
@@ -961,7 +974,9 @@ Optional but frequently used: `guild_id`, `member`, `flags`, `components`,
 
 ```json
 {
-  "op": 0, "s": 43, "t": "INTERACTION_CREATE",
+  "op": 0,
+  "s": 43,
+  "t": "INTERACTION_CREATE",
   "d": {
     "id": "INTERACTION_SNOWFLAKE",
     "application_id": "BOT_USER_ID",
@@ -970,9 +985,7 @@ Optional but frequently used: `guild_id`, `member`, `flags`, `components`,
       "id": "CMD_SNOWFLAKE",
       "name": "model",
       "type": 1,
-      "options": [
-        { "name": "provider", "type": 3, "value": "anthropic" }
-      ]
+      "options": [{ "name": "provider", "type": 3, "value": "anthropic" }]
     },
     "guild_id": "GUILD_ID",
     "channel": {
@@ -1023,7 +1036,9 @@ minutes, and the bot must respond within 3 seconds (or defer).
 
 ```json
 {
-  "op": 0, "s": 5, "t": "THREAD_CREATE",
+  "op": 0,
+  "s": 5,
+  "t": "THREAD_CREATE",
   "d": {
     "id": "THREAD_SNOWFLAKE",
     "guild_id": "GUILD_ID",
@@ -1049,22 +1064,22 @@ minutes, and the bot must respond within 3 seconds (or defer).
 
 ### Gateway Close Codes
 
-| Code | Name | Reconnectable | Description |
-|------|------|:---:|---|
-| 4000 | Unknown error | Yes | Try reconnecting |
-| 4001 | Unknown opcode | Yes | Invalid opcode sent |
-| 4002 | Decode error | Yes | Invalid payload (or >4096 bytes) |
-| 4003 | Not authenticated | Yes | Payload sent before Identify |
-| 4004 | Authentication failed | **No** | Bad token |
-| 4005 | Already authenticated | Yes | Sent >1 Identify |
-| 4007 | Invalid seq | Yes | Bad sequence on Resume |
-| 4008 | Rate limited | Yes | Sending too fast |
-| 4009 | Session timed out | Yes | Session expired |
-| 4010 | Invalid shard | **No** | Invalid shard value |
-| 4011 | Sharding required | **No** | Too many guilds |
-| 4012 | Invalid API version | **No** | Bad gateway version |
-| 4013 | Invalid intent(s) | **No** | Bad bitwise intent value |
-| 4014 | Disallowed intent(s) | **No** | Privileged intent not enabled |
+| Code | Name                  | Reconnectable | Description                      |
+| ---- | --------------------- | :-----------: | -------------------------------- |
+| 4000 | Unknown error         |      Yes      | Try reconnecting                 |
+| 4001 | Unknown opcode        |      Yes      | Invalid opcode sent              |
+| 4002 | Decode error          |      Yes      | Invalid payload (or >4096 bytes) |
+| 4003 | Not authenticated     |      Yes      | Payload sent before Identify     |
+| 4004 | Authentication failed |    **No**     | Bad token                        |
+| 4005 | Already authenticated |      Yes      | Sent >1 Identify                 |
+| 4007 | Invalid seq           |      Yes      | Bad sequence on Resume           |
+| 4008 | Rate limited          |      Yes      | Sending too fast                 |
+| 4009 | Session timed out     |      Yes      | Session expired                  |
+| 4010 | Invalid shard         |    **No**     | Invalid shard value              |
+| 4011 | Sharding required     |    **No**     | Too many guilds                  |
+| 4012 | Invalid API version   |    **No**     | Bad gateway version              |
+| 4013 | Invalid intent(s)     |    **No**     | Bad bitwise intent value         |
+| 4014 | Disallowed intent(s)  |    **No**     | Privileged intent not enabled    |
 
 For the test server, only code **4004** matters (reject bad tokens). All
 other codes should not be triggered by normal bot usage.
@@ -1084,6 +1099,7 @@ When a REST endpoint returns an error, use this JSON structure:
 ```
 
 Common error codes:
+
 - **10003**: Unknown Channel
 - **10004**: Unknown Guild
 - **10008**: Unknown Message
@@ -1093,6 +1109,7 @@ Common error codes:
 - **50035**: Invalid Form Body (validation errors)
 
 The `errors` object can contain nested field-level errors:
+
 ```json
 {
   "code": 50035,
@@ -1100,7 +1117,10 @@ The `errors` object can contain nested field-level errors:
   "errors": {
     "content": {
       "_errors": [
-        { "code": "BASE_TYPE_MAX_LENGTH", "message": "Must be 2000 or fewer in length." }
+        {
+          "code": "BASE_TYPE_MAX_LENGTH",
+          "message": "Must be 2000 or fewer in length."
+        }
       ]
     }
   }
@@ -1133,73 +1153,74 @@ request/response, and the corresponding Gateway dispatch event (if any).
 
 ### Phase 1: Core (bot can start) -- DONE
 
-| Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
-|---|---|---|---|---|
-| GET | `/gateway/bot` | - | `RESTGetAPIGatewayBotResult` | - |
-| GET | `/users/@me` | - | `APIUser` | - |
-| GET | `/users/:user_id` | - | `APIUser` | - |
-| GET | `/applications/@me` | - | `APIApplication` | - |
-| PUT | `/applications/:application_id/commands` | `RESTPutAPIApplicationCommandsJSONBody` | `RESTPutAPIApplicationCommandsResult` | - |
+| Method | Spiceflow Path                           | Request Type                            | Response Type                         | Gateway Event |
+| ------ | ---------------------------------------- | --------------------------------------- | ------------------------------------- | ------------- |
+| GET    | `/gateway/bot`                           | -                                       | `RESTGetAPIGatewayBotResult`          | -             |
+| GET    | `/users/@me`                             | -                                       | `APIUser`                             | -             |
+| GET    | `/users/:user_id`                        | -                                       | `APIUser`                             | -             |
+| GET    | `/applications/@me`                      | -                                       | `APIApplication`                      | -             |
+| PUT    | `/applications/:application_id/commands` | `RESTPutAPIApplicationCommandsJSONBody` | `RESTPutAPIApplicationCommandsResult` | -             |
 
 ### Phase 2: Messages
 
-| Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
-|---|---|---|---|---|
-| POST | `/channels/:channel_id/messages` | `RESTPostAPIChannelMessageJSONBody` | `APIMessage` | `MESSAGE_CREATE` |
-| PATCH | `/channels/:channel_id/messages/:message_id` | `RESTPatchAPIChannelMessageJSONBody` | `APIMessage` | `MESSAGE_UPDATE` |
-| GET | `/channels/:channel_id/messages/:message_id` | - | `APIMessage` | - |
-| GET | `/channels/:channel_id/messages` | `RESTGetAPIChannelMessagesQuery` | `APIMessage[]` | - |
-| DELETE | `/channels/:channel_id/messages/:message_id` | - | 204 | `MESSAGE_DELETE` |
-| POST | `/channels/:channel_id/typing` | - | 204 | `TYPING_START` |
-| PUT | `/channels/:channel_id/messages/:message_id/reactions/:emoji/@me` | - | 204 | `MESSAGE_REACTION_ADD` |
-| DELETE | `/channels/:channel_id/messages/:message_id/reactions/:emoji/@me` | - | 204 | `MESSAGE_REACTION_REMOVE` |
+| Method | Spiceflow Path                                                    | Request Type                         | Response Type  | Gateway Event             |
+| ------ | ----------------------------------------------------------------- | ------------------------------------ | -------------- | ------------------------- |
+| POST   | `/channels/:channel_id/messages`                                  | `RESTPostAPIChannelMessageJSONBody`  | `APIMessage`   | `MESSAGE_CREATE`          |
+| PATCH  | `/channels/:channel_id/messages/:message_id`                      | `RESTPatchAPIChannelMessageJSONBody` | `APIMessage`   | `MESSAGE_UPDATE`          |
+| GET    | `/channels/:channel_id/messages/:message_id`                      | -                                    | `APIMessage`   | -                         |
+| GET    | `/channels/:channel_id/messages`                                  | `RESTGetAPIChannelMessagesQuery`     | `APIMessage[]` | -                         |
+| DELETE | `/channels/:channel_id/messages/:message_id`                      | -                                    | 204            | `MESSAGE_DELETE`          |
+| POST   | `/channels/:channel_id/typing`                                    | -                                    | 204            | `TYPING_START`            |
+| PUT    | `/channels/:channel_id/messages/:message_id/reactions/:emoji/@me` | -                                    | 204            | `MESSAGE_REACTION_ADD`    |
+| DELETE | `/channels/:channel_id/messages/:message_id/reactions/:emoji/@me` | -                                    | 204            | `MESSAGE_REACTION_REMOVE` |
 
 ### Phase 3: Channels and Threads
 
-| Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
-|---|---|---|---|---|
-| GET | `/channels/:channel_id` | - | `APIChannel` | - |
-| PATCH | `/channels/:channel_id` | `RESTPatchAPIChannelJSONBody` | `APIChannel` | `CHANNEL_UPDATE` or `THREAD_UPDATE` |
-| DELETE | `/channels/:channel_id` | - | `APIChannel` | `CHANNEL_DELETE` or `THREAD_DELETE` |
-| POST | `/channels/:channel_id/threads` | `RESTPostAPIChannelThreadsJSONBody` | `APIChannel` | `THREAD_CREATE` |
-| POST | `/channels/:channel_id/messages/:message_id/threads` | `RESTPostAPIChannelMessagesThreadsJSONBody` | `APIChannel` | `THREAD_CREATE` |
-| PUT | `/channels/:channel_id/thread-members/:user_id` | - | 204 | `THREAD_MEMBERS_UPDATE` |
-| GET | `/channels/:channel_id/thread-members` | - | `APIThreadMember[]` | - |
+| Method | Spiceflow Path                                       | Request Type                                | Response Type       | Gateway Event                       |
+| ------ | ---------------------------------------------------- | ------------------------------------------- | ------------------- | ----------------------------------- |
+| GET    | `/channels/:channel_id`                              | -                                           | `APIChannel`        | -                                   |
+| PATCH  | `/channels/:channel_id`                              | `RESTPatchAPIChannelJSONBody`               | `APIChannel`        | `CHANNEL_UPDATE` or `THREAD_UPDATE` |
+| DELETE | `/channels/:channel_id`                              | -                                           | `APIChannel`        | `CHANNEL_DELETE` or `THREAD_DELETE` |
+| POST   | `/channels/:channel_id/threads`                      | `RESTPostAPIChannelThreadsJSONBody`         | `APIChannel`        | `THREAD_CREATE`                     |
+| POST   | `/channels/:channel_id/messages/:message_id/threads` | `RESTPostAPIChannelMessagesThreadsJSONBody` | `APIChannel`        | `THREAD_CREATE`                     |
+| PUT    | `/channels/:channel_id/thread-members/:user_id`      | -                                           | 204                 | `THREAD_MEMBERS_UPDATE`             |
+| GET    | `/channels/:channel_id/thread-members`               | -                                           | `APIThreadMember[]` | -                                   |
 
 ### Phase 4: Interactions
 
-| Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
-|---|---|---|---|---|
-| POST | `/interactions/:interaction_id/:interaction_token/callback` | Interaction callback body | 204 | - |
-| GET | `/webhooks/:webhook_id/:webhook_token/messages/@original` | - | `APIMessage` | - |
-| PATCH | `/webhooks/:webhook_id/:webhook_token/messages/@original` | message edit body | `APIMessage` | `MESSAGE_UPDATE` |
-| DELETE | `/webhooks/:webhook_id/:webhook_token/messages/@original` | - | 204 | `MESSAGE_DELETE` |
-| POST | `/webhooks/:webhook_id/:webhook_token` | message create body | `APIMessage` | `MESSAGE_CREATE` |
-| PATCH | `/webhooks/:webhook_id/:webhook_token/messages/:message_id` | message edit body | `APIMessage` | `MESSAGE_UPDATE` |
+| Method | Spiceflow Path                                              | Request Type              | Response Type | Gateway Event    |
+| ------ | ----------------------------------------------------------- | ------------------------- | ------------- | ---------------- |
+| POST   | `/interactions/:interaction_id/:interaction_token/callback` | Interaction callback body | 204           | -                |
+| GET    | `/webhooks/:webhook_id/:webhook_token/messages/@original`   | -                         | `APIMessage`  | -                |
+| PATCH  | `/webhooks/:webhook_id/:webhook_token/messages/@original`   | message edit body         | `APIMessage`  | `MESSAGE_UPDATE` |
+| DELETE | `/webhooks/:webhook_id/:webhook_token/messages/@original`   | -                         | 204           | `MESSAGE_DELETE` |
+| POST   | `/webhooks/:webhook_id/:webhook_token`                      | message create body       | `APIMessage`  | `MESSAGE_CREATE` |
+| PATCH  | `/webhooks/:webhook_id/:webhook_token/messages/:message_id` | message edit body         | `APIMessage`  | `MESSAGE_UPDATE` |
 
 Interaction callback types (in the request body `type` field):
+
 1. PONG
-4. CHANNEL_MESSAGE_WITH_SOURCE
-5. DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
-6. DEFERRED_UPDATE_MESSAGE
-7. UPDATE_MESSAGE
-8. APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
-9. MODAL
+2. CHANNEL_MESSAGE_WITH_SOURCE
+3. DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+4. DEFERRED_UPDATE_MESSAGE
+5. UPDATE_MESSAGE
+6. APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+7. MODAL
 
 ### Phase 5: Guild Management
 
-| Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
-|---|---|---|---|---|
-| GET | `/guilds/:guild_id` | - | `APIGuild` | - |
-| GET | `/guilds/:guild_id/channels` | - | `APIChannel[]` | - |
-| POST | `/guilds/:guild_id/channels` | create channel body | `APIChannel` | `CHANNEL_CREATE` |
-| GET | `/guilds/:guild_id/roles` | - | `APIRole[]` | - |
-| POST | `/guilds/:guild_id/roles` | create role body | `APIRole` | `GUILD_ROLE_CREATE` |
-| PATCH | `/guilds/:guild_id/roles/:role_id` | modify role body | `APIRole` | `GUILD_ROLE_UPDATE` |
-| GET | `/guilds/:guild_id/members/search` | `RESTGetAPIGuildMembersSearchQuery` | `APIGuildMember[]` | - |
-| GET | `/guilds/:guild_id/members` | `RESTGetAPIGuildMembersQuery` | `APIGuildMember[]` | - |
-| GET | `/guilds/:guild_id/members/:user_id` | - | `APIGuildMember` | - |
-| GET | `/guilds/:guild_id/threads/active` | - | active threads object | - |
+| Method | Spiceflow Path                       | Request Type                        | Response Type         | Gateway Event       |
+| ------ | ------------------------------------ | ----------------------------------- | --------------------- | ------------------- |
+| GET    | `/guilds/:guild_id`                  | -                                   | `APIGuild`            | -                   |
+| GET    | `/guilds/:guild_id/channels`         | -                                   | `APIChannel[]`        | -                   |
+| POST   | `/guilds/:guild_id/channels`         | create channel body                 | `APIChannel`          | `CHANNEL_CREATE`    |
+| GET    | `/guilds/:guild_id/roles`            | -                                   | `APIRole[]`           | -                   |
+| POST   | `/guilds/:guild_id/roles`            | create role body                    | `APIRole`             | `GUILD_ROLE_CREATE` |
+| PATCH  | `/guilds/:guild_id/roles/:role_id`   | modify role body                    | `APIRole`             | `GUILD_ROLE_UPDATE` |
+| GET    | `/guilds/:guild_id/members/search`   | `RESTGetAPIGuildMembersSearchQuery` | `APIGuildMember[]`    | -                   |
+| GET    | `/guilds/:guild_id/members`          | `RESTGetAPIGuildMembersQuery`       | `APIGuildMember[]`    | -                   |
+| GET    | `/guilds/:guild_id/members/:user_id` | -                                   | `APIGuildMember`      | -                   |
+| GET    | `/guilds/:guild_id/threads/active`   | -                                   | active threads object | -                   |
 
 ---
 
@@ -1389,7 +1410,7 @@ let increment = 0n
 function generateSnowflake(): string {
   const timestamp = BigInt(Date.now()) - DISCORD_EPOCH
   const id = (timestamp << 22n) | (0n << 17n) | (0n << 12n) | increment
-  increment = (increment + 1n) & 0xFFFn  // 12-bit wrap
+  increment = (increment + 1n) & 0xfffn // 12-bit wrap
   return id.toString()
 }
 ```
@@ -1417,13 +1438,13 @@ interface DigitalDiscordOptions {
   }>
   botUser?: { id?: string; username?: string }
   botToken?: string
-  dbUrl?: string  // default: "file::memory:?cache=shared"
+  dbUrl?: string // default: "file::memory:?cache=shared"
 }
 
 class DigitalDiscord {
   readonly port: number
-  readonly restUrl: string      // http://localhost:PORT/api
-  readonly gatewayUrl: string   // ws://localhost:PORT/gateway
+  readonly restUrl: string // http://localhost:PORT/api
+  readonly gatewayUrl: string // ws://localhost:PORT/gateway
 
   constructor(options?: DigitalDiscordOptions)
 
@@ -1459,14 +1480,18 @@ class DigitalDiscord {
   getMessage(messageId: string): Promise<APIMessage | null>
   getChannel(channelId: string): Promise<APIChannel | null>
   getThreads(parentChannelId: string): Promise<APIChannel[]>
-  getReactions(messageId: string): Promise<Array<{userId:string;emoji:string}>>
-  getInteractionResponse(interactionId: string): Promise<InteractionResponse|null>
+  getReactions(
+    messageId: string,
+  ): Promise<Array<{ userId: string; emoji: string }>>
+  getInteractionResponse(
+    interactionId: string,
+  ): Promise<InteractionResponse | null>
   getRegisteredCommands(): Promise<ApplicationCommand[]>
 
   // Wait for the bot to respond (polls for new messages in channel)
   waitForBotMessage(options: {
     channelId: string
-    timeout?: number  // ms, default 10000
+    timeout?: number // ms, default 10000
   }): Promise<APIMessage>
 
   waitForBotReaction(options: {
@@ -1517,7 +1542,7 @@ describe('Kimaki message handling', () => {
     // (reuse startDiscordBot or similar)
     await client.login(discord.botToken)
     // Wait for READY + GUILD_CREATE
-    await new Promise(resolve => client.once('ready', resolve))
+    await new Promise((resolve) => client.once('ready', resolve))
   })
 
   afterAll(async () => {
@@ -1573,6 +1598,7 @@ discord-digital-twin/
 ```
 
 Future phases will add:
+
 ```
   tests/
     threads.test.ts       # Phase 3: Thread lifecycle
@@ -1602,6 +1628,7 @@ Future phases will add:
 ```
 
 Notes:
+
 - `discord.js` is a **devDependency** only (used in tests to validate
   SDK compatibility). The server itself only depends on `discord-api-types`.
 - `spiceflow` is from npm (not `workspace:*`) since this package may be
@@ -1622,28 +1649,29 @@ and is independently testable.
 and the bot comes "online".
 
 **What was implemented** (all done):
- 1. Package scaffold: `package.json`, `tsconfig.json`, `schema.prisma`
- 2. `prisma generate` + libsql in-memory adapter verified
- 3. `src/snowflake.ts` - ID generator
- 4. `src/db.ts` - Prisma client initialization with in-memory libsql
- 5. `src/server.ts` - Combined HTTP (Spiceflow) + WS (`ws`) server on
+
+1.  Package scaffold: `package.json`, `tsconfig.json`, `schema.prisma`
+2.  `prisma generate` + libsql in-memory adapter verified
+3.  `src/snowflake.ts` - ID generator
+4.  `src/db.ts` - Prisma client initialization with in-memory libsql
+5.  `src/server.ts` - Combined HTTP (Spiceflow) + WS (`ws`) server on
     one port. All Phase 1 REST routes are inline here (no `routes/`
     folder or `state.ts` -- routes are small enough to inline).
- 6. `src/gateway.ts` - WebSocket handler:
+6.  `src/gateway.ts` - WebSocket handler:
     - On connect: send `op 10 Hello`
     - On `op 2 Identify`: validate token, send `op 0 READY`, then
       `op 0 GUILD_CREATE` for each guild
     - On `op 1 Heartbeat`: send `op 11 Heartbeat ACK`
     - Track sequence numbers
- 7. REST routes (all in `server.ts`):
+7.  REST routes (all in `server.ts`):
     - `GET /gateway/bot` - returns local WS URL
     - `GET /users/@me` - bot user from DB
     - `GET /users/:user_id` - any user from DB (returns 404 if missing)
     - `GET /applications/@me` - fake application object
     - `PUT /applications/:id/commands` - bulk overwrite commands
- 8. `src/serializers.ts` - DB row to Discord API object converters for
+8.  `src/serializers.ts` - DB row to Discord API object converters for
     User, Guild, Channel, Message, Member, Role, ThreadMember
- 9. `src/index.ts` - `DigitalDiscord` class with `start()`, `stop()`,
+9.  `src/index.ts` - `DigitalDiscord` class with `start()`, `stop()`,
     seed data setup, and `applySchema()` for in-memory DB init
 
 **Gotcha: `applySchema()` pattern** -- libsql `:memory:` doesn't support
@@ -1654,6 +1682,7 @@ Prisma schema changes, these statements must be updated to match. Run
 
 **How to validate**: Write `tests/gateway.test.ts` and
 `tests/sdk-compat.test.ts` that:
+
 - Create a `DigitalDiscord` instance with a guild and channel
 - Create a discord.js `Client` pointed at localhost
 - Call `client.login(token)`
@@ -1662,6 +1691,7 @@ Prisma schema changes, these statements must be updated to match. Run
 - Assert `client.user.username === 'TestBot'`
 
 **Key references for the implementing agent**:
+
 - Read `discord-api-types/v10` imports for `GatewayOpcodes`,
   `GatewayIdentifyData`, `GatewayReadyDispatchData`,
   `GatewayGuildCreateDispatchData`, `GatewayHelloData`
@@ -1680,7 +1710,8 @@ Prisma schema changes, these statements must be updated to match. Run
 stored in the DB and dispatched as Gateway events.
 
 **What was implemented** (all done):
- 1. 8 REST routes added inline in `server.ts` (same pattern as Phase 1,
+
+1.  8 REST routes added inline in `server.ts` (same pattern as Phase 1,
     no separate route files):
     - `POST /channels/:channel_id/messages` - Create message as bot user,
       store in DB, update channel's `lastMessageId`/`messageCount`,
@@ -1698,15 +1729,15 @@ stored in the DB and dispatched as Gateway events.
       reaction via `upsert`, dispatch `MESSAGE_REACTION_ADD`
     - `DELETE /channels/:channel_id/messages/:id/reactions/:emoji/@me` -
       Remove reaction, dispatch `MESSAGE_REACTION_REMOVE`
- 2. Route handlers close over a `let gateway!: DiscordGateway` variable
+2.  Route handlers close over a `let gateway!: DiscordGateway` variable
     declared before the Spiceflow chain and assigned after `httpServer`
     creation. Safe because routes only execute after `listen()`.
- 3. `simulateUserMessage()` added to `DigitalDiscord` -- inserts message
+3.  `simulateUserMessage()` added to `DigitalDiscord` -- inserts message
     in DB, updates channel counters, broadcasts `MESSAGE_CREATE` via
     gateway. Accepts optional `embeds` and `attachments`.
- 4. `waitForBotMessage()` added to `DigitalDiscord` -- polls DB for new
+4.  `waitForBotMessage()` added to `DigitalDiscord` -- polls DB for new
     messages from the bot user with configurable timeout (default 10s).
- 5. `getMessages()` and `getChannel()` were already done in Phase 1.
+5.  `getMessages()` and `getChannel()` were already done in Phase 1.
 
 **Gotcha: `file::memory:?cache=shared`** -- Prisma's `upsert` (used for
 reactions) uses transactions internally. libsql's `transaction()` sets
@@ -1717,6 +1748,7 @@ keep working. Fixed by using `file::memory:?cache=shared` which makes all
 connections share the same in-memory DB.
 
 **Not implemented** (not needed for current test coverage):
+
 - `multipart/form-data` for file uploads (discord.js sends JSON for
   text-only messages)
 - `around` query param for message list (only `before`/`after`)
@@ -1727,6 +1759,7 @@ connections share the same in-memory DB.
 **Goal**: Thread creation, archiving, and member management works.
 
 **What to implement**:
+
 1. `src/routes/channels.ts`:
    - `GET /channels/:channel_id` - Fetch channel/thread from DB
    - `PATCH /channels/:channel_id` - Modify channel (name, topic, archived,
@@ -1748,6 +1781,7 @@ connections share the same in-memory DB.
 5. Update GUILD_CREATE to include channels list (already done in Phase 1)
 
 **How to validate**: Write `tests/threads.test.ts`:
+
 - Send a message, create a thread from it via `message.startThread()`
 - Verify `THREAD_CREATE` event fires on the Client
 - Send a message in the thread
@@ -1756,6 +1790,7 @@ connections share the same in-memory DB.
 - Test thread member add
 
 **Key references**:
+
 - `discord-api-types/v10`: `RESTPostAPIChannelThreadsJSONBody`,
   `APIThreadChannel`, thread metadata types
 - OpenAPI spec: `/channels/{channel_id}/threads` paths
@@ -1768,6 +1803,7 @@ connections share the same in-memory DB.
 **Goal**: Slash commands, buttons, select menus, and modals work.
 
 **What to implement**:
+
 1. Extend `simulateInteraction()` in `DigitalDiscord` to dispatch
    `INTERACTION_CREATE` via Gateway with all required fields
 2. `src/routes/interactions.ts`:
@@ -1787,6 +1823,7 @@ connections share the same in-memory DB.
    MESSAGE_COMPONENT (3), AUTOCOMPLETE (4), MODAL_SUBMIT (5)
 
 **How to validate**: Write `tests/interactions.test.ts`:
+
 - Register slash commands via the Client
 - Simulate a slash command interaction
 - Verify the bot calls the interaction callback endpoint
@@ -1796,6 +1833,7 @@ connections share the same in-memory DB.
 - Test deferred response + followup pattern
 
 **Key references**:
+
 - `discord-api-types/v10`: `APIInteraction`, `InteractionType`,
   `InteractionResponseType`, `APIInteractionResponse`
 - OpenAPI spec: `/interactions/{interaction_id}/{interaction_token}/callback`
@@ -1811,6 +1849,7 @@ connections share the same in-memory DB.
 remaining guild operations.
 
 **What to implement**:
+
 1. `src/routes/guilds.ts`:
    - `GET /guilds/:guild_id` - Fetch guild
    - `GET /guilds/:guild_id/channels` - List guild channels
@@ -1830,6 +1869,7 @@ remaining guild operations.
 5. Test full Kimaki bot startup flow end-to-end
 
 **How to validate**: Write integration tests that:
+
 - Start `DigitalDiscord` with channel topics matching Kimaki's format
 - Start the full Kimaki bot (reuse `startDiscordBot()` from
   `discord/src/discord-bot.ts`)
@@ -1839,6 +1879,7 @@ remaining guild operations.
 - Verify the complete flow from message -> thread -> bot response
 
 **Key references**:
+
 - OpenAPI spec: `/guilds/{guild_id}/channels`, `/guilds/{guild_id}/roles`
 - Read `discord/src/channel-management.ts` for how Kimaki creates channels
 - Read `discord/src/cli.ts` for command registration and startup flow
@@ -1849,20 +1890,20 @@ remaining guild operations.
 
 ## Key Design Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| HTTP framework | Spiceflow | Project convention, type-safe routes |
-| WebSocket server | `ws` npm package | Same lib discord.js uses internally, proven |
-| Database | Prisma + libsql, `file::memory:?cache=shared` default | Matches project convention (libsql adapter), clean per-test state with `:memory:`. `cache=shared` is required because libsql's `transaction()` creates separate connections. Optional `dbUrl` constructor param for persistent file-based storage (debugging, integration tests). |
-| Cascade deletes | `onDelete: Cascade` on all relations | Deleting a guild cascades to channels, messages, members, roles, reactions, thread members. SQLite supports this via Prisma's foreign key emulation. Makes test cleanup trivial. |
-| Shared port | Single `http.createServer` | One URL for both REST and WS, simpler config |
-| ID generation | Custom snowflake generator | Discord IDs are snowflakes, SDK may parse them |
-| Schema source | Official `discord/discord-api-spec` OpenAPI | 498 schemas, machine-readable, MIT licensed |
-| Types | `discord-api-types` npm package | 1:1 mapping to Discord API, maintained by discord.js team |
-| Input/output typing | Return type annotations + targeted `as` only, no Zod | `discord-api-types` only publishes TS types, not Zod schemas. Return type annotations do the checking. Blanket `as Type` and `as unknown as Type` casts are banned -- they bypass the compiler. Targeted `as` only for: JSON.parse results, APIChannel union, enum bitfield zeros. |
-| Scope | Only endpoints Kimaki uses (~30 REST + ~10 Gateway events) | Practical, not trying to implement all 139 endpoints |
-| Voice | Skipped entirely | Separate protocol (UDP + Opus), extremely complex |
-| Forum channels | Included in schema but low priority | Used for memory sync, not core bot flow |
+| Decision            | Choice                                                     | Rationale                                                                                                                                                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP framework      | Spiceflow                                                  | Project convention, type-safe routes                                                                                                                                                                                                                                               |
+| WebSocket server    | `ws` npm package                                           | Same lib discord.js uses internally, proven                                                                                                                                                                                                                                        |
+| Database            | Prisma + libsql, `file::memory:?cache=shared` default      | Matches project convention (libsql adapter), clean per-test state with `:memory:`. `cache=shared` is required because libsql's `transaction()` creates separate connections. Optional `dbUrl` constructor param for persistent file-based storage (debugging, integration tests).  |
+| Cascade deletes     | `onDelete: Cascade` on all relations                       | Deleting a guild cascades to channels, messages, members, roles, reactions, thread members. SQLite supports this via Prisma's foreign key emulation. Makes test cleanup trivial.                                                                                                   |
+| Shared port         | Single `http.createServer`                                 | One URL for both REST and WS, simpler config                                                                                                                                                                                                                                       |
+| ID generation       | Custom snowflake generator                                 | Discord IDs are snowflakes, SDK may parse them                                                                                                                                                                                                                                     |
+| Schema source       | Official `discord/discord-api-spec` OpenAPI                | 498 schemas, machine-readable, MIT licensed                                                                                                                                                                                                                                        |
+| Types               | `discord-api-types` npm package                            | 1:1 mapping to Discord API, maintained by discord.js team                                                                                                                                                                                                                          |
+| Input/output typing | Return type annotations + targeted `as` only, no Zod       | `discord-api-types` only publishes TS types, not Zod schemas. Return type annotations do the checking. Blanket `as Type` and `as unknown as Type` casts are banned -- they bypass the compiler. Targeted `as` only for: JSON.parse results, APIChannel union, enum bitfield zeros. |
+| Scope               | Only endpoints Kimaki uses (~30 REST + ~10 Gateway events) | Practical, not trying to implement all 139 endpoints                                                                                                                                                                                                                               |
+| Voice               | Skipped entirely                                           | Separate protocol (UDP + Opus), extremely complex                                                                                                                                                                                                                                  |
+| Forum channels      | Included in schema but low priority                        | Used for memory sync, not core bot flow                                                                                                                                                                                                                                            |
 
 ## Risks and Mitigations
 
@@ -1925,10 +1966,10 @@ next agent in the chain.
 
 ### Changelog
 
-| Date | Agent/Phase | Change |
-|---|---|---|
-| 2026-02-24 | Initial plan | Plan created with 5 phases, Prisma schema, Gateway protocol spec, REST endpoints |
-| 2026-02-24 | Phase 1 done | Scaffold, Gateway, core REST routes, SDK compat test (6/6 passing). Package renamed from `digital-discord` to `discord-digital-twin`, folder from `digital-discord/` to `discord-digital-twin/`. Class name `DigitalDiscord` kept. |
-| 2026-02-24 | Type safety cleanup | Removed all `as unknown as` double casts and most blanket `as Type` casts. Replaced with: return type annotations, enum imports (`ApplicationFlags`, `Locale`, `GuildSystemChannelFlags`), `noFlags<T>()` helper for bitfield zeros, typed empty arrays. Remaining `as` only for: JSON.parse, APIChannel union, APIMessage conditional spreads. Updated plan conventions to ban blanket casts. |
-| 2026-02-24 | Plan accuracy pass | Fixed plan to match actual implementation: removed `src/routes/` folder and `src/state.ts` (routes inlined in server.ts), updated deps to actual versions (Prisma 7.3.0, spiceflow from npm), added `GET /users/:user_id` to Phase 1 table, noted `messageToAPI` already done in Phase 1, documented `applySchema()` gotcha for libsql :memory:, updated package structure tree. |
-| 2026-02-24 | Phase 2 done | 8 message/reaction routes inline in server.ts, `simulateUserMessage()` + `waitForBotMessage()` test utilities, 5/5 new tests passing (11 total). Fixed libsql `file::memory:` transaction bug with `?cache=shared`. Added `dbUrl` option to constructor for persistent/debuggable storage. Updated Phase 2 to "What was implemented", corrected Phase 3 to note `getChannel()`/`getThreads()`/`channelToAPI` already done in Phase 1. |
+| Date       | Agent/Phase         | Change                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-02-24 | Initial plan        | Plan created with 5 phases, Prisma schema, Gateway protocol spec, REST endpoints                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-02-24 | Phase 1 done        | Scaffold, Gateway, core REST routes, SDK compat test (6/6 passing). Package renamed from `digital-discord` to `discord-digital-twin`, folder from `digital-discord/` to `discord-digital-twin/`. Class name `DigitalDiscord` kept.                                                                                                                                                                                                    |
+| 2026-02-24 | Type safety cleanup | Removed all `as unknown as` double casts and most blanket `as Type` casts. Replaced with: return type annotations, enum imports (`ApplicationFlags`, `Locale`, `GuildSystemChannelFlags`), `noFlags<T>()` helper for bitfield zeros, typed empty arrays. Remaining `as` only for: JSON.parse, APIChannel union, APIMessage conditional spreads. Updated plan conventions to ban blanket casts.                                        |
+| 2026-02-24 | Plan accuracy pass  | Fixed plan to match actual implementation: removed `src/routes/` folder and `src/state.ts` (routes inlined in server.ts), updated deps to actual versions (Prisma 7.3.0, spiceflow from npm), added `GET /users/:user_id` to Phase 1 table, noted `messageToAPI` already done in Phase 1, documented `applySchema()` gotcha for libsql :memory:, updated package structure tree.                                                      |
+| 2026-02-24 | Phase 2 done        | 8 message/reaction routes inline in server.ts, `simulateUserMessage()` + `waitForBotMessage()` test utilities, 5/5 new tests passing (11 total). Fixed libsql `file::memory:` transaction bug with `?cache=shared`. Added `dbUrl` option to constructor for persistent/debuggable storage. Updated Phase 2 to "What was implemented", corrected Phase 3 to note `getChannel()`/`getThreads()`/`channelToAPI` already done in Phase 1. |

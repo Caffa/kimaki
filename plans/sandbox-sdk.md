@@ -90,12 +90,7 @@ Returned by `provider.create()` and `provider.get()`. Carries the
 provider SDK instance internally. All methods are async.
 
 ```ts
-type SandboxStatus =
-  | 'creating'
-  | 'running'
-  | 'stopped'
-  | 'failed'
-  | 'destroyed'
+type SandboxStatus = 'creating' | 'running' | 'stopped' | 'failed' | 'destroyed'
 
 type CommandResult = {
   exitCode: number
@@ -142,10 +137,7 @@ abstract class SandboxHandle {
 
   /** Upload a local file to the sandbox (for large files like
    *  tarballs where you don't want to load into memory) */
-  abstract uploadFile(
-    localPath: string,
-    remotePath: string,
-  ): Promise<void>
+  abstract uploadFile(localPath: string, remotePath: string): Promise<void>
 
   // ── Lifecycle ─────────────────────────────────────
 
@@ -268,9 +260,7 @@ async function bootstrapOpencode(
       args: ['install', '-g', `opencode-ai@${version}`],
     })
     if (install.exitCode !== 0) {
-      throw new Error(
-        `Failed to install opencode: ${install.stderr}`,
-      )
+      throw new Error(`Failed to install opencode: ${install.stderr}`)
     }
   }
 
@@ -336,9 +326,7 @@ async function uploadProject(
 
   try {
     // 1. Shallow clone locally (tracked files + .git, no gitignored)
-    await execAsync(
-      `git clone --depth 1 file://${opts.projectDir} ${tmpDir}`,
-    )
+    await execAsync(`git clone --depth 1 file://${opts.projectDir} ${tmpDir}`)
 
     // 2. Create tarball
     await execAsync(`tar czf ${tarPath} -C ${tmpDir} .`)
@@ -399,11 +387,15 @@ import { Sandbox } from '@vercel/sandbox'
 class VercelProvider extends SandboxProvider {
   readonly name = 'vercel'
 
-  constructor(private config: {
-    token: string
-    projectId: string
-    teamId: string
-  }) { super() }
+  constructor(
+    private config: {
+      token: string
+      projectId: string
+      teamId: string
+    },
+  ) {
+    super()
+  }
 
   async create(opts) {
     const sandbox = await Sandbox.create({
@@ -446,9 +438,13 @@ class VercelProvider extends SandboxProvider {
 }
 
 class VercelSandboxHandle extends SandboxHandle {
-  constructor(private sandbox: Sandbox) { super() }
+  constructor(private sandbox: Sandbox) {
+    super()
+  }
 
-  get sandboxId() { return this.sandbox.sandboxId }
+  get sandboxId() {
+    return this.sandbox.sandboxId
+  }
 
   async runCommand(opts) {
     if (opts.detached) {
@@ -479,9 +475,7 @@ class VercelSandboxHandle extends SandboxHandle {
   }
 
   async writeFile(remotePath, content) {
-    const buf = typeof content === 'string'
-      ? Buffer.from(content)
-      : content
+    const buf = typeof content === 'string' ? Buffer.from(content) : content
     await this.sandbox.writeFiles([{ path: remotePath, content: buf }])
   }
 
@@ -563,14 +557,16 @@ class DaytonaSandboxHandle extends SandboxHandle {
   constructor(
     private sandbox: DaytonaSandbox,
     private client: Daytona,
-  ) { super() }
+  ) {
+    super()
+  }
 
-  get sandboxId() { return this.sandbox.id }
+  get sandboxId() {
+    return this.sandbox.id
+  }
 
   async runCommand(opts) {
-    const cmd = opts.args
-      ? `${opts.cmd} ${opts.args.join(' ')}`
-      : opts.cmd
+    const cmd = opts.args ? `${opts.cmd} ${opts.args.join(' ')}` : opts.cmd
 
     if (opts.detached) {
       const sessionId = `detached-${Date.now()}`
@@ -597,9 +593,7 @@ class DaytonaSandboxHandle extends SandboxHandle {
   }
 
   async writeFile(remotePath, content) {
-    const buf = typeof content === 'string'
-      ? Buffer.from(content)
-      : content
+    const buf = typeof content === 'string' ? Buffer.from(content) : content
     await this.sandbox.fs.uploadFile(buf, remotePath)
   }
 
@@ -656,7 +650,9 @@ await uploadProject(handle, { projectDir })
 
 // 4. Bootstrap opencode
 const { url } = await bootstrapOpencode(handle, {
-  envVars: { /* same as above */ },
+  envVars: {
+    /* same as above */
+  },
   cwd: '/workspace',
 })
 
@@ -680,11 +676,14 @@ const client = createOpencodeClient({ baseUrl: url })
 
 ```ts
 // During active session, extend timeout periodically
-const heartbeat = setInterval(async () => {
-  if (provider.name === 'vercel') {
-    await handle.extendTimeout(5 * 60 * 1000) // +5 min
-  }
-}, 3 * 60 * 1000) // every 3 min
+const heartbeat = setInterval(
+  async () => {
+    if (provider.name === 'vercel') {
+      await handle.extendTimeout(5 * 60 * 1000) // +5 min
+    }
+  },
+  3 * 60 * 1000,
+) // every 3 min
 
 // On session end
 clearInterval(heartbeat)
@@ -697,28 +696,28 @@ await prisma.sandboxes.update({
 
 ## Estimated effort per file
 
-| File | Lines | Notes |
-|---|---|---|
-| types.ts | ~40 | SandboxStatus, CommandResult, opts types |
-| sandbox-handle.ts | ~60 | Abstract class with method signatures |
-| sandbox-provider.ts | ~30 | Abstract class with method signatures |
-| providers/vercel.ts | ~200 | Wraps @vercel/sandbox |
-| providers/daytona.ts | ~200 | Wraps @daytonaio/sdk |
-| bootstrap.ts | ~80 | bootstrapOpencode + waitForHealth |
-| auto-detect.ts | ~30 | Env var detection |
-| index.ts | ~10 | Re-exports |
-| **Total** | **~650** | |
+| File                 | Lines    | Notes                                    |
+| -------------------- | -------- | ---------------------------------------- |
+| types.ts             | ~40      | SandboxStatus, CommandResult, opts types |
+| sandbox-handle.ts    | ~60      | Abstract class with method signatures    |
+| sandbox-provider.ts  | ~30      | Abstract class with method signatures    |
+| providers/vercel.ts  | ~200     | Wraps @vercel/sandbox                    |
+| providers/daytona.ts | ~200     | Wraps @daytonaio/sdk                     |
+| bootstrap.ts         | ~80      | bootstrapOpencode + waitForHealth        |
+| auto-detect.ts       | ~30      | Env var detection                        |
+| index.ts             | ~10      | Re-exports                               |
+| **Total**            | **~650** |                                          |
 
 Plus integration into kimaki:
 
-| File | Changes |
-|---|---|
-| schema.prisma | Add sandboxes, thread_sandboxes, sandbox_providers tables |
-| database.ts | CRUD functions for sandbox tables |
-| opencode.ts | Sandbox-aware initializeOpencodeForDirectory |
-| discord-utils.ts | resolveWorkingDirectory returns sandbox info |
-| commands/sandbox.ts | /sandbox, /sandbox-list, /sandbox-destroy |
-| cli.ts | kimaki sandbox subcommand, --sandbox/--new-sandbox flags |
+| File                | Changes                                                   |
+| ------------------- | --------------------------------------------------------- |
+| schema.prisma       | Add sandboxes, thread_sandboxes, sandbox_providers tables |
+| database.ts         | CRUD functions for sandbox tables                         |
+| opencode.ts         | Sandbox-aware initializeOpencodeForDirectory              |
+| discord-utils.ts    | resolveWorkingDirectory returns sandbox info              |
+| commands/sandbox.ts | /sandbox, /sandbox-list, /sandbox-destroy                 |
+| cli.ts              | kimaki sandbox subcommand, --sandbox/--new-sandbox flags  |
 
 ## Implementation order
 

@@ -44,6 +44,7 @@ attached to a sandbox.
 ```
 
 Behavior:
+
 - If `sandbox` is provided: reuse that sandbox, create thread
 - If `sandbox` is omitted: create a new sandbox, create thread
 - Autocomplete on `sandbox` field shows existing sandboxes for
@@ -83,6 +84,7 @@ kimaki send --channel 123 --sandbox my-frontend-sandbox \
 ```
 
 Flags:
+
 - `--sandbox <name>` — attach thread to existing sandbox by name
 - `--new-sandbox` — always create a fresh sandbox
 - `--sandbox-provider <provider>` — which provider (default from
@@ -110,19 +112,20 @@ npm: @vercel/sandbox
 Auth: Vercel OIDC token (vercel link + vercel env pull) or access token
 ```
 
-| Operation | Method | Notes |
-|---|---|---|
-| Create | `Sandbox.create({ runtime, source, ports, timeout })` | 2-3s cold start |
-| Reconnect | `Sandbox.get({ sandboxId })` | 0.3s, must be running |
-| Run command | `sandbox.runCommand({ cmd, args })` | Returns exit code + stdout |
-| Write file | `sandbox.writeFile(path, content)` | Writes as vercel-sandbox user |
-| Get domain | `sandbox.domain(port)` | Public HTTPS URL for a port |
-| Snapshot | `sandbox.snapshot()` | Stops sandbox, saves state |
-| From snapshot | `Sandbox.create({ source: { type: 'snapshot', snapshotId } })` | Fast resume |
-| Stop | `sandbox.stop()` | Explicit cleanup |
-| List | `Sandbox.list({ projectId })` | Paginated |
+| Operation     | Method                                                         | Notes                         |
+| ------------- | -------------------------------------------------------------- | ----------------------------- |
+| Create        | `Sandbox.create({ runtime, source, ports, timeout })`          | 2-3s cold start               |
+| Reconnect     | `Sandbox.get({ sandboxId })`                                   | 0.3s, must be running         |
+| Run command   | `sandbox.runCommand({ cmd, args })`                            | Returns exit code + stdout    |
+| Write file    | `sandbox.writeFile(path, content)`                             | Writes as vercel-sandbox user |
+| Get domain    | `sandbox.domain(port)`                                         | Public HTTPS URL for a port   |
+| Snapshot      | `sandbox.snapshot()`                                           | Stops sandbox, saves state    |
+| From snapshot | `Sandbox.create({ source: { type: 'snapshot', snapshotId } })` | Fast resume                   |
+| Stop          | `sandbox.stop()`                                               | Explicit cleanup              |
+| List          | `Sandbox.list({ projectId })`                                  | Paginated                     |
 
 Key properties:
+
 - `sandbox.sandboxId` — unique ID (string like `sbx_abc123`)
 - `sandbox.status` — `pending | running | stopping | stopped | failed`
 - Snapshots persist 7 days, sandboxes timeout after 5-45min (plan-dependent)
@@ -140,21 +143,22 @@ npm: @daytonaio/sdk
 Auth: API key from Daytona Dashboard
 ```
 
-| Operation | Method | Notes |
-|---|---|---|
-| Create | `daytona.create({ language, envVars, resources })` | Configurable |
-| Get by ID | `daytona.get(sandboxId)` | Works for any state |
-| Run command | `sandbox.process.executeCommand(cmd)` | Returns result string |
-| Run code | `sandbox.process.codeRun(code)` | Direct code execution |
-| File ops | `sandbox.fs.uploadFile()`, `.list()`, etc. | Full filesystem API |
-| Start | `sandbox.start(timeout)` | Resume stopped sandbox |
-| Stop | `daytona.stop(sandbox)` | Preserves state |
-| Archive | `sandbox.archive()` | Cold storage, slower resume |
-| Remove | `daytona.remove(sandbox)` | Permanent deletion |
-| List | `daytona.list()` | All sandboxes |
-| Snapshot | Image-based snapshots via `CreateSandboxFromImageParams` | Custom Docker images |
+| Operation   | Method                                                   | Notes                       |
+| ----------- | -------------------------------------------------------- | --------------------------- |
+| Create      | `daytona.create({ language, envVars, resources })`       | Configurable                |
+| Get by ID   | `daytona.get(sandboxId)`                                 | Works for any state         |
+| Run command | `sandbox.process.executeCommand(cmd)`                    | Returns result string       |
+| Run code    | `sandbox.process.codeRun(code)`                          | Direct code execution       |
+| File ops    | `sandbox.fs.uploadFile()`, `.list()`, etc.               | Full filesystem API         |
+| Start       | `sandbox.start(timeout)`                                 | Resume stopped sandbox      |
+| Stop        | `daytona.stop(sandbox)`                                  | Preserves state             |
+| Archive     | `sandbox.archive()`                                      | Cold storage, slower resume |
+| Remove      | `daytona.remove(sandbox)`                                | Permanent deletion          |
+| List        | `daytona.list()`                                         | All sandboxes               |
+| Snapshot    | Image-based snapshots via `CreateSandboxFromImageParams` | Custom Docker images        |
 
 Key properties:
+
 - `sandbox.id` — unique ID
 - `sandbox.instance.state` — running/stopped/archived/etc.
 - `autoStopInterval` — minutes of inactivity before auto-stop (default 15)
@@ -203,6 +207,7 @@ interface SandboxProvider {
 
 Each provider implements this interface. The `create` method is
 responsible for:
+
 1. Provisioning the environment
 2. Cloning the repo if provided
 3. Installing opencode
@@ -210,6 +215,7 @@ responsible for:
 5. Returning the base URL where the opencode API is reachable
 
 The `resume` method handles provider-specific resurrection:
+
 - Vercel: tries `Sandbox.get()`, falls back to snapshot-based create
 - Daytona: calls `sandbox.start()` on stopped sandboxes
 
@@ -332,6 +338,7 @@ Kimaki Host
 ```
 
 This approach:
+
 - No opencode installation inside the sandbox
 - Sandbox lifetime doesn't matter (tools reconnect/recreate)
 - AI agent runs code remotely but orchestrates locally
@@ -389,11 +396,13 @@ but inject sandbox tools into the opencode config:
 ```ts
 if (sandbox && isToolBasedProvider(sandbox.provider)) {
   // Normal local spawn, but add sandbox MCP tools
-  config.mcp = [{
-    name: 'sandbox',
-    command: 'node',
-    args: ['sandbox-mcp-server.js', sandbox.providerSandboxId],
-  }]
+  config.mcp = [
+    {
+      name: 'sandbox',
+      command: 'node',
+      args: ['sandbox-mcp-server.js', sandbox.providerSandboxId],
+    },
+  ]
 }
 ```
 
@@ -493,10 +502,12 @@ Opens a modal asking for the API key / token. Stores it encrypted
 in `sandbox_providers` table.
 
 For Vercel:
+
 - Needs a Vercel access token (from vercel.com/account/tokens)
 - And a project ID (for OIDC scoping)
 
 For Daytona:
+
 - Needs an API key (from Daytona Dashboard)
 - Optional: API URL if self-hosted
 
@@ -523,6 +534,7 @@ Tools:
 ```
 
 The MCP server manages the Vercel SDK connection internally:
+
 - Reconnects with `Sandbox.get()` if connection drops
 - Creates from snapshot if sandbox timed out
 - Reports sandbox status in tool error messages
@@ -533,11 +545,13 @@ that happen to run in the cloud instead of locally.
 ## What changes from remote-opencode-servers.md
 
 The original plan proposed:
+
 - Channels own sandboxes (`channel_directories.runtime_type`)
 - `/add-remote-project` creates a channel
 - One sandbox per channel
 
 This plan replaces that with:
+
 - **Threads** attach to sandboxes (via `thread_sandboxes`)
 - **Sandboxes** are first-class objects in their own table
 - **Multiple threads** can share a sandbox
