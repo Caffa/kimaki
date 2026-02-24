@@ -147,16 +147,19 @@ export async function handleLoginCommand({
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingLoginContexts.set(contextHash, context)
 
-    const options = allProviders.slice(0, 25).map((provider) => {
-      const isConnected = connected.includes(provider.id)
-      return {
-        label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
-        value: provider.id,
-        description: isConnected
-          ? 'Connected - select to re-authenticate'
-          : 'Not connected',
-      }
-    })
+    const options = [...allProviders]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 25)
+      .map((provider) => {
+        const isConnected = connected.includes(provider.id)
+        return {
+          label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
+          value: provider.id,
+          description: isConnected
+            ? 'Connected - select to re-authenticate'
+            : 'Not connected',
+        }
+      })
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`login_provider:${contextHash}`)

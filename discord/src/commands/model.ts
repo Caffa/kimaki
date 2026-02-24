@@ -475,18 +475,21 @@ export async function handleModelCommand({
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingModelContexts.set(contextHash, context)
 
-    const options = availableProviders.slice(0, 25).map((provider) => {
-      const modelCount = Object.keys(provider.models || {}).length
-      return {
-        label: provider.name.slice(0, 100),
-        value: provider.id,
-        description:
-          `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(
-            0,
-            100,
-          ),
-      }
-    })
+    const options = [...availableProviders]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 25)
+      .map((provider) => {
+        const modelCount = Object.keys(provider.models || {}).length
+        return {
+          label: provider.name.slice(0, 100),
+          value: provider.id,
+          description:
+            `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(
+              0,
+              100,
+            ),
+        }
+      })
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`model_provider:${contextHash}`)
@@ -584,12 +587,7 @@ export async function handleProviderSelectMenu(
         name: model.name,
         releaseDate: model.release_date,
       }))
-      // Sort by release date descending (most recent first)
-      .sort((a, b) => {
-        const dateA = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
-        const dateB = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
-        return dateB - dateA
-      })
+      .sort((a, b) => a.name.localeCompare(b.name))
 
     if (models.length === 0) {
       await interaction.editReply({
