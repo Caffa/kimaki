@@ -1417,6 +1417,7 @@ interface DigitalDiscordOptions {
   }>
   botUser?: { id?: string; username?: string }
   botToken?: string
+  dbUrl?: string  // default: "file::memory:?cache=shared"
 }
 
 class DigitalDiscord {
@@ -1567,13 +1568,13 @@ discord-digital-twin/
     serializers.ts        # DB rows -> Discord API object converters
     generated/            # Prisma-generated client (gitignored)
   tests/
-    sdk-compat.test.ts    # discord.js Client connection + handshake test
+    sdk-compat.test.ts    # Phase 1: discord.js Client connection + handshake
+    messages.test.ts      # Phase 2: message CRUD, reactions, simulateUserMessage
 ```
 
 Future phases will add:
 ```
   tests/
-    messages.test.ts      # Phase 2: REST message CRUD + MESSAGE_CREATE dispatch
     threads.test.ts       # Phase 3: Thread lifecycle
     interactions.test.ts  # Phase 4: Interaction callback flow
 ```
@@ -1678,49 +1679,48 @@ Prisma schema changes, these statements must be updated to match. Run
 **Goal**: The bot can receive messages and send replies. Messages are
 stored in the DB and dispatched as Gateway events.
 
-**What to implement**:
-1. `src/routes/messages.ts`:
-   - `POST /channels/:channel_id/messages` - Create message, store in DB,
-     dispatch `MESSAGE_CREATE` to all WS clients, update channel's
-     `lastMessageId` and `messageCount`
-   - `PATCH /channels/:channel_id/messages/:message_id` - Edit message,
-     dispatch `MESSAGE_UPDATE`
-   - `GET /channels/:channel_id/messages/:message_id` - Fetch single message
-   - `GET /channels/:channel_id/messages` - Fetch messages with pagination
-     (`before`, `after`, `around`, `limit`)
-   - `DELETE /channels/:channel_id/messages/:message_id` - Delete, dispatch
-     `MESSAGE_DELETE`
-   - Handle `multipart/form-data` for file uploads (store file metadata,
-     not actual files)
-2. `src/routes/reactions.ts`:
-   - `PUT /channels/:id/messages/:id/reactions/:emoji/@me` - Add reaction,
-     dispatch `MESSAGE_REACTION_ADD`
-   - `DELETE /channels/:id/messages/:id/reactions/:emoji/@me` - Remove,
-     dispatch `MESSAGE_REACTION_REMOVE`
-3. `src/routes/typing.ts`:
-    - `POST /channels/:channel_id/typing` - Return 204, optionally dispatch
-      `TYPING_START`
- 4. ~~Update `serializers.ts` with Message -> APIMessage converter~~ Already
-    done in Phase 1 (`messageToAPI`, `threadMemberToAPI`, all serializers).
- 5. Add `simulateUserMessage()` to the `DigitalDiscord` class
- 6. Add `getMessages()`, `getMessage()`, `waitForBotMessage()` utilities
+**What was implemented** (all done):
+ 1. 8 REST routes added inline in `server.ts` (same pattern as Phase 1,
+    no separate route files):
+    - `POST /channels/:channel_id/messages` - Create message as bot user,
+      store in DB, update channel's `lastMessageId`/`messageCount`,
+      dispatch `MESSAGE_CREATE` via gateway
+    - `GET /channels/:channel_id/messages/:message_id` - Fetch single message
+    - `PATCH /channels/:channel_id/messages/:message_id` - Edit message,
+      set `editedTimestamp`, dispatch `MESSAGE_UPDATE`
+    - `DELETE /channels/:channel_id/messages/:message_id` - Delete, dispatch
+      `MESSAGE_DELETE`
+    - `GET /channels/:channel_id/messages` - List with `before`/`after`/`limit`
+      query params. Snowflake IDs compared as BigInt. Sort desc by default,
+      asc when `after` is specified.
+    - `POST /channels/:channel_id/typing` - Return 204 (no gateway dispatch)
+    - `PUT /channels/:channel_id/messages/:id/reactions/:emoji/@me` - Add
+      reaction via `upsert`, dispatch `MESSAGE_REACTION_ADD`
+    - `DELETE /channels/:channel_id/messages/:id/reactions/:emoji/@me` -
+      Remove reaction, dispatch `MESSAGE_REACTION_REMOVE`
+ 2. Route handlers close over a `let gateway!: DiscordGateway` variable
+    declared before the Spiceflow chain and assigned after `httpServer`
+    creation. Safe because routes only execute after `listen()`.
+ 3. `simulateUserMessage()` added to `DigitalDiscord` -- inserts message
+    in DB, updates channel counters, broadcasts `MESSAGE_CREATE` via
+    gateway. Accepts optional `embeds` and `attachments`.
+ 4. `waitForBotMessage()` added to `DigitalDiscord` -- polls DB for new
+    messages from the bot user with configurable timeout (default 10s).
+ 5. `getMessages()` and `getChannel()` were already done in Phase 1.
 
-**How to validate**: Write `tests/messages.test.ts`:
-- Create DigitalDiscord + discord.js Client
-- Use `simulateUserMessage()` to inject a user message
-- Verify the Client's `messageCreate` event fires
-- Verify `message.content`, `message.author`, `message.channel` are correct
-- Send a reply via `message.channel.send('response')`
-- Verify `getMessages()` returns both messages
-- Test message edit and reaction flows
+**Gotcha: `file::memory:?cache=shared`** -- Prisma's `upsert` (used for
+reactions) uses transactions internally. libsql's `transaction()` sets
+`this.#db = null` and lazily creates a `new Database()` on next use.
+With bare `file::memory:`, each `new Database()` gets a **separate empty
+in-memory database**, silently breaking `upsert` while `create`/`findMany`
+keep working. Fixed by using `file::memory:?cache=shared` which makes all
+connections share the same in-memory DB.
 
-**Key references**:
-- `discord-api-types/v10`: `RESTPostAPIChannelMessageJSONBody`,
-  `RESTPostAPIChannelMessageResult`, `GatewayMessageCreateDispatchData`
-- OpenAPI spec: `/channels/{channel_id}/messages` path definitions
-- Fetch https://discord.com/developers/docs/resources/channel#create-message
-- Read `discord/src/discord-utils.ts` for how Kimaki sends messages
-  (`sendThreadMessage`, `uploadFilesToDiscord`)
+**Not implemented** (not needed for current test coverage):
+- `multipart/form-data` for file uploads (discord.js sends JSON for
+  text-only messages)
+- `around` query param for message list (only `before`/`after`)
+- `TYPING_START` gateway dispatch (just returns 204)
 
 ### Phase 3: Threads + Channels (~50k tokens estimated)
 
@@ -1741,9 +1741,11 @@ stored in the DB and dispatched as Gateway events.
    - `PUT /channels/:channel_id/thread-members/:user_id` - Add member,
      dispatch `THREAD_MEMBERS_UPDATE`
    - `GET /channels/:channel_id/thread-members` - List thread members
-3. Update serializers for Channel -> APIChannel (including thread metadata)
-4. Add `getChannel()`, `getThreads()` to `DigitalDiscord`
-5. Update GUILD_CREATE to include channels list
+3. ~~Update serializers for Channel -> APIChannel~~ Already done in Phase 1
+   (`channelToAPI` handles threads via `isThread` check).
+4. ~~Add `getChannel()`, `getThreads()` to `DigitalDiscord`~~ Already done
+   in Phase 1.
+5. Update GUILD_CREATE to include channels list (already done in Phase 1)
 
 **How to validate**: Write `tests/threads.test.ts`:
 - Send a message, create a thread from it via `message.startThread()`
@@ -1851,7 +1853,7 @@ remaining guild operations.
 |---|---|---|
 | HTTP framework | Spiceflow | Project convention, type-safe routes |
 | WebSocket server | `ws` npm package | Same lib discord.js uses internally, proven |
-| Database | Prisma + libsql in-memory | Matches project convention (libsql adapter), clean per-test state with `:memory:` |
+| Database | Prisma + libsql, `file::memory:?cache=shared` default | Matches project convention (libsql adapter), clean per-test state with `:memory:`. `cache=shared` is required because libsql's `transaction()` creates separate connections. Optional `dbUrl` constructor param for persistent file-based storage (debugging, integration tests). |
 | Cascade deletes | `onDelete: Cascade` on all relations | Deleting a guild cascades to channels, messages, members, roles, reactions, thread members. SQLite supports this via Prisma's foreign key emulation. Makes test cleanup trivial. |
 | Shared port | Single `http.createServer` | One URL for both REST and WS, simpler config |
 | ID generation | Custom snowflake generator | Discord IDs are snowflakes, SDK may parse them |
@@ -1929,3 +1931,4 @@ next agent in the chain.
 | 2026-02-24 | Phase 1 done | Scaffold, Gateway, core REST routes, SDK compat test (6/6 passing). Package renamed from `digital-discord` to `discord-digital-twin`, folder from `digital-discord/` to `discord-digital-twin/`. Class name `DigitalDiscord` kept. |
 | 2026-02-24 | Type safety cleanup | Removed all `as unknown as` double casts and most blanket `as Type` casts. Replaced with: return type annotations, enum imports (`ApplicationFlags`, `Locale`, `GuildSystemChannelFlags`), `noFlags<T>()` helper for bitfield zeros, typed empty arrays. Remaining `as` only for: JSON.parse, APIChannel union, APIMessage conditional spreads. Updated plan conventions to ban blanket casts. |
 | 2026-02-24 | Plan accuracy pass | Fixed plan to match actual implementation: removed `src/routes/` folder and `src/state.ts` (routes inlined in server.ts), updated deps to actual versions (Prisma 7.3.0, spiceflow from npm), added `GET /users/:user_id` to Phase 1 table, noted `messageToAPI` already done in Phase 1, documented `applySchema()` gotcha for libsql :memory:, updated package structure tree. |
+| 2026-02-24 | Phase 2 done | 8 message/reaction routes inline in server.ts, `simulateUserMessage()` + `waitForBotMessage()` test utilities, 5/5 new tests passing (11 total). Fixed libsql `file::memory:` transaction bug with `?cache=shared`. Added `dbUrl` option to constructor for persistent/debuggable storage. Updated Phase 2 to "What was implemented", corrected Phase 3 to note `getChannel()`/`getThreads()`/`channelToAPI` already done in Phase 1. |
