@@ -213,15 +213,6 @@ model forum_sync_configs {
   @@unique([app_id, forum_channel_id])
 }
 
-// Tracks the current bot process for single-instance enforcement.
-// On startup the bot upserts its PID here. Single-instance is enforced by
-// sqld binding the lock port; this table is a secondary record for diagnostics.
-model bot_instances {
-  id         Int       @id @default(1)
-  pid        Int
-  started_at DateTime  @default(now())
-}
-
 enum ipc_request_type {
   file_upload
   action_buttons

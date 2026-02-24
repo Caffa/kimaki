@@ -47,7 +47,6 @@ import {
   listScheduledTasks,
   cancelScheduledTask,
   getSessionStartSourcesBySessionIds,
-  upsertBotInstance,
 } from './database.js'
 import { ShareMarkdown } from './markdown.js'
 import {
@@ -1152,9 +1151,6 @@ async function run({
 
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
-
-  // Register this process as the active bot instance
-  await upsertBotInstance({ pid: process.pid })
 
   let appId: string
   let token: string

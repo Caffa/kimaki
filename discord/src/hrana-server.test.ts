@@ -120,7 +120,6 @@ describe('hrana-server', () => {
     expect(tableNames).toContain('thread_sessions')
     expect(tableNames).toContain('ipc_requests')
     expect(tableNames).toContain('scheduled_tasks')
-    expect(tableNames).toContain('bot_instances')
 
     // Also verify indexes were created
     const indexes = await prisma.$queryRawUnsafe<Array<{ name: string }>>(

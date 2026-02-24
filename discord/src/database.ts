@@ -1382,20 +1382,6 @@ export async function deleteStaleForumSyncConfigs({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BOT INSTANCE - single-instance enforcement via PID tracking
-// ═══════════════════════════════════════════════════════════════════════════
-
-export async function upsertBotInstance({ pid }: { pid: number }) {
-  const prisma = await getPrisma()
-  await prisma.bot_instances.upsert({
-    where: { id: 1 },
-    update: { pid, started_at: new Date() },
-    create: { id: 1, pid, started_at: new Date() },
-  })
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
 // IPC REQUESTS - plugin <-> bot communication via DB polling
 // ═══════════════════════════════════════════════════════════════════════════
 
