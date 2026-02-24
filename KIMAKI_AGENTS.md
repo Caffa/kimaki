@@ -52,6 +52,10 @@ database.ts has some functions that abstract complex prisma queries or inserts. 
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## libsql in-memory gotcha
+
+when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
