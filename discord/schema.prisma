@@ -57,6 +57,7 @@ model channel_directories {
 model bot_api_keys {
   app_id         String    @id
   gemini_api_key String?
+  openai_api_key String?
   xai_api_key    String?
   created_at     DateTime? @default(now())
 

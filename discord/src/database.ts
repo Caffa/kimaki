@@ -1121,6 +1121,53 @@ export async function setGeminiApiKey(
   })
 }
 
+/**
+ * Get the OpenAI API key for a bot.
+ */
+export async function getOpenAIApiKey(appId: string): Promise<string | null> {
+  const prisma = await getPrisma()
+  const row = await prisma.bot_api_keys.findUnique({
+    where: { app_id: appId },
+  })
+  return row?.openai_api_key ?? null
+}
+
+/**
+ * Set the OpenAI API key for a bot.
+ */
+export async function setOpenAIApiKey(
+  appId: string,
+  apiKey: string,
+): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.bot_api_keys.upsert({
+    where: { app_id: appId },
+    create: { app_id: appId, openai_api_key: apiKey },
+    update: { openai_api_key: apiKey },
+  })
+}
+
+/**
+ * Get the best available transcription API key for a bot.
+ * Prefers OpenAI, falls back to Gemini.
+ */
+export async function getTranscriptionApiKey(
+  appId: string,
+): Promise<{ provider: 'openai' | 'gemini'; apiKey: string } | null> {
+  const prisma = await getPrisma()
+  const row = await prisma.bot_api_keys.findUnique({
+    where: { app_id: appId },
+  })
+  if (!row) return null
+  if (row.openai_api_key) {
+    return { provider: 'openai', apiKey: row.openai_api_key }
+  }
+  if (row.gemini_api_key) {
+    return { provider: 'gemini', apiKey: row.gemini_api_key }
+  }
+  return null
+}
+
 // ============================================================================
 // Channel Directory CRUD Functions
 // ============================================================================

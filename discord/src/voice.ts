@@ -11,6 +11,7 @@ import type {
   LanguageModelV3ToolCall,
 } from '@ai-sdk/provider'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createOpenAI } from '@ai-sdk/openai'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -154,15 +155,28 @@ export type TranscribeAudioErrors =
   | InvalidAudioFormatError
   | TranscriptionLoopError
 
+export type TranscriptionProvider = 'openai' | 'gemini'
+
 /**
- * Create a LanguageModelV3 for transcription from the given API key.
- * Currently uses Google Gemini, but can be swapped to any AI SDK provider.
+ * Create a LanguageModelV3 for transcription.
+ * Supports Google Gemini and OpenAI. Provider is selected by the `provider` field,
+ * or auto-detected from the API key prefix (sk- = OpenAI, otherwise Gemini).
  */
 export function createTranscriptionModel({
   apiKey,
+  provider,
 }: {
   apiKey: string
+  provider?: TranscriptionProvider
 }): LanguageModelV3 {
+  const resolvedProvider: TranscriptionProvider =
+    provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
+
+  if (resolvedProvider === 'openai') {
+    const openai = createOpenAI({ apiKey })
+    return openai('gpt-4o-transcribe')
+  }
+
   const google = createGoogleGenerativeAI({ apiKey })
   return google('gemini-2.5-flash')
 }
@@ -172,8 +186,9 @@ export function transcribeAudio({
   prompt,
   language,
   temperature,
-  geminiApiKey,
+  apiKey: apiKeyParam,
   model,
+  provider,
   currentSessionContext,
   lastSessionContext,
 }: {
@@ -181,21 +196,22 @@ export function transcribeAudio({
   prompt?: string
   language?: string
   temperature?: number
-  /** @deprecated Use `model` instead for provider-agnostic transcription */
-  geminiApiKey?: string
-  /** Pre-created LanguageModelV3 instance. If not provided, creates one from geminiApiKey. */
+  apiKey?: string
   model?: LanguageModelV3
+  provider?: TranscriptionProvider
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
-  const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
+  const apiKey = apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
   if (!model && !apiKey) {
-    return Promise.resolve(new ApiKeyMissingError({ service: 'Gemini' }))
+    return Promise.resolve(
+      new ApiKeyMissingError({ service: 'OpenAI or Gemini' }),
+    )
   }
 
   const languageModel: LanguageModelV3 =
-    model || createTranscriptionModel({ apiKey: apiKey! })
+    model || createTranscriptionModel({ apiKey: apiKey!, provider })
 
   const audioBase64: string = (() => {
     if (typeof audio === 'string') {

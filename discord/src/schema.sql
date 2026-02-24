@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS "channel_directories" (
 CREATE TABLE IF NOT EXISTS "bot_api_keys" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "gemini_api_key" TEXT,
+    "openai_api_key" TEXT,
     "xai_api_key" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "bot_api_keys_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE

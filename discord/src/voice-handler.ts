@@ -33,6 +33,7 @@ import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 import {
   getVoiceChannelDirectory,
   getGeminiApiKey,
+  getTranscriptionApiKey,
   findTextChannelByVoiceChannel,
 } from './database.js'
 import {
@@ -504,33 +505,45 @@ export async function processVoiceAttachment({
     }
   }
 
-  let geminiApiKey: string | undefined
+  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  let transcriptionApiKey: string | undefined
+  let transcriptionProvider: 'openai' | 'gemini' | undefined
   if (appId) {
-    const apiKey = await getGeminiApiKey(appId)
-    if (apiKey) {
-      geminiApiKey = apiKey
+    const stored = await getTranscriptionApiKey(appId)
+    if (stored) {
+      transcriptionApiKey = stored.apiKey
+      transcriptionProvider = stored.provider
+    }
+  }
+  if (!transcriptionApiKey) {
+    if (process.env.OPENAI_API_KEY) {
+      transcriptionApiKey = process.env.OPENAI_API_KEY
+      transcriptionProvider = 'openai'
+    } else if (process.env.GEMINI_API_KEY) {
+      transcriptionApiKey = process.env.GEMINI_API_KEY
+      transcriptionProvider = 'gemini'
     }
   }
 
-  if (!geminiApiKey && !process.env.GEMINI_API_KEY) {
+  if (!transcriptionApiKey) {
     if (appId) {
       const button = new ButtonBuilder()
-        .setCustomId(`gemini_apikey:${appId}`)
-        .setLabel('Set Gemini API Key')
+        .setCustomId(`transcription_apikey:${appId}`)
+        .setLabel('Set Transcription API Key')
         .setStyle(ButtonStyle.Primary)
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
 
       await thread.send({
         content:
-          'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey. The key will be stored and used for future voice messages.',
+          'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
         components: [row],
         flags: SILENT_MESSAGE_FLAGS,
       })
     } else {
       await sendThreadMessage(
         thread,
-        'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey and set it with /login in this channel.',
+        'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
       )
     }
     return null
@@ -539,7 +552,8 @@ export async function processVoiceAttachment({
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    geminiApiKey,
+    apiKey: transcriptionApiKey,
+    provider: transcriptionProvider,
     currentSessionContext,
     lastSessionContext,
   })

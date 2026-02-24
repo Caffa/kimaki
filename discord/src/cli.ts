@@ -748,6 +748,13 @@ async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('transcription-key')
+      .setDescription(
+        'Set API key for voice message transcription (OpenAI or Gemini)',
+      )
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Add user-defined commands with -cmd suffix

@@ -76,11 +76,11 @@ describe('transcribeAudio with real API', () => {
     }
 
     const audio = fs.readFileSync(audioPath)
-    const result = await transcribeAudio({
-      audio,
-      prompt: 'test project',
-      geminiApiKey: apiKey,
-    })
+      const result = await transcribeAudio({
+        audio,
+        prompt: 'test project',
+        apiKey,
+      })
 
     expect(result).toBeTypeOf('string')
     expect((result as string).length).toBeGreaterThan(0)

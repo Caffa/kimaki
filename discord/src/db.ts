@@ -142,6 +142,15 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     }
   }
 
+  // Migration: add openai_api_key column to bot_api_keys.
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE bot_api_keys ADD COLUMN openai_api_key TEXT',
+    )
+  } catch {
+    // Column already exists
+  }
+
   // Migration: move session_thinking data into session_models.variant.
   // session_thinking table is left in place (not dropped) so older kimaki versions
   // that still reference it won't crash on the same database.

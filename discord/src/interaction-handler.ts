@@ -50,8 +50,9 @@ import {
   handleApiKeyModalSubmit,
 } from './commands/login.js'
 import {
-  handleGeminiApiKeyButton,
-  handleGeminiApiKeyModalSubmit,
+  handleTranscriptionApiKeyButton,
+  handleTranscriptionApiKeyCommand,
+  handleTranscriptionApiKeyModalSubmit,
 } from './commands/gemini-apikey.js'
 import {
   handleAgentCommand,
@@ -282,6 +283,13 @@ export function registerInteractionHandler({
                 appId,
               })
               return
+
+            case 'transcription-key':
+              await handleTranscriptionApiKeyCommand({
+                interaction,
+                appId,
+              })
+              return
           }
 
           // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
@@ -314,8 +322,8 @@ export function registerInteractionHandler({
 
           const customId = interaction.customId
 
-          if (customId.startsWith('gemini_apikey:')) {
-            await handleGeminiApiKeyButton(interaction)
+          if (customId.startsWith('transcription_apikey:')) {
+            await handleTranscriptionApiKeyButton(interaction)
             return
           }
 
@@ -418,8 +426,8 @@ export function registerInteractionHandler({
             return
           }
 
-          if (customId.startsWith('gemini_apikey_modal:')) {
-            await handleGeminiApiKeyModalSubmit(interaction)
+          if (customId.startsWith('transcription_apikey_modal:')) {
+            await handleTranscriptionApiKeyModalSubmit(interaction)
             return
           }
 
