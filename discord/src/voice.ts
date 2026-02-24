@@ -1,13 +1,16 @@
-// Audio transcription service using Google Gemini.
-// Transcribes voice messages with code-aware context.
+// Audio transcription service using AI SDK providers.
+// Provider-agnostic: works with any LanguageModelV3 (Google, OpenAI, etc).
+// Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
 
-import {
-  GoogleGenAI,
-  FunctionCallingConfigMode,
-  Type,
-  type Content,
-} from '@google/genai'
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3FunctionTool,
+  LanguageModelV3Content,
+  LanguageModelV3ToolCall,
+} from '@ai-sdk/provider'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -27,111 +30,123 @@ type TranscriptionLoopError =
   | EmptyTranscriptionError
   | NoToolResponseError
 
+const transcriptionTool: LanguageModelV3FunctionTool = {
+  type: 'function',
+  name: 'transcriptionResult',
+  description:
+    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      transcription: {
+        type: 'string',
+        description:
+          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
+      },
+    },
+    required: ['transcription'],
+  },
+}
+
+/**
+ * Extract transcription string from doGenerate content array.
+ * Looks for a tool-call named 'transcriptionResult', falls back to text content.
+ */
+export function extractTranscription(
+  content: Array<LanguageModelV3Content>,
+): TranscriptionLoopError | string {
+  const toolCall = content.find(
+    (c): c is LanguageModelV3ToolCall =>
+      c.type === 'tool-call' && c.toolName === 'transcriptionResult',
+  )
+
+  if (toolCall) {
+    // toolCall.input is a JSON string in LanguageModelV3
+    const args: Record<string, string> = (() => {
+      if (typeof toolCall.input === 'string') {
+        return JSON.parse(toolCall.input) as Record<string, string>
+      }
+      return {}
+    })()
+    const transcription = args.transcription?.trim() || ''
+    voiceLogger.log(
+      `Transcription result received: "${transcription.slice(0, 100)}..."`,
+    )
+    if (!transcription) {
+      return new EmptyTranscriptionError()
+    }
+    return transcription
+  }
+
+  // Fall back to text content if no tool call
+  const textPart = content.find((c) => c.type === 'text')
+  if (textPart && textPart.type === 'text' && textPart.text.trim()) {
+    voiceLogger.log(
+      `No tool call but got text: "${textPart.text.trim().slice(0, 100)}..."`,
+    )
+    return textPart.text.trim()
+  }
+
+  if (content.length === 0) {
+    return new NoResponseContentError()
+  }
+
+  return new TranscriptionError({
+    reason: 'Model did not produce a transcription',
+  })
+}
+
 async function runTranscriptionOnce({
-  genAI,
   model,
-  initialContents,
+  prompt,
+  audioBase64,
   temperature,
 }: {
-  genAI: GoogleGenAI
-  model: string
-  initialContents: Content[]
+  model: LanguageModelV3
+  prompt: string
+  audioBase64: string
   temperature: number
 }): Promise<TranscriptionLoopError | string> {
-  const response = await errore.tryAsync({
-    try: () =>
-      genAI.models.generateContent({
-        model,
+  const options: LanguageModelV3CallOptions = {
+    prompt: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          {
+            type: 'file',
+            data: audioBase64,
+            mediaType: 'audio/mpeg',
+          },
+        ],
+      },
+    ],
+    temperature,
+    maxOutputTokens: 2048,
+    tools: [transcriptionTool],
+    toolChoice: { type: 'tool', toolName: 'transcriptionResult' },
+    providerOptions: {
+      google: {
+        thinkingConfig: { thinkingBudget: 1024 },
+      },
+    },
+  }
 
-        contents: initialContents,
-        config: {
-          temperature,
-          maxOutputTokens: 2048,
-          thinkingConfig: {
-            thinkingBudget: 1024,
-          },
-          tools: [
-            {
-              functionDeclarations: [
-                {
-                  name: 'transcriptionResult',
-                  description:
-                    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      transcription: {
-                        type: Type.STRING,
-                        description:
-                          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
-                      },
-                    },
-                    required: ['transcription'],
-                  },
-                },
-              ],
-            },
-          ],
-          toolConfig: {
-            functionCallingConfig: {
-              mode: FunctionCallingConfigMode.ANY,
-              allowedFunctionNames: ['transcriptionResult'],
-            },
-          },
-        },
-      }),
-    catch: (e) =>
+  // doGenerate returns PromiseLike, wrap in Promise.resolve for errore compatibility
+  const response = await errore.tryAsync({
+    try: () => Promise.resolve(model.doGenerate(options)),
+    catch: (e: Error) =>
       new TranscriptionError({
         reason: `API call failed: ${String(e)}`,
         cause: e,
       }),
   })
 
-  if (response instanceof Error) {
+  if (response instanceof TranscriptionError) {
     return response
   }
 
-  const candidate = response.candidates?.[0]
-  const parts = candidate?.content?.parts
-  if (!parts) {
-    const text = response.text?.trim()
-    if (text) {
-      voiceLogger.log(
-        `No parts but got text response: "${text.slice(0, 100)}..."`,
-      )
-      return text
-    }
-    return new NoResponseContentError()
-  }
-
-  const call = parts
-    .map((part) => part.functionCall)
-    .find((functionCall) => functionCall?.name === 'transcriptionResult')
-
-  if (!call) {
-    const text = response.text?.trim()
-    if (text) {
-      voiceLogger.log(
-        `No function call but got text: "${text.slice(0, 100)}..."`,
-      )
-      return text
-    }
-    return new TranscriptionError({
-      reason: 'Model did not produce a transcription',
-    })
-  }
-
-  const args = call.args as Record<string, string> | undefined
-  const transcription = args?.transcription?.trim() || ''
-  voiceLogger.log(
-    `Transcription result received: "${transcription.slice(0, 100)}..."`,
-  )
-
-  if (!transcription) {
-    return new EmptyTranscriptionError()
-  }
-
-  return transcription
+  return extractTranscription(response.content)
 }
 
 export type TranscribeAudioErrors =
@@ -139,12 +154,26 @@ export type TranscribeAudioErrors =
   | InvalidAudioFormatError
   | TranscriptionLoopError
 
+/**
+ * Create a LanguageModelV3 for transcription from the given API key.
+ * Currently uses Google Gemini, but can be swapped to any AI SDK provider.
+ */
+export function createTranscriptionModel({
+  apiKey,
+}: {
+  apiKey: string
+}): LanguageModelV3 {
+  const google = createGoogleGenerativeAI({ apiKey })
+  return google('gemini-2.5-flash')
+}
+
 export function transcribeAudio({
   audio,
   prompt,
   language,
   temperature,
   geminiApiKey,
+  model,
   currentSessionContext,
   lastSessionContext,
 }: {
@@ -152,17 +181,21 @@ export function transcribeAudio({
   prompt?: string
   language?: string
   temperature?: number
+  /** @deprecated Use `model` instead for provider-agnostic transcription */
   geminiApiKey?: string
+  /** Pre-created LanguageModelV3 instance. If not provided, creates one from geminiApiKey. */
+  model?: LanguageModelV3
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
   const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
 
-  if (!apiKey) {
+  if (!model && !apiKey) {
     return Promise.resolve(new ApiKeyMissingError({ service: 'Gemini' }))
   }
 
-  const genAI = new GoogleGenAI({ apiKey })
+  const languageModel: LanguageModelV3 =
+    model || createTranscriptionModel({ apiKey: apiKey! })
 
   const audioBase64: string = (() => {
     if (typeof audio === 'string') {
@@ -233,25 +266,10 @@ REMEMBER: Call "transcriptionResult" tool with your transcription. This is manda
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
-  const initialContents: Content[] = [
-    {
-      role: 'user',
-      parts: [
-        { text: transcriptionPrompt },
-        {
-          inlineData: {
-            data: audioBase64,
-            mimeType: 'audio/mpeg',
-          },
-        },
-      ],
-    },
-  ]
-
   return runTranscriptionOnce({
-    genAI,
-    model: 'gemini-2.5-flash',
-    initialContents,
+    model: languageModel,
+    prompt: transcriptionPrompt,
+    audioBase64,
     temperature: temperature ?? 0.3,
   })
 }
