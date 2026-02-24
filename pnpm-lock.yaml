@@ -241,6 +241,31 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.3.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.20.5)(yaml@2.8.2)
 
+  opencode-cached-provider:
+    dependencies:
+      '@libsql/client':
+        specifier: ^0.15.15
+        version: 0.15.15
+      errore:
+        specifier: workspace:^
+        version: link:../errore
+      spiceflow:
+        specifier: ^1.17.12
+        version: 1.17.12
+    devDependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.1.53
+        version: 1.1.53
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.3.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.3.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.20.5)(yaml@2.8.2)
+
   traforo:
     dependencies:
       goke:
