@@ -1131,12 +1131,13 @@ Grouped by the Kimaki bot's actual usage. Each entry lists the HTTP method,
 path (Spiceflow route format), the discord-api-types REST type for
 request/response, and the corresponding Gateway dispatch event (if any).
 
-### Phase 1: Core (bot can start)
+### Phase 1: Core (bot can start) -- DONE
 
 | Method | Spiceflow Path | Request Type | Response Type | Gateway Event |
 |---|---|---|---|---|
 | GET | `/gateway/bot` | - | `RESTGetAPIGatewayBotResult` | - |
 | GET | `/users/@me` | - | `APIUser` | - |
+| GET | `/users/:user_id` | - | `APIUser` | - |
 | GET | `/applications/@me` | - | `APIApplication` | - |
 | PUT | `/applications/:application_id/commands` | `RESTPutAPIApplicationCommandsJSONBody` | `RESTPutAPIApplicationCommandsResult` | - |
 
@@ -1546,63 +1547,65 @@ describe('Kimaki message handling', () => {
 
 ## Package Structure
 
+The original plan proposed a `src/routes/` folder with one file per route
+group and a `src/state.ts` event bridge. The actual implementation inlines
+all Phase 1 routes directly in `server.ts` since each is small (~20 lines).
+As phases add more routes, they may be split into a `routes/` folder --
+but only when a single file becomes unwieldy.
+
 ```
 discord-digital-twin/
   package.json
   tsconfig.json
   schema.prisma
   src/
-    index.ts              # Main export: DigitalDiscord class
-    server.ts             # HTTP + WS server setup (Spiceflow + ws)
+    index.ts              # Main export: DigitalDiscord class + seed logic
+    server.ts             # HTTP (Spiceflow) + WS server, all REST routes inline
     db.ts                 # Prisma client init (in-memory libsql)
     gateway.ts            # WebSocket Gateway protocol handler
     snowflake.ts          # Discord snowflake ID generator
-    state.ts              # State manager (REST -> WS event bridge)
     serializers.ts        # DB rows -> Discord API object converters
-    routes/
-      gateway-bot.ts      # GET /gateway/bot
-      users.ts            # GET /users/@me, /users/:id
-      applications.ts     # GET /applications/@me, PUT .../commands
-      channels.ts         # GET/PATCH/DELETE /channels/:id
-      messages.ts         # CRUD /channels/:id/messages
-      threads.ts          # POST thread creation, thread-members
-      reactions.ts        # PUT/DELETE reactions
-      typing.ts           # POST /channels/:id/typing
-      interactions.ts     # POST interaction callback, webhook followups
-      guilds.ts           # Guild channels, members, roles
-    test-utils.ts         # Helper functions for tests
+    generated/            # Prisma-generated client (gitignored)
   tests/
-    gateway.test.ts       # WS handshake + event dispatch
-    messages.test.ts      # REST message CRUD + MESSAGE_CREATE dispatch
-    threads.test.ts       # Thread lifecycle
-    interactions.test.ts  # Interaction callback flow
-    sdk-compat.test.ts    # Full discord.js Client connection test
+    sdk-compat.test.ts    # discord.js Client connection + handshake test
 ```
 
-### Dependencies
+Future phases will add:
+```
+  tests/
+    messages.test.ts      # Phase 2: REST message CRUD + MESSAGE_CREATE dispatch
+    threads.test.ts       # Phase 3: Thread lifecycle
+    interactions.test.ts  # Phase 4: Interaction callback flow
+```
+
+### Dependencies (actual, from package.json)
 
 ```json
 {
   "dependencies": {
-    "spiceflow": "workspace:*",
-    "ws": "^8.0.0",
-    "discord-api-types": "^0.37.0",
-    "@prisma/client": "6.9.0",
-    "@prisma/adapter-libsql": "6.9.0",
-    "@libsql/client": "^0.14.0"
+    "@libsql/client": "^0.15.15",
+    "@prisma/adapter-libsql": "7.3.0",
+    "@prisma/client": "7.3.0",
+    "discord-api-types": "^0.38.16",
+    "spiceflow": "^1.17.12",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "prisma": "6.9.0",
-    "discord.js": "^14.25.0",
-    "vitest": "^3.0.0",
-    "typescript": "^5.7.0"
+    "@types/ws": "^8.5.0",
+    "discord.js": "^14.25.1",
+    "prisma": "7.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }
 ```
 
-Note: `discord.js` is a **devDependency** only (used in tests to validate
-SDK compatibility). The server itself only depends on `discord-api-types`
-for type definitions.
+Notes:
+- `discord.js` is a **devDependency** only (used in tests to validate
+  SDK compatibility). The server itself only depends on `discord-api-types`.
+- `spiceflow` is from npm (not `workspace:*`) since this package may be
+  extracted or published independently.
+- Prisma version **must be pinned** (no `^`) to match the generated client.
 
 ---
 
@@ -1617,27 +1620,36 @@ and is independently testable.
 **Goal**: A discord.js Client can connect, receive READY and GUILD_CREATE,
 and the bot comes "online".
 
-**What to implement**:
-1. Package scaffold: `package.json`, `tsconfig.json`, `schema.prisma`
-2. Run `prisma generate` and verify libsql adapter works with `:memory:`
-3. `src/snowflake.ts` - ID generator
-4. `src/db.ts` - Prisma client initialization with in-memory libsql
-5. `src/server.ts` - Combined HTTP (Spiceflow) + WS (`ws`) server on one port
-6. `src/gateway.ts` - WebSocket handler:
-   - On connect: send `op 10 Hello`
-   - On `op 2 Identify`: validate token, send `op 0 READY`, then
-     `op 0 GUILD_CREATE` for each guild
-   - On `op 1 Heartbeat`: send `op 11 Heartbeat ACK`
-   - Track sequence numbers
-7. `src/routes/gateway-bot.ts` - `GET /gateway/bot` returning local WS URL
-8. `src/routes/users.ts` - `GET /users/@me` returning bot user from DB
-9. `src/routes/applications.ts` - `GET /applications/@me`, `PUT /applications/:id/commands`
-10. `src/serializers.ts` - DB row to Discord API object converters for
-    User, Guild, Channel
-11. `src/state.ts` - State manager that bridges REST mutations to WS
-    dispatches
-12. `src/index.ts` - `DigitalDiscord` class with `start()`, `stop()`,
-    and seed data setup
+**What was implemented** (all done):
+ 1. Package scaffold: `package.json`, `tsconfig.json`, `schema.prisma`
+ 2. `prisma generate` + libsql in-memory adapter verified
+ 3. `src/snowflake.ts` - ID generator
+ 4. `src/db.ts` - Prisma client initialization with in-memory libsql
+ 5. `src/server.ts` - Combined HTTP (Spiceflow) + WS (`ws`) server on
+    one port. All Phase 1 REST routes are inline here (no `routes/`
+    folder or `state.ts` -- routes are small enough to inline).
+ 6. `src/gateway.ts` - WebSocket handler:
+    - On connect: send `op 10 Hello`
+    - On `op 2 Identify`: validate token, send `op 0 READY`, then
+      `op 0 GUILD_CREATE` for each guild
+    - On `op 1 Heartbeat`: send `op 11 Heartbeat ACK`
+    - Track sequence numbers
+ 7. REST routes (all in `server.ts`):
+    - `GET /gateway/bot` - returns local WS URL
+    - `GET /users/@me` - bot user from DB
+    - `GET /users/:user_id` - any user from DB (returns 404 if missing)
+    - `GET /applications/@me` - fake application object
+    - `PUT /applications/:id/commands` - bulk overwrite commands
+ 8. `src/serializers.ts` - DB row to Discord API object converters for
+    User, Guild, Channel, Message, Member, Role, ThreadMember
+ 9. `src/index.ts` - `DigitalDiscord` class with `start()`, `stop()`,
+    seed data setup, and `applySchema()` for in-memory DB init
+
+**Gotcha: `applySchema()` pattern** -- libsql `:memory:` doesn't support
+`prisma db push`. Instead, `DigitalDiscord.applySchema()` runs individual
+`CREATE TABLE` SQL statements via `prisma.$executeRawUnsafe()`. If the
+Prisma schema changes, these statements must be updated to match. Run
+`pnpm generate` to regenerate the Prisma client after schema changes.
 
 **How to validate**: Write `tests/gateway.test.ts` and
 `tests/sdk-compat.test.ts` that:
@@ -1686,11 +1698,12 @@ stored in the DB and dispatched as Gateway events.
    - `DELETE /channels/:id/messages/:id/reactions/:emoji/@me` - Remove,
      dispatch `MESSAGE_REACTION_REMOVE`
 3. `src/routes/typing.ts`:
-   - `POST /channels/:channel_id/typing` - Return 204, optionally dispatch
-     `TYPING_START`
-4. Update `serializers.ts` with Message -> APIMessage converter
-5. Add `simulateUserMessage()` to the `DigitalDiscord` class
-6. Add `getMessages()`, `getMessage()`, `waitForBotMessage()` utilities
+    - `POST /channels/:channel_id/typing` - Return 204, optionally dispatch
+      `TYPING_START`
+ 4. ~~Update `serializers.ts` with Message -> APIMessage converter~~ Already
+    done in Phase 1 (`messageToAPI`, `threadMemberToAPI`, all serializers).
+ 5. Add `simulateUserMessage()` to the `DigitalDiscord` class
+ 6. Add `getMessages()`, `getMessage()`, `waitForBotMessage()` utilities
 
 **How to validate**: Write `tests/messages.test.ts`:
 - Create DigitalDiscord + discord.js Client
@@ -1915,3 +1928,4 @@ next agent in the chain.
 | 2026-02-24 | Initial plan | Plan created with 5 phases, Prisma schema, Gateway protocol spec, REST endpoints |
 | 2026-02-24 | Phase 1 done | Scaffold, Gateway, core REST routes, SDK compat test (6/6 passing). Package renamed from `digital-discord` to `discord-digital-twin`, folder from `digital-discord/` to `discord-digital-twin/`. Class name `DigitalDiscord` kept. |
 | 2026-02-24 | Type safety cleanup | Removed all `as unknown as` double casts and most blanket `as Type` casts. Replaced with: return type annotations, enum imports (`ApplicationFlags`, `Locale`, `GuildSystemChannelFlags`), `noFlags<T>()` helper for bitfield zeros, typed empty arrays. Remaining `as` only for: JSON.parse, APIChannel union, APIMessage conditional spreads. Updated plan conventions to ban blanket casts. |
+| 2026-02-24 | Plan accuracy pass | Fixed plan to match actual implementation: removed `src/routes/` folder and `src/state.ts` (routes inlined in server.ts), updated deps to actual versions (Prisma 7.3.0, spiceflow from npm), added `GET /users/:user_id` to Phase 1 table, noted `messageToAPI` already done in Phase 1, documented `applySchema()` gotcha for libsql :memory:, updated package structure tree. |
