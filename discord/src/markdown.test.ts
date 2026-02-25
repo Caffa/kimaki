@@ -258,12 +258,10 @@ test('error handling for non-existent session', async () => {
   const sessionID = 'non-existent-session-' + Date.now()
   const exporter = new ShareMarkdown(client)
 
-  // Should throw error for non-existent session
-  await expect(
-    exporter.generate({
-      sessionID,
-    }),
-  ).rejects.toThrow(`Session ${sessionID} not found`)
+  // generate() returns errors as values (errore pattern), not rejections
+  const result = await exporter.generate({ sessionID })
+  expect(result).toBeInstanceOf(Error)
+  expect((result as Error).message).toContain(`Session ${sessionID} not found`)
 })
 
 test('generate markdown from multiple sessions', async () => {
