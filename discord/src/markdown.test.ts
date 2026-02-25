@@ -11,29 +11,13 @@ let port: number
 const waitForServer = async (port: number, maxAttempts = 30) => {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      // Try different endpoints that opencode might expose
-      const endpoints = [
-        `http://localhost:${port}/api/health`,
-        `http://localhost:${port}/`,
-        `http://localhost:${port}/api`,
-      ]
-
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint)
-          console.log(`Checking ${endpoint} - status: ${response.status}`)
-          if (response.status < 500) {
-            console.log(`Server is ready on port ${port}`)
-            return true
-          }
-        } catch (e) {
-          // Continue to next endpoint
-        }
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
+      if (response.status < 500) {
+        return true
       }
-    } catch (e) {
+    } catch {
       // Server not ready yet
     }
-    console.log(`Waiting for server... attempt ${i + 1}/${maxAttempts}`)
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   throw new Error(
@@ -76,7 +60,7 @@ beforeAll(async () => {
   client = new OpencodeClient()
 
   // Set the baseURL via environment variable if needed
-  process.env.OPENCODE_API_URL = `http://localhost:${port}`
+  process.env.OPENCODE_API_URL = `http://127.0.0.1:${port}`
 
   console.log('Client created and connected to server')
 }, 60000)

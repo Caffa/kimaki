@@ -4,7 +4,7 @@ import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 
 async function testProjectList() {
   const port = process.env.OPENCODE_PORT || '3318'
-  const baseUrl = `http://localhost:${port}`
+  const baseUrl = `http://127.0.0.1:${port}`
 
   console.log(`Connecting to OpenCode server at ${baseUrl}...\n`)
 

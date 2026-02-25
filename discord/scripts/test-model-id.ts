@@ -34,7 +34,7 @@ async function getOpenPort(): Promise<number> {
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const response = await fetch(`http://localhost:${port}/api/health`)
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
       if (response.status < 500) {
         return true
       }
@@ -79,7 +79,7 @@ async function main() {
     console.log('Server ready!')
 
     const client = createOpencodeClient({
-      baseUrl: `http://localhost:${port}`,
+      baseUrl: `http://127.0.0.1:${port}`,
     })
 
     const response = await client.provider.list({

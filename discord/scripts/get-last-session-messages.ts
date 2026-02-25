@@ -24,25 +24,12 @@ async function getOpenPort(): Promise<number> {
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const endpoints = [
-        `http://localhost:${port}/api/health`,
-        `http://localhost:${port}/`,
-        `http://localhost:${port}/api`,
-      ]
-
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint)
-          if (response.status < 500) {
-            console.log(`Server ready on port ${port}`)
-            return true
-          }
-        } catch (e) {
-          // expected during polling, server not ready yet
-        }
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
+      if (response.status < 500) {
+        return true
       }
-    } catch (e) {
-      // expected during polling
+    } catch {
+      // Server not ready yet
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
@@ -54,7 +41,7 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
 async function getLastSessionMessages() {
   // Get a free port
   const port = await getOpenPort()
-  const baseUrl = `http://localhost:${port}`
+  const baseUrl = `http://127.0.0.1:${port}`
 
   console.log(`Starting OpenCode server on port ${port}...`)
 
