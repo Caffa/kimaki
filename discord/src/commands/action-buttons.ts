@@ -25,7 +25,7 @@ import {
 } from '../session-handler.js'
 
 const logger = createLogger('ACT_BTN')
-const PENDING_TTL_MS = 30 * 60 * 1000
+const PENDING_TTL_MS = 24 * 60 * 60 * 1000
 
 export type ActionButtonColor = 'white' | 'blue' | 'green' | 'red'
 
