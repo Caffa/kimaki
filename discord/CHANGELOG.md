@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.69
+
+### Patch Changes
+
+- feat: **OpenAI voice transcription** — new `/transcription-key` command stores API key for voice message transcription; auto-detects provider from key prefix (`sk-*` → OpenAI, otherwise Gemini)
+- feat: **`gpt-4o-audio-preview` transcription model** — uses the chat completions API with OGG-to-WAV conversion for high-quality voice-to-text; falls back gracefully on decode errors
+- feat: **in-process Hrana v2 server** — replaces the 39 MB `sqld` Rust binary with a lightweight Node.js HTTP server speaking the [Hrana v2 protocol](https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md), backed by `libsql`; eliminates a large binary dependency and startup overhead
+  ```
+  Before: sqld child process (39 MB Rust binary)
+  After:  in-process HTTP server on the lock port — same Prisma adapter, no separate process
+  ```
+- feat: **bot-to-bot sessions** — bots with the Kimaki role can now trigger OpenCode sessions; a self-message guard prevents infinite loops when the bot also has the Kimaki role
+- feat: **action button TTL extended to 24 hours** — buttons no longer expire after 30 minutes, so late replies to pending confirmations still work
+- feat: **auto-derive App ID from bot token** — no interactive prompt needed; when `KIMAKI_BOT_TOKEN` is set the App ID is extracted automatically
+- feat: **thread ID in system prompt** — `threadId` is now injected into the OpenCode system prompt so agents can reference the current Discord thread for scheduling reminders (`--send-at`)
+- feat: **termcast skill** — new built-in skill for building Raycast-style TUIs with React in the terminal via `termcast`/`opentui`
+- feat: **memory forum auto-tags** — project tags are created automatically on the memory forum channel; embeds are suppressed in forum messages for cleaner appearance
+- fix: **remove `/upgrade-and-restart` command** — the command caused confusion and is no longer needed (fixes #49)
+- fix: **`/login` and `/model` dropdowns sorted** — provider and model options are now sorted alphabetically for easier scanning
+- fix: **archive thread delay** — increased from 5 s to 10 s so the final bot message is readable before the thread hides from the sidebar
+- fix: **project channel footer** — footer now survives the Discord 2000-char limit and falls back gracefully on empty body
+- fix: **test isolation** — vitest runs now auto-isolate from the real `~/.kimaki/` database via `KIMAKI_VITEST` env var injected by `vitest.config.ts`
+- fix: **`waitForServer` simplified** — all scripts now poll only `/api/health` (matching `opencode.ts`) and use `127.0.0.1` to avoid DNS/IPv6 ambiguity
+
 ## 0.4.68
 
 ### Patch Changes
