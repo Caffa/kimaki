@@ -132,6 +132,51 @@ function stripBracketedPaste(value: string | undefined): string {
 }
 
 
+// Derive the Discord Application ID from a bot token.
+// Discord bot tokens have the format: base64(userId).timestamp.hmac
+// The first segment is the bot's user ID (= Application ID) base64-encoded.
+function appIdFromToken(token: string): string | undefined {
+  const segment = token.split('.')[0]
+  if (!segment) {
+    return undefined
+  }
+  try {
+    const decoded = Buffer.from(segment, 'base64').toString('utf8')
+    if (/^\d{17,20}$/.test(decoded)) {
+      return decoded
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Resolve bot token and app ID from env var or database.
+// Used by CLI subcommands (send, project add) that need credentials
+// but don't run the interactive wizard.
+async function resolveBotCredentials({ appIdOverride }: { appIdOverride?: string } = {}): Promise<{
+  token: string
+  appId: string | undefined
+}> {
+  const envToken = process.env.KIMAKI_BOT_TOKEN
+  if (envToken) {
+    // Prefer token-derived appId over stale DB values when using env token,
+    // since the DB may have credentials from a different bot.
+    const appId = appIdOverride || appIdFromToken(envToken)
+    return { token: envToken, appId }
+  }
+
+  const botRow = await getBotToken().catch((e: unknown) => {
+    cliLogger.error('Database error:', e instanceof Error ? e.message : String(e))
+    return null
+  })
+  if (!botRow) {
+    cliLogger.error('No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.')
+    process.exit(EXIT_NO_RESTART)
+  }
+  return { token: botRow.token, appId: appIdOverride || botRow.app_id }
+}
+
 function isThreadChannelType(type: number): boolean {
   return [
     ChannelType.PublicThread,
@@ -1145,29 +1190,47 @@ async function run({
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
 
-  let appId: string
-  let token: string
+  // Resolve bot credentials from (in priority order):
+  // 1. KIMAKI_BOT_TOKEN env var (headless/CI deployments)
+  // 2. Saved credentials in the database
+  // 3. Interactive setup wizard (first-time users)
+  // App ID is always derived from the token (base64 first segment).
+  const { appId, token, isQuickStart } = await (async (): Promise<{
+    appId: string
+    token: string
+    isQuickStart: boolean
+  }> => {
+    const envToken = process.env.KIMAKI_BOT_TOKEN
+    const existingBot = await getBotToken()
 
-  const existingBot = await getBotToken()
+    // 1. Env var takes precedence (headless deployments)
+    if (envToken && !forceSetup) {
+      const derivedAppId = appIdFromToken(envToken)
+      if (!derivedAppId) {
+        cliLogger.error(
+          'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+      await setBotToken(derivedAppId, envToken)
+      cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
+      return { appId: derivedAppId, token: envToken, isQuickStart: !addChannels }
+    }
 
-  const shouldAddChannels =
-    !existingBot?.token || forceSetup || Boolean(addChannels)
-  const isQuickStart = Boolean(existingBot && !forceSetup && !addChannels)
+    // 2. Saved credentials in the database
+    if (existingBot && !forceSetup) {
+      note(
+        `Using saved bot credentials:\nApp ID: ${existingBot.app_id}\n\nTo use different credentials, run with --restart`,
+        'Existing Bot Found',
+      )
+      note(
+        `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: existingBot.app_id })}`,
+        'Install URL',
+      )
+      return { appId: existingBot.app_id, token: existingBot.token, isQuickStart: !addChannels }
+    }
 
-  if (existingBot && !forceSetup) {
-    appId = existingBot.app_id
-    token = existingBot.token
-
-    note(
-      `Using saved bot credentials:\nApp ID: ${appId}\n\nTo use different credentials, run with --restart`,
-      'Existing Bot Found',
-    )
-
-    note(
-      `Bot install URL (in case you need to add it to another server):\n${generateBotInstallUrl({ clientId: appId })}`,
-      'Install URL',
-    )
-  } else {
+    // 3. Interactive setup wizard
     if (forceSetup && existingBot) {
       note('Ignoring saved credentials due to --restart flag', 'Restart Setup')
     }
@@ -1175,30 +1238,9 @@ async function run({
     note(
       '1. Go to https://discord.com/developers/applications\n' +
         '2. Click "New Application"\n' +
-        '3. Give your application a name\n' +
-        '4. Copy the Application ID from the "General Information" section',
+        '3. Give your application a name',
       'Step 1: Create Discord Application',
     )
-
-    const appIdInput = await text({
-      message: 'Enter your Discord Application ID:',
-      placeholder: 'e.g., 1234567890123456789',
-      validate(value) {
-        const cleaned = stripBracketedPaste(value)
-        if (!cleaned) {
-          return 'Application ID is required'
-        }
-        if (!/^\d{17,20}$/.test(cleaned)) {
-          return 'Invalid Application ID format (should be 17-20 digits)'
-        }
-      },
-    })
-
-    if (isCancel(appIdInput)) {
-      cancel('Setup cancelled')
-      process.exit(0)
-    }
-    appId = stripBracketedPaste(appIdInput)
 
     note(
       '1. Go to the "Bot" section in the left sidebar\n' +
@@ -1214,7 +1256,6 @@ async function run({
       message: 'Press Enter after enabling both intents:',
       placeholder: 'Enter',
     })
-
     if (isCancel(intentsConfirmed)) {
       cancel('Setup cancelled')
       process.exit(0)
@@ -1239,30 +1280,40 @@ async function run({
         }
       },
     })
-
     if (isCancel(tokenInput)) {
       cancel('Setup cancelled')
       process.exit(0)
     }
-    token = stripBracketedPaste(tokenInput)
 
-    await setBotToken(appId, token)
+    const wizardToken = stripBracketedPaste(tokenInput)
+    const derivedAppId = appIdFromToken(wizardToken)
+    if (!derivedAppId) {
+      cliLogger.error(
+        'Could not derive Application ID from the bot token. The token appears malformed.',
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    await setBotToken(derivedAppId, wizardToken)
 
     note(
-      `Bot install URL:\n${generateBotInstallUrl({ clientId: appId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
+      `Bot install URL:\n${generateBotInstallUrl({ clientId: derivedAppId })}\n\nYou MUST install the bot in your Discord server before continuing.`,
       'Step 4: Install Bot to Server',
     )
-
     const installed = await text({
       message: 'Press Enter AFTER you have installed the bot in your server:',
       placeholder: 'Enter',
     })
-
     if (isCancel(installed)) {
       cancel('Setup cancelled')
       process.exit(0)
     }
-  }
+
+    return { appId: derivedAppId, token: wizardToken, isQuickStart: false }
+  })()
+
+  const shouldAddChannels =
+    !isQuickStart || forceSetup || Boolean(addChannels)
 
   // Start OpenCode server EARLY - let it initialize in parallel with Discord login.
   // This is the biggest startup bottleneck (can take 1-30 seconds to spawn and wait for ready)
@@ -2007,52 +2058,12 @@ cli
           }
         }
 
-        // Get bot token from env var or database
-        const envToken = process.env.KIMAKI_BOT_TOKEN
-        let botToken: string | undefined
-        let appId: string | undefined = optionAppId
-
         // Initialize database first
         await initDatabase()
 
-        if (envToken) {
-          botToken = envToken
-          if (!appId) {
-            // Try to get app_id from database if available (optional in CI)
-            try {
-              const botRow = await getBotToken()
-              appId = botRow?.app_id
-            } catch (error) {
-              cliLogger.debug(
-                'Database lookup failed while resolving app ID:',
-                error instanceof Error ? error.message : String(error),
-              )
-            }
-          }
-        } else {
-          // Fall back to database
-          try {
-            const botRow = await getBotToken()
-
-            if (botRow) {
-              botToken = botRow.token
-              appId = appId || botRow.app_id
-            }
-          } catch (e) {
-            // Database error - will fall through to the check below
-            cliLogger.error(
-              'Database error:',
-              e instanceof Error ? e.message : String(e),
-            )
-          }
-        }
-
-        if (!botToken) {
-          cliLogger.error(
-            'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
-          )
-          process.exit(EXIT_NO_RESTART)
-        }
+        const { token: botToken, appId } = await resolveBotCredentials({
+          appIdOverride: optionAppId,
+        })
 
         // If --project provided (or defaulting to cwd), resolve to channel ID
         if (resolvedProjectPath) {
@@ -2626,46 +2637,9 @@ cli
       // Initialize database
       await initDatabase()
 
-      // Get bot token from env var or database
-      const envToken = process.env.KIMAKI_BOT_TOKEN
-      let botToken: string | undefined
-      let appId: string | undefined = options.appId
-
-      if (envToken) {
-        botToken = envToken
-        if (!appId) {
-          try {
-            const botRow = await getBotToken()
-            appId = botRow?.app_id
-          } catch (error) {
-            cliLogger.debug(
-              'Database lookup failed while resolving app ID:',
-              error instanceof Error ? error.message : String(error),
-            )
-          }
-        }
-      } else {
-        try {
-          const botRow = await getBotToken()
-
-          if (botRow) {
-            botToken = botRow.token
-            appId = appId || botRow.app_id
-          }
-        } catch (e) {
-          cliLogger.error(
-            'Database error:',
-            e instanceof Error ? e.message : String(e),
-          )
-        }
-      }
-
-      if (!botToken) {
-        cliLogger.error(
-          'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
+      const { token: botToken, appId } = await resolveBotCredentials({
+        appIdOverride: options.appId,
+      })
 
       if (!appId) {
         cliLogger.error(
@@ -3512,15 +3486,7 @@ cli
     try {
       await initDatabase()
 
-      const envToken = process.env.KIMAKI_BOT_TOKEN
-      const botToken = envToken || (await getBotToken())?.token
-
-      if (!botToken) {
-        cliLogger.error(
-          'No bot token found. Set KIMAKI_BOT_TOKEN env var or run `kimaki` first to set up.',
-        )
-        process.exit(EXIT_NO_RESTART)
-      }
+      const { token: botToken } = await resolveBotCredentials()
 
       const rest = new REST().setToken(botToken)
       const threadData = (await rest.get(Routes.channel(threadId))) as {
