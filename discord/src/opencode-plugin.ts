@@ -7,6 +7,7 @@ import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Lexer } from 'marked'
 import dedent from 'string-dedent'
 import { z } from 'zod'
 
@@ -48,6 +49,36 @@ function isEmoji(str: string): boolean {
 }
 
 const logger = createLogger(LogPrefix.OPENCODE)
+
+/**
+ * Condense MEMORY.md into a line-numbered table of contents.
+ * Parses markdown AST with marked's Lexer, emits each heading prefixed by
+ * its source line number, and collapses non-heading content to `...`.
+ * The agent can then use Read with offset/limit to read specific sections.
+ */
+export function condenseMemoryMd(content: string): string {
+  const tokens = new Lexer().lex(content)
+  const lines: string[] = []
+  let charOffset = 0
+  let lastWasEllipsis = false
+
+  for (const token of tokens) {
+    // Compute 1-based line number from character offset
+    const lineNumber = content.slice(0, charOffset).split('\n').length
+    if (token.type === 'heading') {
+      const prefix = '#'.repeat(token.depth)
+      lines.push(`${lineNumber}: ${prefix} ${token.text}`)
+      lastWasEllipsis = false
+    } else if (!lastWasEllipsis) {
+      lines.push('...')
+      lastWasEllipsis = true
+    }
+    charOffset += token.raw.length
+  }
+
+  return lines.join('\n')
+}
+
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
 const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
@@ -516,9 +547,9 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
           // -- MEMORY.md injection --
           // On the first user message in a session, read MEMORY.md from the
-          // project root and inject its contents so the model has persistent
-          // context across sessions. The model can update this file to store
-          // learnings, decisions, and preferences.
+          // project root and inject a condensed table of contents (headings
+          // with line numbers, bodies collapsed to ...). The agent can use
+          // Read with offset/limit to drill into specific sections.
           if (!sessionMemoryInjected.has(sessionID)) {
             sessionMemoryInjected.add(sessionID)
             const memoryPath = path.join(directory, 'MEMORY.md')
@@ -526,12 +557,13 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
               .readFile(memoryPath, 'utf-8')
               .catch(() => null)
             if (memoryContent) {
+              const condensed = condenseMemoryMd(memoryContent)
               output.parts.push({
                 id: crypto.randomUUID(),
                 sessionID,
                 messageID,
                 type: 'text' as const,
-                text: `<system-reminder>Project memory from MEMORY.md:\n---\n${memoryContent.trim()}\n---\nYou can update MEMORY.md at any time to store learnings, decisions, preferences, and context worth preserving across sessions. Keep it concise. This file is read at the start of every session.</system-reminder>`,
+                text: `<system-reminder>Project memory from MEMORY.md (condensed table of contents, line numbers shown):\n${condensed}\nUse the Read tool on MEMORY.md with offset and limit to read specific sections. You can update MEMORY.md to store learnings, tips, insights that will help prevent same mistakes, and context worth preserving across sessions.</system-reminder>`,
                 synthetic: true,
               })
             }
@@ -585,7 +617,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
                 sessionID,
                 messageID,
                 type: 'text' as const,
-                text: '<system-reminder>Long gap since last message. If the previous conversation had important decisions, context, or learnings worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
+                text: '<system-reminder>Long gap since last message. If the previous conversation had important learnings, tips, insights that will help prevent same mistakes, or context worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
                 synthetic: true,
               })
             }
