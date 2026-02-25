@@ -1,8 +1,12 @@
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+// Tests for Prisma client initialization and schema migration.
+// Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears KIMAKI_DB_URL).
+
+import { afterAll, describe, expect, test } from 'vitest'
 import { getPrisma, closePrisma } from './db.js'
+
+afterAll(async () => {
+  await closePrisma()
+})
 
 describe('getPrisma', () => {
   test('creates sqlite file and migrates schema automatically', async () => {

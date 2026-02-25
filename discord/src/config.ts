@@ -13,10 +13,17 @@ let dataDir: string | null = null
 /**
  * Get the data directory path.
  * Falls back to ~/.kimaki if not explicitly set.
+ * Under vitest (KIMAKI_VITEST env var), auto-creates an isolated temp dir so
+ * tests never touch the real ~/.kimaki/ database. Tests that need a specific
+ * dir can still call setDataDir() before any DB access to override this.
  */
 export function getDataDir(): string {
   if (!dataDir) {
-    dataDir = DEFAULT_DATA_DIR
+    if (process.env.KIMAKI_VITEST) {
+      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
+    } else {
+      dataDir = DEFAULT_DATA_DIR
+    }
   }
   return dataDir
 }

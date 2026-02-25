@@ -16,6 +16,14 @@ const __dirname = path.dirname(__filename)
 export type { Prisma }
 export { PrismaClient }
 
+// Under vitest, clear any inherited KIMAKI_DB_URL from the parent bot process
+// so tests default to file-based access using the auto-isolated temp data dir.
+// Tests that need Hrana (like the e2e test) can set KIMAKI_DB_URL explicitly
+// after import — getDbUrl() reads process.env dynamically on each call.
+if (process.env.KIMAKI_VITEST) {
+  delete process.env['KIMAKI_DB_URL']
+}
+
 const dbLogger = createLogger(LogPrefix.DB)
 
 let prismaInstance: PrismaClient | null = null
