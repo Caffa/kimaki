@@ -95,15 +95,15 @@ const session = await launchTerminal({
 })
 
 // observe
-const text = await session.text() // full terminal text
+const text = await session.text()               // full terminal text
 const text = await session.text({ trimEnd: true }) // trimmed
 const bold = await session.text({ only: { bold: true } }) // style filter
 
 // act
-await session.type('hello world') // type character by character
-await session.press('enter') // single key
-await session.press(['ctrl', 'c']) // key chord
-await session.click('Submit') // click on text
+await session.type('hello world')               // type character by character
+await session.press('enter')                    // single key
+await session.press(['ctrl', 'c'])              // key chord
+await session.click('Submit')                   // click on text
 
 // wait
 await session.waitForText('Ready', { timeout: 10000 })
@@ -112,10 +112,7 @@ await session.waitForText(/Loading\.\.\./, { timeout: 5000 })
 // screenshot to image
 const data = session.getTerminalData()
 const { renderTerminalToImage } = await import('ghostty-opentui/image')
-const image = await renderTerminalToImage(data, {
-  format: 'jpeg',
-  devicePixelRatio: 2,
-})
+const image = await renderTerminalToImage(data, { format: 'jpeg', devicePixelRatio: 2 })
 
 // cleanup
 session.close()
