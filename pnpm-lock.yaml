@@ -130,7 +130,7 @@ importers:
         specifier: ^3.0.2
         version: 3.0.2
       traforo:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../traforo
       undici:
         specifier: ^7.16.0
@@ -161,10 +161,10 @@ importers:
         specifier: ^24.3.0
         version: 24.3.0
       discord-digital-twin:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../discord-digital-twin
       opencode-cached-provider:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../opencode-cached-provider
       prisma:
         specifier: 7.3.0
