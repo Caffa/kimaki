@@ -1,5 +1,10 @@
 // Audio transcription service using AI SDK providers.
-// Provider-agnostic: works with any LanguageModelV3 (Google, OpenAI, etc).
+// Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
+// so we can pass full context (file tree, session info) for better word recognition.
+//   - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
+//     because the default Responses API doesn't support audio file parts. The Chat
+//     Completions handler converts audio/mpeg file parts to input_audio format.
+//   - Gemini: gemini-2.5-flash natively accepts audio file parts in chat.
 // Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
 
@@ -12,6 +17,8 @@ import type {
 } from '@ai-sdk/provider'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
+import { Readable } from 'node:stream'
+import prism from 'prism-media'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -24,6 +31,97 @@ import {
 } from './errors.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
+
+// OpenAI input_audio only supports wav and mp3. Other formats (OGG Opus, etc)
+// must be converted before sending.
+const OPENAI_SUPPORTED_AUDIO_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+])
+
+/**
+ * Convert OGG Opus audio to WAV using prism-media (already installed for Discord voice).
+ * Pipeline: OGG buffer → OggDemuxer → Opus Decoder → PCM → WAV (with header).
+ * No ffmpeg needed — uses @discordjs/opus native bindings.
+ */
+export function convertOggToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+  return new Promise((resolve) => {
+    const pcmChunks: Buffer[] = []
+
+    const demuxer = new prism.opus.OggDemuxer()
+    const decoder = new prism.opus.Decoder({
+      rate: 48000,
+      channels: 1,
+      frameSize: 960,
+    })
+
+    decoder.on('data', (chunk: Buffer) => {
+      pcmChunks.push(chunk)
+    })
+
+    decoder.on('end', () => {
+      const pcmData = Buffer.concat(pcmChunks)
+      const wavHeader = createWavHeader({
+        dataLength: pcmData.length,
+        sampleRate: 48000,
+        numChannels: 1,
+        bitsPerSample: 16,
+      })
+      resolve(Buffer.concat([wavHeader, pcmData]))
+    })
+
+    decoder.on('error', (err: Error) => {
+      resolve(
+        new TranscriptionError({
+          reason: `Opus decode failed: ${err.message}`,
+          cause: err,
+        }),
+      )
+    })
+
+    demuxer.on('error', (err: Error) => {
+      resolve(
+        new TranscriptionError({
+          reason: `OGG demux failed: ${err.message}`,
+          cause: err,
+        }),
+      )
+    })
+
+    Readable.from(input).pipe(demuxer).pipe(decoder)
+  })
+}
+
+function createWavHeader({
+  dataLength,
+  sampleRate,
+  numChannels,
+  bitsPerSample,
+}: {
+  dataLength: number
+  sampleRate: number
+  numChannels: number
+  bitsPerSample: number
+}): Buffer {
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8
+  const blockAlign = (numChannels * bitsPerSample) / 8
+  const buffer = Buffer.alloc(44)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataLength, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(numChannels, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataLength, 40)
+  return buffer
+}
 
 type TranscriptionLoopError =
   | NoResponseContentError
@@ -101,11 +199,13 @@ async function runTranscriptionOnce({
   model,
   prompt,
   audioBase64,
+  mediaType,
   temperature,
 }: {
   model: LanguageModelV3
   prompt: string
   audioBase64: string
+  mediaType: string
   temperature: number
 }): Promise<TranscriptionLoopError | string> {
   const options: LanguageModelV3CallOptions = {
@@ -117,7 +217,7 @@ async function runTranscriptionOnce({
           {
             type: 'file',
             data: audioBase64,
-            mediaType: 'audio/mpeg',
+            mediaType,
           },
         ],
       },
@@ -159,8 +259,12 @@ export type TranscriptionProvider = 'openai' | 'gemini'
 
 /**
  * Create a LanguageModelV3 for transcription.
- * Supports Google Gemini and OpenAI. Provider is selected by the `provider` field,
- * or auto-detected from the API key prefix (sk- = OpenAI, otherwise Gemini).
+ * Both providers use chat models that accept audio file parts, so we get full
+ * context (prompt, session info, tool calling) for better word recognition.
+ *
+ * OpenAI: must use .chat() to get the Chat Completions API model, because the
+ * default callable (Responses API) doesn't support audio file parts.
+ * Gemini: language models natively accept audio in chat.
  */
 export function createTranscriptionModel({
   apiKey,
@@ -174,14 +278,14 @@ export function createTranscriptionModel({
 
   if (resolvedProvider === 'openai') {
     const openai = createOpenAI({ apiKey })
-    return openai('gpt-4o-transcribe')
+    return openai.chat('gpt-4o-audio-preview')
   }
 
   const google = createGoogleGenerativeAI({ apiKey })
   return google('gemini-2.5-flash')
 }
 
-export function transcribeAudio({
+export async function transcribeAudio({
   audio,
   prompt,
   language,
@@ -189,6 +293,7 @@ export function transcribeAudio({
   apiKey: apiKeyParam,
   model,
   provider,
+  mediaType: mediaTypeParam,
   currentSessionContext,
   lastSessionContext,
 }: {
@@ -199,6 +304,8 @@ export function transcribeAudio({
   apiKey?: string
   model?: LanguageModelV3
   provider?: TranscriptionProvider
+  /** MIME type of the audio data (e.g. 'audio/ogg'). Defaults to 'audio/mpeg'. */
+  mediaType?: string
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
@@ -206,32 +313,52 @@ export function transcribeAudio({
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
   if (!model && !apiKey) {
-    return Promise.resolve(
-      new ApiKeyMissingError({ service: 'OpenAI or Gemini' }),
-    )
+    return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
   }
 
-  const languageModel: LanguageModelV3 =
-    model || createTranscriptionModel({ apiKey: apiKey!, provider })
-
-  const audioBase64: string = (() => {
-    if (typeof audio === 'string') {
-      return audio
+  const resolvedProvider: TranscriptionProvider = (() => {
+    if (provider) {
+      return provider
     }
-    if (audio instanceof Buffer) {
-      return audio.toString('base64')
+    if (apiKey) {
+      return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
     }
-    if (audio instanceof Uint8Array) {
-      return Buffer.from(audio).toString('base64')
-    }
-    if (audio instanceof ArrayBuffer) {
-      return Buffer.from(audio).toString('base64')
-    }
-    return ''
+    return 'gemini'
   })()
 
-  if (!audioBase64) {
-    return Promise.resolve(new InvalidAudioFormatError())
+  const languageModel: LanguageModelV3 =
+    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+
+  // Convert audio to Buffer for potential format conversion
+  const audioBuffer: Buffer = (() => {
+    if (typeof audio === 'string') {
+      return Buffer.from(audio, 'base64')
+    }
+    if (audio instanceof Buffer) {
+      return audio
+    }
+    if (audio instanceof ArrayBuffer) {
+      return Buffer.from(new Uint8Array(audio))
+    }
+    return Buffer.from(audio)
+  })()
+
+  if (audioBuffer.length === 0) {
+    return new InvalidAudioFormatError()
+  }
+
+  let mediaType = mediaTypeParam || 'audio/mpeg'
+  let finalAudioBase64 = audioBuffer.toString('base64')
+
+  // OpenAI input_audio only supports mp3/wav. Convert OGG Opus (Discord voice) to WAV.
+  if (resolvedProvider === 'openai' && !OPENAI_SUPPORTED_AUDIO_TYPES.has(mediaType)) {
+    voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
+    const converted = await convertOggToWav(audioBuffer)
+    if (converted instanceof Error) {
+      return converted
+    }
+    finalAudioBase64 = converted.toString('base64')
+    mediaType = 'audio/wav'
   }
 
   const languageHint = language ? `The audio is in ${language}.\n\n` : ''
@@ -286,7 +413,8 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
   return runTranscriptionOnce({
     model: languageModel,
     prompt: transcriptionPrompt,
-    audioBase64,
+    audioBase64: finalAudioBase64,
+    mediaType,
     temperature: temperature ?? 0.3,
   })
 }

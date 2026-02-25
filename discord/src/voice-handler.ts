@@ -554,6 +554,7 @@ export async function processVoiceAttachment({
     prompt: transcriptionPrompt,
     apiKey: transcriptionApiKey,
     provider: transcriptionProvider,
+    mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,
   })
