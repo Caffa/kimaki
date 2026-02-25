@@ -20,7 +20,6 @@ import { getBotToken } from './database.js'
 import {
   getDataDir,
   getLockPort,
-  getMemoryEnabled,
   getVerboseOpencodeServer,
 } from './config.js'
 import { getHranaUrl } from './hrana-server.js'
@@ -229,7 +228,6 @@ async function waitForServer({
  * Initialize OpenCode server for a directory.
  * @param directory - The directory to run the server in (cwd)
  * @param options.originalRepoDirectory - For worktrees: the original repo directory to allow access to
- * @param options.channelId - Discord channel ID, used to scope memory permissions to ~/.kimaki/memory/{channelId}/
  */
 export async function initializeOpencodeForDirectory(
   directory: string,
@@ -270,7 +268,6 @@ export async function initializeOpencodeForDirectory(
   const normalizedDirectory = directory.replaceAll('\\', '/')
 
   // Build external_directory permissions, optionally including original repo for worktrees.
-  // Memory permissions include channel-scoped memory and shared global memory.
   const externalDirectoryPermissions: Record<string, PermissionAction> = {
     '*': 'ask',
     '/tmp': 'allow',
@@ -291,13 +288,6 @@ export async function initializeOpencodeForDirectory(
   externalDirectoryPermissions[opencodeConfigDir] = 'allow'
   externalDirectoryPermissions[`${opencodeConfigDir}/*`] = 'allow'
 
-  if (getMemoryEnabled()) {
-    const globalMemoryDir = path
-      .join(getDataDir(), 'memory')
-      .replaceAll('\\', '/')
-    externalDirectoryPermissions[globalMemoryDir] = 'allow'
-    externalDirectoryPermissions[`${globalMemoryDir}/*`] = 'allow'
-  }
   if (originalRepo) {
     externalDirectoryPermissions[originalRepo] = 'allow'
     externalDirectoryPermissions[`${originalRepo}/*`] = 'allow'
@@ -356,7 +346,7 @@ export async function initializeOpencodeForDirectory(
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
         ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
-        ...(getMemoryEnabled() && { KIMAKI_MEMORY_ENABLED: '1' }),
+
         ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
       },
     },
@@ -420,7 +410,7 @@ export async function initializeOpencodeForDirectory(
       code,
     )
     // Capture init options before deleting the entry so auto-restart preserves
-    // channelId-scoped memory permissions and worktree repo access.
+    // worktree repo access.
     const storedInitOptions = opencodeServers.get(directory)?.initOptions
     opencodeServers.delete(directory)
     if (code !== 0) {
@@ -513,8 +503,8 @@ export async function restartOpencodeServer(
   directory: string,
 ): Promise<OpenCodeErrors | true> {
   const existing = opencodeServers.get(directory)
-  // Preserve init options (channelId, originalRepoDirectory) so the restarted
-  // server retains scoped memory permissions and worktree access.
+  // Preserve init options (originalRepoDirectory) so the restarted
+  // server retains worktree access.
   const storedInitOptions = existing?.initOptions
 
   if (existing) {

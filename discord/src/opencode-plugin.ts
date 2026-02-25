@@ -5,6 +5,8 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import dedent from 'string-dedent'
 import { z } from 'zod'
 
@@ -139,8 +141,8 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   // Per-session state for synthetic part injection
   const sessionGitStates = new Map<string, GitState>()
   const sessionLastMessageTime = new Map<string, number>()
-  // Track whether we've already sent the memory startup reminder for each session
-  const sessionMemoryNudgeSent = new Set<string>()
+  // Track whether we've already injected MEMORY.md contents for each session
+  const sessionMemoryInjected = new Set<string>()
 
   return {
     tool: {
@@ -512,26 +514,27 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
             }
           }
 
-          // -- Memory startup reminder --
-          // On the first user message in a session, remind the model to check
-          // memory directories for prior context. Fires once per session.
-          // Inspired by openclaw's "Mandatory recall step" pattern: stacking
-          // prompt nudges (system prompt + synthetic reminder) makes compliance
-          // very likely even though neither is enforced by code.
-          // KIMAKI_MEMORY_ENABLED is passed as env var from the bot process
-          // (opencode.ts) because the plugin runs in the opencode process,
-          // not the bot process — so config.ts state is not available here.
-          const memoryEnabled = process.env.KIMAKI_MEMORY_ENABLED === '1'
-          if (memoryEnabled && !sessionMemoryNudgeSent.has(sessionID)) {
-            sessionMemoryNudgeSent.add(sessionID)
-            output.parts.push({
-              id: crypto.randomUUID(),
-              sessionID,
-              messageID,
-              type: 'text' as const,
-              text: '<system-reminder>Session started. Check memory directories for prior context before responding. List files in channel and global memory directories, then grep or read relevant ones. Do not mention you are doing this.</system-reminder>',
-              synthetic: true,
-            })
+          // -- MEMORY.md injection --
+          // On the first user message in a session, read MEMORY.md from the
+          // project root and inject its contents so the model has persistent
+          // context across sessions. The model can update this file to store
+          // learnings, decisions, and preferences.
+          if (!sessionMemoryInjected.has(sessionID)) {
+            sessionMemoryInjected.add(sessionID)
+            const memoryPath = path.join(directory, 'MEMORY.md')
+            const memoryContent = await fs.promises
+              .readFile(memoryPath, 'utf-8')
+              .catch(() => null)
+            if (memoryContent) {
+              output.parts.push({
+                id: crypto.randomUUID(),
+                sessionID,
+                messageID,
+                type: 'text' as const,
+                text: `<system-reminder>Project memory from MEMORY.md:\n---\n${memoryContent.trim()}\n---\nYou can update MEMORY.md at any time to store learnings, decisions, preferences, and context worth preserving across sessions. Keep it concise. This file is read at the start of every session.</system-reminder>`,
+                synthetic: true,
+              })
+            }
           }
 
           // -- Time since last message --
@@ -576,19 +579,15 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
               // -- Memory save reminder on idle gap --
               // When the user comes back after a long break, remind the model
-              // to save any important context from the previous conversation
-              // before starting the new task. This is kimaki's approximation
-              // of openclaw's pre-compaction memory flush.
-              if (memoryEnabled) {
-                output.parts.push({
-                  id: crypto.randomUUID(),
-                  sessionID,
-                  messageID,
-                  type: 'text' as const,
-                  text: '<system-reminder>Long gap since last message. If the previous conversation had important decisions, context, or learnings worth preserving, write them to memory files before starting the new task.</system-reminder>',
-                  synthetic: true,
-                })
-              }
+              // to save any important context from the previous conversation.
+              output.parts.push({
+                id: crypto.randomUUID(),
+                sessionID,
+                messageID,
+                type: 'text' as const,
+                text: '<system-reminder>Long gap since last message. If the previous conversation had important decisions, context, or learnings worth preserving, update MEMORY.md before starting the new task.</system-reminder>',
+                synthetic: true,
+              })
             }
           }
         },
@@ -618,7 +617,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
 
           sessionGitStates.delete(id)
           sessionLastMessageTime.delete(id)
-          sessionMemoryNudgeSent.delete(id)
+          sessionMemoryInjected.delete(id)
         },
         catch: (error) => {
           return new Error('event hook failed', { cause: error })

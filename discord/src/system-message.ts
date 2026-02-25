@@ -2,9 +2,7 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-import fs from 'node:fs'
-import path from 'node:path'
-import { getCritiqueEnabled, getDataDir, getMemoryEnabled } from './config.js'
+import { getCritiqueEnabled } from './config.js'
 
 const CRITIQUE_INSTRUCTIONS = `
 ## showing diffs
@@ -119,83 +117,6 @@ tmux kill-session -t myapp-dev
 tmux list-sessions
 \`\`\`
 `
-
-function getMemoryInstructions({ channelId }: { channelId?: string }) {
-  if (!getMemoryEnabled()) {
-    return `
-## memory
-
-Memory features are currently disabled for this bot run.
-If needed, restart kimaki with the \`--memory\` option.
-`
-  }
-  if (!channelId) return ''
-  const globalMemoryDir = path.join(getDataDir(), 'memory', 'global')
-  const memoryDir = path.join(getDataDir(), 'memory', channelId)
-  // Ensure directories exist so the agent doesn't get "not found" errors
-  // and start exploring parent dirs, triggering permission prompts.
-  fs.mkdirSync(globalMemoryDir, { recursive: true })
-  fs.mkdirSync(memoryDir, { recursive: true })
-  return `
-## memory
-
-You wake up fresh each session with no memory of prior work.
-These directories are your continuity:
-- Channel memory: \`${memoryDir}\`
-- Global memory: \`${globalMemoryDir}\`
-Use regular Read, Write, Edit, Grep tools to manage memory files. No special memory tools needed.
-
-### allowed paths (important)
-
-ONLY access files inside the two memory directories listed above.
-NEVER read, list, or explore \`${path.join(getDataDir())}\` itself or any other subdirectory in it besides memory.
-NEVER read files in the user home directory (\`~\`, \`$HOME\`). The memory directories are the only paths outside the project you should access.
-Reading paths outside these directories triggers a permission button in the user's Discord that blocks the session until they respond. Avoid this.
-
-### session startup (mandatory)
-
-Before doing anything else in a new session:
-1. List files in both memory directories
-2. Grep for the user's topic across memory files if the request relates to prior work, decisions, preferences, or project context
-3. Read any files that match the current task
-
-Do not ask permission. Do not skip this step. Do not mention you are doing it.
-If no memory files exist yet, proceed normally.
-
-### writing memory (mandatory)
-
-Mental notes do not survive session restarts. Files do.
-- After important decisions, completing significant tasks, or learning user preferences: update or create the relevant memory file
-- When someone says "remember this": write it to a memory file immediately
-- Include enough context that a future session can understand the decision without the original conversation
-- Use channel memory for project-specific notes, global memory for cross-project preferences
-
-### size limits
-
-Each memory file is synced as a Discord forum thread. The starter message has a **2000 character limit** (including frontmatter). Content beyond 2000 chars is truncated and lost in Discord.
-Keep memory files small and focused. Prefer many small files over one large file. If a file grows past ~1500 chars of body content, split it into separate topic files.
-
-### filename conventions
-Use kebab-case topic slugs. One file per topic. Examples: \`auth-architecture.md\`, \`api-conventions.md\`, \`user-preferences.md\`
-Always list existing files first before creating a new one. If a related file exists, append to it instead of creating a new file.
-Use the Edit tool to append, never overwrite unless you read the file first and preserve all existing content.
-
-NEVER add secrets in memory .md files. each memory is synced in Discord as a discord forum thread.
-
-### frontmatter format
-When creating a NEW memory file, use only these frontmatter fields:
-\`\`\`
----
-title: Short topic title
-tags:
-  - optional-tag
----
-\`\`\`
-NEVER write these fields in frontmatter - they are system-managed and will cause sync errors:
-threadId, forumChannelId, lastSyncedAt, lastMessageId, messageCount, author, authorId, createdAt, lastUpdated, project, projectChannelId.
-When editing an EXISTING memory file that already has system frontmatter, only modify the body content below the closing \`---\`. Never touch the frontmatter block.
-`
-}
 
 export type WorktreeInfo = {
   /** The worktree directory path */
@@ -539,7 +460,6 @@ git -C ${worktree.mainRepoDirectory} checkout $DEFAULT_BRANCH && git -C ${worktr
   }
 ${getCritiqueEnabled() ? CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
-${getMemoryInstructions({ channelId })}
 ## markdown formatting
 
 Format responses in **Claude-style markdown** - structured, scannable, never walls of text. Use:

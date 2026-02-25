@@ -237,9 +237,7 @@ function tryHandleThreadEvent({
 }
 
 /**
- * Find the actual file path for a thread, checking root and one level of subdirectories.
- * Needed because per-project memory files live in outputDir/<channelId>/<threadId>.md
- * while regular forum files live in outputDir/<threadId>.md.
+ * Find the file path for a thread, checking root and one level of subdirectories.
  */
 function findThreadFilePath({
   outputDir,

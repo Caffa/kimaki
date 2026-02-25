@@ -29,7 +29,6 @@ import {
   initializeOpencodeForDirectory,
   ensureKimakiCategory,
   createProjectChannels,
-  ensureMemoryForumChannel,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -41,8 +40,6 @@ import {
   getThreadSession,
   getThreadIdBySessionId,
   getPrisma,
-  upsertForumSyncConfig,
-  deleteStaleForumSyncConfigs,
   createScheduledTask,
   listScheduledTasks,
   cancelScheduledTask,
@@ -67,7 +64,6 @@ import {
   Events,
   ChannelType,
   type CategoryChannel,
-  type ForumChannel,
   type Guild,
   REST,
   Routes,
@@ -93,8 +89,6 @@ import {
   setDefaultMentionMode,
   setCritiqueEnabled,
   setVerboseOpencodeServer,
-  getMemoryEnabled,
-  setMemoryEnabled,
   getProjectsDir,
 } from './config.js'
 import { sanitizeAgentName } from './commands/agent.js'
@@ -104,7 +98,7 @@ import {
   upgrade,
   getCurrentVersion,
 } from './upgrade.js'
-import { startConfiguredForumSync } from './forum-sync/index.js'
+
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import {
@@ -1008,75 +1002,6 @@ function showReadyMessage({
 }
 
 /**
- * Ensure the memory forum channel exists and register it for forum sync.
- * Runs in background -- errors are logged but don't block startup.
- */
-async function ensureMemoryForumSync({
-  guilds,
-  appId,
-  botName,
-}: {
-  guilds: Guild[]
-  appId: string
-  botName?: string
-}) {
-  const guild = guilds[0]
-  if (!guild) {
-    cliLogger.warn('No guild available, skipping memory forum setup')
-    return
-  }
-
-  const ensureGlobalMemoryTag = async ({
-    forumChannel,
-  }: {
-    forumChannel: ForumChannel
-  }) => {
-    const hasGlobalTag = forumChannel.availableTags.some(
-      (tag) => tag.name.toLowerCase().trim() === 'global',
-    )
-    if (hasGlobalTag) {
-      return
-    }
-
-    const setTagResult = await forumChannel
-      .setAvailableTags(
-        [...forumChannel.availableTags, { name: 'global' }],
-        'Ensure global memory tag',
-      )
-      .catch((cause) => cause)
-
-    if (setTagResult instanceof Error) {
-      cliLogger.warn('Failed to add global memory tag:', setTagResult.message)
-      return
-    }
-
-    cliLogger.log(`Added global tag to memory forum: #${forumChannel.name}`)
-  }
-
-  const forumChannel = await ensureMemoryForumChannel({ guild, botName })
-  await ensureGlobalMemoryTag({ forumChannel })
-
-  const memoryDir = path.join(getDataDir(), 'memory')
-  await upsertForumSyncConfig({
-    appId,
-    forumChannelId: forumChannel.id,
-    outputDir: memoryDir,
-    direction: 'bidirectional',
-  })
-  // Clean up stale configs left behind when the forum channel was deleted and recreated.
-  // Without this, startConfiguredForumSync would iterate over the stale config first,
-  // fail to resolve the deleted channel, and skip starting the watcher entirely.
-  await deleteStaleForumSyncConfigs({
-    appId,
-    forumChannelId: forumChannel.id,
-    outputDir: memoryDir,
-  })
-  cliLogger.log(
-    `Memory forum sync configured: #${forumChannel.name} (${forumChannel.id})`,
-  )
-}
-
-/**
  * Background initialization for quick start mode.
  * Starts OpenCode server and registers slash commands without blocking bot startup.
  */
@@ -1140,7 +1065,6 @@ async function run({
   enableVoiceChannels,
 }: CliOptions) {
   startCaffeinate()
-  const memoryEnabled = getMemoryEnabled()
 
   const forceSetup = Boolean(restart)
 
@@ -1408,28 +1332,6 @@ async function run({
     // Background: OpenCode init + slash command registration (non-blocking)
     void backgroundInit({ currentDir, token, appId })
 
-    if (memoryEnabled) {
-      // Background: create memory forum channel + start forum sync
-      void ensureMemoryForumSync({
-        guilds,
-        appId,
-        botName: discordClient.user?.username,
-      })
-        .then(() => startConfiguredForumSync({ discordClient, appId }))
-        .then((result) => {
-          if (!result) return
-          cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-        })
-        .catch((error) => {
-          cliLogger.warn(
-            'Memory forum setup failed:',
-            error instanceof Error ? error.message : String(error),
-          )
-        })
-    } else {
-      cliLogger.log('Memory disabled (--memory not provided)')
-    }
-
     showReadyMessage({ kimakiChannels: [], createdChannels, appId })
     outro('✨ Bot ready! Listening for messages...')
     return
@@ -1651,28 +1553,6 @@ async function run({
   await startDiscordBot({ token, appId, discordClient, useWorktrees })
   cliLogger.log('Discord bot is running!')
 
-  if (memoryEnabled) {
-    // Background: create memory forum channel + start forum sync
-    void ensureMemoryForumSync({
-      guilds,
-      appId,
-      botName: discordClient.user?.username,
-    })
-      .then(() => startConfiguredForumSync({ discordClient, appId }))
-      .then((result) => {
-        if (!result) return
-        cliLogger.warn(`Forum sync startup failed: ${result.message}`)
-      })
-      .catch((error) => {
-        cliLogger.warn(
-          'Memory forum setup failed:',
-          error instanceof Error ? error.message : String(error),
-        )
-      })
-  } else {
-    cliLogger.log('Memory disabled (--memory not provided)')
-  }
-
   showReadyMessage({ kimakiChannels, createdChannels, appId })
   outro(
     '✨ Setup complete! Listening for new messages... do not close this process.',
@@ -1707,7 +1587,6 @@ cli
     '--mention-mode',
     'Bot only responds when @mentioned (default for all channels)',
   )
-  .option('--memory', 'Enable memory sync and persistent memory features')
   .option(
     '--no-critique',
     'Disable automatic diff upload to critique.work in system prompts',
@@ -1730,7 +1609,6 @@ cli
       enableVoiceChannels?: boolean
       verbosity?: string
       mentionMode?: boolean
-      memory?: boolean
       noCritique?: boolean
       autoRestart?: boolean
       verboseOpencodeServer?: boolean
@@ -1768,11 +1646,6 @@ cli
           cliLogger.log(
             'Default mention mode: enabled (bot only responds when @mentioned)',
           )
-        }
-
-        setMemoryEnabled(Boolean(options.memory))
-        if (options.memory) {
-          cliLogger.log('Memory enabled')
         }
 
         if (options.noCritique) {

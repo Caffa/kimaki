@@ -146,14 +146,13 @@ for checkout validation requests, prefer non-recursive checks unless the user as
 
 ## opencode plugin and env vars
 
-the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getMemoryEnabled()`, `getDataDir()`, etc.) is not available there.
+the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
 
 to pass bot-process state to the plugin, use `KIMAKI_*` env vars set in `opencode.ts` when spawning the server process. current env vars:
 
 - `KIMAKI_DATA_DIR`: data directory path
 - `KIMAKI_BOT_TOKEN`: discord bot token
 - `KIMAKI_LOCK_PORT`: lock server port for bot communication
-- `KIMAKI_MEMORY_ENABLED`: `"1"` when memory is enabled via `--memory` flag
 
 when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
 
