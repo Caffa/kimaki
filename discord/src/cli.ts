@@ -131,6 +131,7 @@ function stripBracketedPaste(value: string | undefined): string {
     .trim()
 }
 
+
 function isThreadChannelType(type: number): boolean {
   return [
     ChannelType.PublicThread,
@@ -377,17 +378,6 @@ async function ensureCommandAvailable({
 }
 
 // Run opencode upgrade in the background so the user always has the latest version.
-// Fire-and-forget: errors are silently ignored since this is non-critical.
-function backgroundUpgradeOpencode() {
-  const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
-  const child = spawn(opencodeCommand, ['upgrade'], {
-    shell: true,
-    stdio: 'ignore',
-    detached: true,
-  })
-  child.unref()
-  cliLogger.debug('Started background opencode upgrade')
-}
 
 // Spawn caffeinate on macOS to prevent system sleep while bot is running.
 // Not detached, so it dies automatically with the parent process.
@@ -1137,7 +1127,7 @@ async function run({
     possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
   })
 
-  backgroundUpgradeOpencode()
+
   backgroundUpgradeKimaki()
 
   // Start in-process Hrana server before database init. Required for the bot
