@@ -2,6 +2,7 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { getCritiqueEnabled, getDataDir, getMemoryEnabled } from './config.js'
 
@@ -131,6 +132,10 @@ If needed, restart kimaki with the \`--memory\` option.
   if (!channelId) return ''
   const globalMemoryDir = path.join(getDataDir(), 'memory', 'global')
   const memoryDir = path.join(getDataDir(), 'memory', channelId)
+  // Ensure directories exist so the agent doesn't get "not found" errors
+  // and start exploring parent dirs, triggering permission prompts.
+  fs.mkdirSync(globalMemoryDir, { recursive: true })
+  fs.mkdirSync(memoryDir, { recursive: true })
   return `
 ## memory
 
@@ -139,6 +144,13 @@ These directories are your continuity:
 - Channel memory: \`${memoryDir}\`
 - Global memory: \`${globalMemoryDir}\`
 Use regular Read, Write, Edit, Grep tools to manage memory files. No special memory tools needed.
+
+### allowed paths (important)
+
+ONLY access files inside the two memory directories listed above.
+NEVER read, list, or explore \`${path.join(getDataDir())}\` itself or any other subdirectory in it besides memory.
+NEVER read files in the user home directory (\`~\`, \`$HOME\`). The memory directories are the only paths outside the project you should access.
+Reading paths outside these directories triggers a permission button in the user's Discord that blocks the session until they respond. Avoid this.
 
 ### session startup (mandatory)
 

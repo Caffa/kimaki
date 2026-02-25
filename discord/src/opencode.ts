@@ -282,6 +282,15 @@ export async function initializeOpencodeForDirectory(
     [normalizedDirectory]: 'allow',
     [`${normalizedDirectory}/*`]: 'allow',
   }
+  // Allow ~/.config/opencode so the agent doesn't get permission prompts when
+  // it tries to read the global AGENTS.md or opencode config (the path is
+  // visible in the system prompt, so models sometimes try to read it).
+  const opencodeConfigDir = path
+    .join(os.homedir(), '.config', 'opencode')
+    .replaceAll('\\', '/')
+  externalDirectoryPermissions[opencodeConfigDir] = 'allow'
+  externalDirectoryPermissions[`${opencodeConfigDir}/*`] = 'allow'
+
   if (getMemoryEnabled()) {
     const globalMemoryDir = path
       .join(getDataDir(), 'memory')
