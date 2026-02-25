@@ -523,10 +523,10 @@ export async function abortAndRetrySession({
     return false
   }
 
-  // Extract text and images from parts
-  const textPart = lastUserMessage.parts.find((p) => p.type === 'text') as
-    | { type: 'text'; text: string }
-    | undefined
+  // Extract text and images from parts (skip synthetic parts like branch context)
+  const textPart = lastUserMessage.parts.find(
+    (p) => p.type === 'text' && !p.synthetic,
+  ) as { type: 'text'; text: string } | undefined
   const prompt = textPart?.text || ''
   const images = lastUserMessage.parts.filter(
     (p) => p.type === 'file',

@@ -3389,7 +3389,7 @@ cli
                   ? 'user'
                   : 'message'
 
-            return message.parts.flatMap((part) => {
+            return message.parts.filter((p) => !(p.type === 'text' && p.synthetic)).flatMap((part) => {
               return getPartSearchTexts(part).flatMap((text) => {
                 const hit = findFirstSessionSearchHit({
                   text,

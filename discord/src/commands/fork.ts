@@ -116,29 +116,38 @@ export async function handleForkCommand(
 
     const recentMessages = userMessages.slice(-25)
 
-    const options = recentMessages.map(
-      (
-        m: {
-          parts: Array<{ type: string; text?: string }>
-          info: { id: string; time: { created: number } }
-        },
-        index: number,
-      ) => {
-        const textPart = m.parts.find(
-          (p: { type: string }) => p.type === 'text',
-        ) as { type: 'text'; text: string } | undefined
-        const preview = textPart?.text?.slice(0, 80) || '(no text)'
-        const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
+    // Filter out synthetic parts (branch context, memory reminders, etc.)
+    // injected by the opencode plugin — they clutter the dropdown preview.
+    const options = recentMessages
+      .map(
+        (
+          m: {
+            parts: Array<{ type: string; text?: string; synthetic?: boolean }>
+            info: { id: string; time: { created: number } }
+          },
+          index: number,
+        ) => {
+          const textPart = m.parts.find(
+            (p) => p.type === 'text' && !p.synthetic,
+          ) as { type: 'text'; text: string } | undefined
+          if (!textPart?.text) {
+            return null
+          }
+          const preview = textPart.text.slice(0, 80)
+          const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
 
-        return {
-          label: label.slice(0, 100),
-          value: m.info.id,
-          description: new Date(m.info.time.created)
-            .toLocaleString()
-            .slice(0, 50),
-        }
-      },
-    )
+          return {
+            label: label.slice(0, 100),
+            value: m.info.id,
+            description: new Date(m.info.time.created)
+              .toLocaleString()
+              .slice(0, 50),
+          }
+        },
+      )
+      .filter(
+        (o): o is NonNullable<typeof o> => o !== null,
+      )
 
     const selectMenu = new StringSelectMenuBuilder()
       // Discord component custom_id max length is 100 chars.
