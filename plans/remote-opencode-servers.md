@@ -4,14 +4,18 @@ description: |
   Architecture plan for supporting remote OpenCode servers in Kimaki.
   Allows projects on different machines (dev servers, VPS, Vercel sandbox,
   CI runners) to be controlled from the same Discord server.
+  Updated: thread-per-machine model (not channel-per-machine), hrana
+  server already built, OpenCode server auth with OPENCODE_SERVER_PASSWORD.
 prompt: |
   Based on deep analysis of all communication paths between database,
   OpenCode servers, OpenCode plugin, and kimaki process. Key files read:
   opencode.ts, opencode-plugin.ts, db.ts, database.ts, session-handler.ts,
   discord-bot.ts, system-message.ts, commands/permissions.ts,
   commands/ask-question.ts, commands/file-upload.ts, discord-utils.ts,
-  interaction-handler.ts, tools.ts, schema.prisma, cli.ts.
+  interaction-handler.ts, tools.ts, schema.prisma, cli.ts,
+  hrana-server.ts (already implemented).
   Oracle agent consulted for plan review.
+  OpenCode server auth docs: https://opencode.ai/docs/server/
 ---
 
 # Remote OpenCode Servers
@@ -70,118 +74,156 @@ Users want to:
 
 ## Proposed Architecture
 
-The key insight: **we already use `@prisma/adapter-libsql`** which
-supports both `file:` and `libsql://` URLs. By running a libsql HTTP
-server (`sqld`) locally and tunneling it via traforo, remote OpenCode
-processes can access the same database over the network.
+### Thread-per-machine model
 
-**All processes go through sqld** - it is the single owner of the
-SQLite file. This avoids dual-writer issues (two processes opening
-the same `.db` file). Local processes connect via localhost (no auth),
-remote processes connect via traforo tunnel (bot token as auth).
+Remote machines are **threads, not channels**. A single project
+channel (e.g. `#backend`) stays mapped to the local project directory.
+Users run `/new-machine` inside that channel to create a thread that
+targets a remote machine. This is simpler than one channel per machine:
+
+- No channel sprawl - one channel per project, threads per machine
+- Threads inherit the project context from the parent channel
+- Multiple remote machines can coexist under the same project
+- Follows the existing kimaki pattern (worktree threads, session threads)
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  Kimaki Host                          │
-│                                                       │
-│  ┌──────────────┐                                    │
-│  │ Discord Bot   │──┐  libsql://localhost:8080       │
-│  │ (session-     │  │  (no auth on localhost)        │
-│  │  handler,     │  │                                 │
-│  │  interactions)│  │                                 │
-│  └──────────────┘  │  ┌─────────────────────────┐   │
-│                     ├─>│ sqld (libsql server)     │   │
-│  ┌──────────────┐  │  │ single owner of .db file │   │
-│  │ Local OpenCode│──┘  │ localhost = no auth      │   │
-│  │ Server        │     │ tunnel = bot token auth  │   │
-│  │ (child proc)  │     └────────────┬────────────┘   │
-│  └──────────────┘           ┌───────┴──────────┐     │
-│                              │ traforo tunnel   │     │
-│                              └───────┬──────────┘     │
-└──────────────────────────────────────┼───────────────┘
-                                       │ internet
-                    ┌──────────────────┼─────────────┐
-                    │  Remote Machine   │             │
-                    │                   v             │
-                    │  ┌──────────────────────────┐  │
-                    │  │ OpenCode Server           │  │
-                    │  │ (standalone, not child)   │  │
-                    │  │                           │  │
-                    │  │ env:                      │  │
-                    │  │  KIMAKI_DB_URL=libsql://  │  │
-                    │  │    kimaki-db.traforo.dev  │  │
-                    │  │  KIMAKI_DB_TOKEN=<bot_tk> │  │
-                    │  │  KIMAKI_BOT_TOKEN=<same>  │  │
-                    │  └──────────────────────────┘  │
-                    │         │                       │
-                    │         v                       │
-                    │  ┌──────────────────────────┐  │
-                    │  │ Plugin + CLI              │  │
-                    │  │ getPrisma() ->            │  │
-                    │  │   libsql://tunnel URL     │  │
-                    │  │ Discord REST -> direct    │  │
-                    │  └──────────────────────────┘  │
-                    └────────────────────────────────┘
+Discord server:
+  #backend (local project)
+    ├── Thread: "my-vps" (remote, ssh)
+    ├── Thread: "gpu-box" (remote, ssh)
+    └── Thread: "sandbox-abc" (remote, vercel)
+```
+
+### Hrana server (already built)
+
+The key insight: **we already use `@prisma/adapter-libsql`** which
+supports both `file:` and `http://` URLs. We already have an
+**in-process hrana v2 server** (`hrana-server.ts`) that serves the
+SQLite DB over HTTP on the lock port. By tunneling this via traforo,
+remote OpenCode processes can access the same database over the network.
+
+**Status:** Phase 1 from the original plan is done. `hrana-server.ts`
+is the single owner of the `.db` file. Local OpenCode child processes
+already connect via `KIMAKI_DB_URL=http://127.0.0.1:<lockPort>`.
+What remains is adding tunnel exposure + auth for remote connections.
+
+### OpenCode server auth
+
+OpenCode `serve` has built-in HTTP basic auth. Remote OpenCode servers
+must be protected so only kimaki can talk to them:
+
+```bash
+OPENCODE_SERVER_PASSWORD=<secret> opencode serve --port 7777
+```
+
+| Env var | Purpose | Default |
+|---|---|---|
+| `OPENCODE_SERVER_PASSWORD` | Enables basic auth on OpenCode server | *(none)* |
+| `OPENCODE_SERVER_USERNAME` | Sets the username | `opencode` |
+
+Kimaki generates a random password per machine and stores it in the DB.
+The SDK client passes basic auth credentials when connecting to remote
+OpenCode servers. This means two layers of auth for remote:
+
+1. **OpenCode server auth** - basic auth protects the OpenCode HTTP API
+2. **Hrana tunnel auth** - bot token protects DB access via tunnel
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                  Kimaki Host                              │
+│                                                           │
+│  ┌──────────────┐                                        │
+│  │ Discord Bot   │──┐  http://127.0.0.1:<lockPort>       │
+│  │ (session-     │  │  (no auth on localhost)             │
+│  │  handler,     │  │                                     │
+│  │  interactions)│  │                                     │
+│  └──────────────┘  │  ┌──────────────────────────────┐   │
+│                     ├─>│ Hrana server (in-process)     │   │
+│  ┌──────────────┐  │  │ hrana-server.ts               │   │
+│  │ Local OpenCode│──┘  │ single owner of .db file     │   │
+│  │ Server        │     │ localhost = no auth           │   │
+│  │ (child proc)  │     │ tunnel = bot token auth      │   │
+│  └──────────────┘     └────────────┬─────────────────┘   │
+│                             ┌───────┴──────────┐          │
+│                             │ traforo tunnel   │          │
+│                             └───────┬──────────┘          │
+└─────────────────────────────────────┼────────────────────┘
+                                      │ internet
+                   ┌──────────────────┼─────────────────┐
+                   │  Remote Machine   │                 │
+                   │                   v                 │
+                   │  ┌──────────────────────────────┐  │
+                   │  │ OpenCode Server               │  │
+                   │  │ (standalone, not child)       │  │
+                   │  │ protected by basic auth       │  │
+                   │  │                               │  │
+                   │  │ env:                          │  │
+                   │  │  OPENCODE_SERVER_PASSWORD=<x> │  │
+                   │  │  KIMAKI_DB_URL=http://        │  │
+                   │  │    kimaki-db.traforo.dev      │  │
+                   │  │  KIMAKI_DB_TOKEN=<bot_tk>     │  │
+                   │  │  KIMAKI_BOT_TOKEN=<bot_tk>    │  │
+                   │  └──────────────────────────────┘  │
+                   │         │                           │
+                   │         v                           │
+                   │  ┌──────────────────────────────┐  │
+                   │  │ Plugin + CLI                  │  │
+                   │  │ getPrisma() ->                │  │
+                   │  │   http://tunnel URL           │  │
+                   │  │ Discord REST -> direct        │  │
+                   │  └──────────────────────────────┘  │
+                   └─────────────────────────────────────┘
 ```
 
 **Key design decisions:**
 
-- **Single sqld process** owns the `.db` file. No process opens
-  the SQLite file directly. This avoids WAL mode dual-writer
-  issues and lock contention between local processes.
-- **No auth on localhost.** sqld listens on `127.0.0.1` without
-  auth. Bot and local OpenCode connect with just the URL.
+- **Thread per machine, not channel per machine.** `/new-machine`
+  creates a thread in the project channel. Thread metadata stores
+  the remote URL + auth credentials. No channel sprawl.
+- **Hrana server already built.** `hrana-server.ts` is the single
+  owner of the `.db` file. All local processes already connect
+  through it. Only tunnel exposure is needed for remote.
+- **OpenCode server basic auth.** Remote OpenCode servers are
+  protected with `OPENCODE_SERVER_PASSWORD`. Kimaki generates
+  a random password per machine and passes it via the SDK client's
+  basic auth header.
 - **Bot token = DB auth token.** Remote clients pass
-  `KIMAKI_BOT_TOKEN` as their sqld `authToken`. No separate
+  `KIMAKI_BOT_TOKEN` as their hrana `authToken`. No separate
   JWT key management. Reusing the bot token is fine because
   remotes already need the bot token for Discord REST calls -
   it's the same trust level.
 - **Built-in sandbox integrations.** Users don't manually copy
-  env vars. Kimaki provides `/sandbox` commands that provision
+  env vars. Kimaki provides `/new-machine` commands that provision
   environments automatically (see end-user flows below).
 
 ## What changes
 
-### 1. `db.ts` - all processes go through sqld
+### 1. `db.ts` + `hrana-server.ts` - already done (Phase 1 complete)
 
-Today `db.ts` opens the SQLite file directly with `file:` URL.
-With this change, **all processes** connect through sqld instead:
+The hrana server is already built and running in-process. All local
+OpenCode child processes connect via `KIMAKI_DB_URL=http://127.0.0.1:<lockPort>`.
+The bot process uses direct file access via Prisma.
 
-```ts
-// Before (direct file access)
-const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
+**What remains for remote:**
 
-// After (always through sqld)
-const dbUrl = process.env.KIMAKI_DB_URL || 'http://localhost:8080'
-const adapter = new PrismaLibSql({
-  url: dbUrl,
-  // Bot token as auth - only needed for remote (tunnel) URLs.
-  // Localhost sqld runs without auth, but passing token is harmless.
-  authToken: process.env.KIMAKI_DB_TOKEN,
-})
-```
+- Add auth token checking to `hrana-server.ts` for non-localhost requests
+  (when accessed via traforo tunnel)
+- Start traforo tunnel for the hrana port
+- Pass tunnel URL + bot token to remote environments
 
-Schema migrations run once at sqld startup (the bot process does
-this before accepting connections). Remote clients skip migrations:
-
-```ts
-const isRemote =
-  process.env.KIMAKI_DB_URL && !process.env.KIMAKI_DB_URL.includes('localhost')
-if (!isRemote) {
-  await migrateSchema(prisma)
-}
-```
-
-### 1b. sqld auth model
+### 1b. Hrana auth model
 
 ```
-localhost connections  --> no auth required
-tunnel connections     --> bot token as auth token
+localhost connections  --> no auth required (today's behavior)
+tunnel connections     --> bot token as auth token (new)
 ```
 
-sqld is configured to skip auth for localhost and require a token
-for external connections via the traforo tunnel. The bot token is
-reused as the auth token because:
+Add a simple auth check in `createHranaHandler`: if the request
+comes through the tunnel (detected by presence of auth header),
+validate the token matches the bot token. Localhost requests
+continue to be unauthenticated.
+
+The bot token is reused as the auth token because:
 
 - Remote machines already need the bot token for Discord REST
 - It's the same trust level (full access to kimaki state)
@@ -191,54 +233,63 @@ reused as the auth token because:
 
 ### 1c. Bootstrap: how remotes get credentials
 
-**Problem:** remote needs DB URL + token before it can connect.
-Where do these come from?
+**Problem:** remote needs DB URL + token + OpenCode auth before it
+can connect. Where do these come from?
 
 **Answer:** kimaki generates them locally and provisions them
-automatically via built-in sandbox integrations. The user never
-manually copies env vars.
+automatically via built-in integrations. The user never manually
+copies env vars.
 
 **Bootstrap flow:**
 
 ```
 1. Kimaki bot starts
-2. Starts sqld on localhost:8080 serving discord-sessions.db
-3. Starts traforo tunnel for sqld port
+2. Hrana server already running on 127.0.0.1:<lockPort>
+3. Starts traforo tunnel for hrana port
    - Tunnel ID persisted in ~/.kimaki/tunnel-id
    - Deterministic URL like kimaki-db-<hash>.traforo.dev
-4. Stores tunnel URL in memory for sandbox provisioning
+4. Stores tunnel URL in memory for machine provisioning
 
-When user runs /sandbox or /add-remote-project:
-5. Kimaki reads bot token from DB + tunnel URL from memory
-6. Provisions the remote environment via provider API
+When user runs /new-machine:
+5. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+6. Reads bot token + tunnel URL from memory
+7. Provisions the remote environment via provider API
    (Vercel API, SSH, etc.) with env vars:
-   - KIMAKI_DB_URL=libsql://kimaki-db-xxx.traforo.dev
+   - KIMAKI_DB_URL=http://kimaki-db-xxx.traforo.dev
    - KIMAKI_DB_TOKEN=<bot-token>
    - KIMAKI_BOT_TOKEN=<bot-token>
-7. Remote OpenCode starts, getPrisma() connects via tunnel
-8. Done. User did nothing except click a Discord command.
+   - OPENCODE_SERVER_PASSWORD=<random-password>
+8. Remote OpenCode starts with basic auth enabled
+9. Kimaki stores remote URL + password in DB (machines table)
+10. Creates a Discord thread for the machine
+11. Done. User did nothing except run /new-machine.
 ```
 
-**No chicken-and-egg:** the tunnel URL and bot token are both
-known locally before any remote connects. The bot provisions
-them into the remote environment via the provider's API.
+**No chicken-and-egg:** the tunnel URL, bot token, and generated
+password are all known locally before any remote connects. The bot
+provisions them into the remote environment via the provider's API.
 
 ### 2. `opencode.ts` - runtime abstraction (medium)
 
 Today `initializeOpencodeForDirectory` spawns a child process.
-For remote servers, it connects to an already-running OpenCode
-instance.
+For remote machines, it connects to an already-running OpenCode
+instance using the stored URL + basic auth credentials.
 
 ```ts
-// New: remote server registry in channel_directories or new table
-// channel maps to either:
+// Thread metadata stores machine info:
 //   { type: 'local', directory: '/path/to/project' }
-//   { type: 'remote', baseUrl: 'https://...', directory: '/remote/path' }
+//   { type: 'remote', baseUrl: 'https://...', directory: '/remote/path',
+//     password: '<random>' }
 
-// For remote, skip spawn, just create SDK clients
-const client = createOpencodeClient({ baseUrl: remoteUrl })
-const clientV2 = createOpencodeClientV2({ baseUrl: remoteUrl })
-opencodeServers.set(directory, { process: null, client, clientV2, port: 0 })
+// For remote, skip spawn, create SDK clients with basic auth
+const client = createOpencodeClient({
+  baseUrl: remoteUrl,
+  // OpenCode server basic auth
+  headers: {
+    Authorization: `Basic ${btoa(`opencode:${machine.password}`)}`,
+  },
+})
+opencodeServers.set(serverKey, { process: null, client, clientV2, port: 0 })
 ```
 
 The `opencodeServers` map type expands to allow null process:
@@ -254,35 +305,27 @@ type ServerEntry = {
 }
 ```
 
-### 3. sqld startup alongside kimaki (new)
+### 3. Hrana tunnel for remote DB access (new)
 
-sqld starts as part of the kimaki boot sequence, before the bot
-connects to Discord. It is the single owner of the `.db` file.
+The hrana server already runs as part of the kimaki boot sequence.
+For remote support, add a traforo tunnel to expose it:
 
 ```ts
-// In cli.ts, during bot startup (before initDatabase)
-const dbPath = path.join(dataDir, 'discord-sessions.db')
-const sqldProcess = spawn('sqld', [
-  '--db-path',
-  dbPath,
-  '--http-listen-addr',
-  '127.0.0.1:8080',
-  // No --auth flag: localhost connections are unauthenticated.
-  // Auth is enforced at the traforo tunnel layer for remote.
-])
-await waitForSqld(8080)
-
+// In cli.ts, after hrana server is started
 // Tunnel it for remote access (only if remote features enabled)
 const tunnelId = await getOrCreateTunnelId(dataDir)
-const tunnelProcess = spawn('kimaki', ['tunnel', '-p', '8080', '-t', tunnelId])
+const tunnelProcess = spawn('kimaki', [
+  'tunnel', '-p', String(lockPort), '-t', tunnelId,
+])
 const tunnelUrl = await waitForTunnelUrl(tunnelProcess)
 // tunnelUrl = "https://kimaki-db-xxx.traforo.dev"
-// stored in memory for sandbox provisioning
+// stored in memory for machine provisioning
 ```
 
-**Lifecycle:** sqld is supervised by the kimaki process. If sqld
-crashes, kimaki restarts it. If kimaki exits, sqld is killed
-(child process). The tunnel follows the same lifecycle.
+**Lifecycle:** the tunnel is supervised by the kimaki process.
+If kimaki exits, the tunnel child process is killed.
+The hrana server itself is already in-process and follows
+the bot lifecycle.
 
 ### 4. OpenCode plugin - no changes needed
 
@@ -300,15 +343,16 @@ they connect to sqld over the tunnel. Bot token comes from
 ### 6. Env vars injected into remote OpenCode
 
 These env vars are provisioned automatically by kimaki when
-creating a sandbox or adding a remote project. The user never
-sets them manually.
+creating a machine thread. The user never sets them manually.
 
 ```bash
 # Set by kimaki on remote machines:
-KIMAKI_DB_URL=libsql://kimaki-db-xxx.traforo.dev
+KIMAKI_DB_URL=http://kimaki-db-xxx.traforo.dev
 KIMAKI_DB_TOKEN=<bot-token>   # same as bot token
 KIMAKI_BOT_TOKEN=<bot-token>  # for Discord REST in plugin/CLI
 KIMAKI_DATA_DIR=/tmp/kimaki   # remote-local temp dir
+OPENCODE_SERVER_PASSWORD=<random-per-machine>  # basic auth
+# OPENCODE_SERVER_USERNAME defaults to "opencode"
 # KIMAKI_LOCK_PORT is NOT set (file upload bridge unavailable)
 ```
 
@@ -316,42 +360,44 @@ For **local** OpenCode servers (today's behavior), kimaki passes:
 
 ```bash
 # Set by kimaki on local child processes:
-KIMAKI_DB_URL=http://localhost:8080   # sqld on same machine
+KIMAKI_DB_URL=http://localhost:<lockPort>  # hrana server
 # No KIMAKI_DB_TOKEN needed (localhost = no auth)
 KIMAKI_BOT_TOKEN=<bot-token>
 KIMAKI_DATA_DIR=~/.kimaki
 KIMAKI_LOCK_PORT=<port>
+# No OPENCODE_SERVER_PASSWORD (local, same machine)
 ```
 
 ## Database schema changes
 
-### Modified: `channel_directories`
+### New table: `machines`
 
-Add fields for remote runtime support. Single source of truth
-(no separate `remote_servers` table to avoid drift):
+Machines are thread-scoped, not channel-scoped. A machine record
+links a Discord thread to a remote OpenCode server. The parent
+channel stays mapped to the local project via `channel_directories`
+(unchanged).
 
 ```prisma
-model channel_directories {
-  channel_id    String    @id
-  directory     String           // local path OR remote path
-  channel_type  String
-  app_id        String?
-  runtime_type  String   @default("local")  // "local" | "remote"
-  remote_url    String?          // OpenCode base URL if remote
-  remote_label  String?          // human name like "my-vps"
-  remote_status String?          // "online" | "offline" | null
-  sandbox_id    String?          // provider sandbox ID for cleanup
-  sandbox_provider String?       // "vercel" | "ssh" | "docker"
-  created_at    DateTime? @default(now())
-  // ... existing relations unchanged
+model machines {
+  id              String    @id @default(uuid())
+  thread_id       String    @unique    // Discord thread ID
+  channel_id      String               // parent project channel
+  label           String               // human name like "my-vps"
+  provider        String               // "ssh" | "vercel" | "docker"
+  remote_url      String               // OpenCode base URL
+  remote_directory String              // project path on remote
+  password        String               // OPENCODE_SERVER_PASSWORD (random)
+  status          String    @default("online")  // "online" | "offline"
+  sandbox_id      String?              // provider sandbox ID for cleanup
+  created_at      DateTime  @default(now())
+
+  @@index([channel_id])
 }
 ```
 
-For local channels: `runtime_type = "local"`, other remote fields
-are null. Fully backward compatible.
-
-For remote channels: `runtime_type = "remote"`,
-`remote_url = "https://..."`, `directory = "/remote/path"`.
+`channel_directories` stays **unchanged**. No `runtime_type` or
+remote fields on it. Clean separation: channels = local projects,
+machine threads = remote.
 
 The `opencodeServers` map in opencode.ts uses a composite key
 to avoid collisions between machines with the same path:
@@ -366,53 +412,85 @@ const serverKey =
 
 ## End-user flows
 
-### Flow 1: Vercel sandbox (built-in integration)
+### Flow 1: `/new-machine` with Vercel sandbox
 
 User wants a cloud sandbox for a task. Zero manual setup.
 
-**In Discord:**
+**In Discord (inside `#myapp` channel):**
 
 ```
-/sandbox vercel
+/new-machine
+  provider: vercel
   repo: github.com/user/myapp
-  prompt: "Fix the auth middleware bug"
+  label: sandbox-fix-auth
 ```
 
 **What happens behind the scenes:**
 
 ```
-1. Kimaki calls Vercel Sandbox API to create environment
+1. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+2. Calls Vercel Sandbox API to create environment
    - Clones the repo into the sandbox
    - Injects env vars via Vercel API:
-     KIMAKI_DB_URL, KIMAKI_DB_TOKEN, KIMAKI_BOT_TOKEN
-   - Starts opencode serve inside the sandbox
+     KIMAKI_DB_URL, KIMAKI_DB_TOKEN, KIMAKI_BOT_TOKEN,
+     OPENCODE_SERVER_PASSWORD
+   - Starts opencode serve inside the sandbox (basic auth enabled)
    - Returns sandbox URL (e.g. sandbox-abc.vercel.dev:7777)
-2. Kimaki creates a Discord thread for the task
-3. Stores channel -> remote server mapping in DB
-4. Creates SDK clients against the sandbox URL
-5. Starts the session with the user's prompt
-6. AI agent works in the sandbox, edits files, runs commands
-7. Plugin/CLI in sandbox connect to kimaki's sqld via tunnel
-8. When done, sandbox can be destroyed or kept
+3. Kimaki creates a Discord thread "sandbox-fix-auth" in #myapp
+4. Stores machine record in DB (thread_id, remote_url, password)
+5. Creates SDK clients with basic auth against the sandbox URL
+6. User types in the thread, sessions route to remote OpenCode
+7. Plugin/CLI in sandbox connect to kimaki's hrana via tunnel
+8. When done, machine can be destroyed or kept
 ```
 
-The user just ran one command. Kimaki handled provisioning,
-env configuration, and session creation.
+### Flow 2: `/new-machine` with SSH (persistent VPS)
 
-### Flow 2: Other sandbox providers (extensible)
+User has a VPS with code at `/home/user/myapp`.
 
-The sandbox system is provider-agnostic. Each provider implements
+**In Discord (inside `#myapp` channel):**
+
+```
+/new-machine
+  provider: ssh
+  host: my-vps.example.com
+  directory: /home/user/myapp
+  label: my-vps
+```
+
+**What happens:**
+
+```
+1. Kimaki generates a random OPENCODE_SERVER_PASSWORD
+2. SSHs into the VPS (using configured SSH key)
+3. Installs opencode if not present
+4. Writes env vars to the remote environment
+5. Starts opencode serve with basic auth (via systemd or tmux)
+6. Verifies health endpoint is reachable (with basic auth)
+7. Creates Discord thread "my-vps" in #myapp
+8. Stores machine record in DB
+```
+
+User can also do this from CLI:
+
+```bash
+kimaki machine add ssh://root@my-vps.example.com:/home/user/myapp
+```
+
+### Flow 3: Machine providers (extensible)
+
+The machine system is provider-agnostic. Each provider implements
 a simple interface:
 
 ```ts
-type SandboxProvider = {
+type MachineProvider = {
   name: string
   create(opts: {
     repo?: string
     directory?: string
     envVars: Record<string, string>
   }): Promise<{ url: string; destroy: () => Promise<void> }>
-  healthCheck(url: string): Promise<boolean>
+  healthCheck(url: string, auth: { username: string; password: string }): Promise<boolean>
   destroy(id: string): Promise<void>
 }
 ```
@@ -430,67 +508,37 @@ Future providers (community):
 - Fly.io
 - AWS CodeCatalyst
 
-### Flow 3: Adding a remote machine (SSH provider)
-
-User has a VPS with code at `/home/user/myapp`.
-
-**In Discord:**
-
-```
-/add-remote-project
-  provider: ssh
-  host: my-vps.example.com
-  directory: /home/user/myapp
-  label: my-vps-app
-```
-
-**What happens:**
-
-```
-1. Kimaki SSHs into the VPS (using configured SSH key)
-2. Installs opencode + kimaki if not present
-3. Writes env vars to ~/.kimaki/remote-env on the VPS
-4. Starts opencode serve (via systemd unit or tmux)
-5. Verifies health endpoint is reachable
-6. Creates Discord channel #my-vps-app
-7. Stores remote server mapping in DB
-```
-
-User can also do this from CLI:
-
-```bash
-kimaki remote add ssh://root@my-vps.example.com:/home/user/myapp
-```
-
-### Flow 4: Multiple machines, same Discord server
+### Flow 4: Multiple machines under one project
 
 A team has:
 
-- Mac laptop for frontend (local)
-- Linux server for backend (remote via SSH)
+- Mac laptop for local dev (default, no thread needed)
+- Linux server for backend testing (remote via SSH)
 - GPU machine for ML training (remote via SSH)
 
 ```
 Discord server:
-  #frontend      -> local (Mac, today's behavior)
-  #backend       -> remote (Linux, ssh provider)
-  #ml-training   -> remote (GPU, ssh provider)
+  #myapp (local project on Mac, today's behavior)
+    ├── Thread: "linux-backend" (remote, ssh)
+    ├── Thread: "gpu-training" (remote, ssh)
+    └── (regular session threads, local)
 ```
 
-The kimaki bot runs on the Mac. It spawns OpenCode locally for
-`#frontend` and connects to remote OpenCode servers for the
-other two. All three share the same sqld database via localhost
-(local) and traforo tunnel (remote).
+The kimaki bot runs on the Mac. Messages in `#myapp` (and regular
+threads) spawn local OpenCode. Messages in machine threads route
+to remote OpenCode servers. All share the same hrana DB via
+localhost (local) and traforo tunnel (remote).
 
-### Flow 5: Session interaction with remote server
+### Flow 5: Session interaction in a machine thread
 
-User sends "fix the auth bug" in `#backend` channel:
+User sends "fix the auth bug" in the "linux-backend" thread:
 
 ```
-1. Discord bot receives message
-2. Looks up channel_directories -> runtime_type = "remote",
-   remote_url = "https://linux-server:7777"
-3. Instead of spawn(), creates SDK clients against remote URL
+1. Discord bot receives message in thread
+2. Looks up machines table by thread_id
+   -> remote_url = "https://linux-server:7777"
+   -> password = "<stored-password>"
+3. Instead of spawn(), creates SDK clients with basic auth
 4. Calls session.create() + session.prompt() on remote server
 5. Subscribes to SSE events from remote server
 6. Events flow back: message parts, permissions, questions
@@ -498,7 +546,7 @@ User sends "fix the auth bug" in `#backend` channel:
 
 Meanwhile on the remote machine:
 8. OpenCode runs the AI agent, edits files, runs bash commands
-9. Plugin calls getPrisma() -> connects to sqld via tunnel
+9. Plugin calls getPrisma() -> connects to hrana via tunnel
 10. Plugin resolves sessionID -> threadID from DB
 11. CLI commands (kimaki send, upload-to-discord) also use tunnel DB
 12. Bot token from env lets CLI post to Discord directly
@@ -506,24 +554,24 @@ Meanwhile on the remote machine:
 
 Everything works because the DB is the shared coordination layer.
 
-### Flow 6: Ephemeral sandbox lifecycle
+### Flow 6: Ephemeral machine lifecycle
 
-Sandboxes are temporary. Kimaki tracks their lifecycle:
+Sandbox machines are temporary. Kimaki tracks their lifecycle:
 
 ```
-/sandbox vercel repo:user/app prompt:"fix bug"
-  -> sandbox created, session starts
-  -> AI works, user reviews
+/new-machine provider:vercel repo:user/app label:fix-bug
+  -> thread created, machine provisioned
+  -> user types in thread, AI works in sandbox
   -> user says "commit and push"
   -> AI pushes to GitHub
-  -> user runs /sandbox destroy (or sandbox auto-expires)
+  -> user runs /destroy-machine (or sandbox auto-expires)
   -> Kimaki calls provider.destroy()
-  -> channel/thread archived
+  -> thread archived, machine record cleaned up
 ```
 
-Sandboxes that go unreachable (health check fails) are marked
-offline in DB. The channel shows a status message. User can
-re-provision with `/sandbox recreate`.
+Machines that go unreachable (health check fails) are marked
+offline in DB. The thread shows a status message. User can
+re-provision with `/new-machine` again.
 
 ## What doesn't work remotely (and workarounds)
 
@@ -535,7 +583,7 @@ returns local path. Remote OpenCode can't read that path.
 **Workaround options (pick one for v1):**
 
 1. **Disable for remote** - return "file upload not available for
-   remote servers" if `KIMAKI_LOCK_PORT` is not set (already
+   remote machines" if `KIMAKI_LOCK_PORT` is not set (already
    gracefully handled in plugin code)
 2. **Return Discord CDN URL** - instead of downloading to disk,
    return the Discord attachment URL. OpenCode can fetch it
@@ -546,69 +594,81 @@ Option 1 is simplest for v1. Option 2 is cleanest long-term.
 
 ### `fs.existsSync(projectDirectory)` validation
 
-Bot validates directory exists before starting session. For remote
-servers, the directory is on another machine.
+Bot validates directory exists before starting session. For machine
+threads, the directory is on another machine.
 
-**Fix:** Skip validation when `runtime_type === 'remote'`. Use
-OpenCode health endpoint instead.
+**Fix:** Skip validation when thread is a machine thread (check
+machines table). Use OpenCode health endpoint (with basic auth)
+instead.
 
 ### Worktree creation from bot
 
 Bot calls `createWorktreeWithSubmodules()` which runs git commands
-with `cwd: directory`. For remote projects, this fails.
+with `cwd: directory`. For machine threads, this fails.
 
-**Fix:** For remote runtimes, send worktree creation as a prompt
+**Fix:** For machine threads, send worktree creation as a prompt
 to the remote OpenCode session itself (the AI agent runs git on
-the remote machine). Or disable auto-worktrees for remote channels.
+the remote machine). Or disable auto-worktrees for machine threads.
 
 ### `/run-shell-command` and `!` prefix
 
 These run `execAsync()` with `cwd: directory` on the kimaki host.
-For remote projects, the directory doesn't exist locally.
+For machine threads, the directory doesn't exist locally.
 
 **Fix:** Route shell commands through the remote OpenCode server's
-bash tool, or disable for remote channels in v1.
+bash tool, or disable for machine threads in v1.
 
 ### `/restart-opencode-server`
 
 Kills and respawns the child process. No child process for remote.
 
-**Fix:** For remote, call health endpoint or show "restart not
-available for remote servers, restart manually on the remote host".
+**Fix:** For machine threads, call health endpoint (with basic auth)
+or show "restart not available for remote machines, restart manually
+on the remote host".
 
 ## Security considerations
 
-### Single token model
+### Two-layer auth model
 
-The bot token is the only secret. It serves as:
+Two secrets protect remote access:
 
-- Discord REST API authentication (plugin, CLI)
-- sqld auth token for remote DB access via tunnel
-- Trust credential for sandbox provisioning
+1. **Bot token** - serves as DB auth token (hrana tunnel) and
+   Discord REST authentication. One token to revoke.
+2. **Per-machine password** - random string generated by kimaki,
+   stored in the `machines` table, used as `OPENCODE_SERVER_PASSWORD`.
+   Each machine has its own password. Revoking one machine doesn't
+   affect others.
 
-This simplifies the security model: **one token to manage, one
-token to revoke.** Regenerating the bot token in Discord dev
-portal invalidates all remote access simultaneously.
+Regenerating the bot token in Discord dev portal invalidates all
+remote DB access simultaneously. Destroying a machine record
+invalidates that machine's OpenCode server auth.
 
 ### DB exposure via tunnel
 
-sqld exposes the full database over the traforo tunnel. The
-database contains bot tokens and API keys. Mitigations:
+The hrana server exposes the full database over the traforo tunnel.
+The database contains bot tokens and API keys. Mitigations:
 
 - **Bot token required** for tunnel connections (already needed)
 - **traforo tunnel URL** is not publicly discoverable (random
   subdomain, no DNS record)
 - **Localhost is unauthenticated** but only reachable from the
   kimaki host itself
-- **Sandbox providers are trusted** - kimaki provisions env vars
+- **Machine providers are trusted** - kimaki provisions env vars
   into them via authenticated provider APIs (Vercel API, SSH)
+
+### OpenCode server exposure
+
+Remote OpenCode servers listen on public ports but are protected
+by `OPENCODE_SERVER_PASSWORD` (HTTP basic auth). Only kimaki
+knows the password (stored in DB). The password is randomly
+generated per machine and never shown to the user.
 
 ### Trust boundary
 
 ```
 Trusted:
-- Kimaki host (runs bot, sqld, local OpenCode)
-- Remote machines explicitly added by user
+- Kimaki host (runs bot, hrana server, local OpenCode)
+- Remote machines explicitly added by user via /new-machine
 - Sandbox environments provisioned by kimaki
 
 Untrusted:
@@ -616,38 +676,40 @@ Untrusted:
 ```
 
 Remote OpenCode servers are trusted to run arbitrary code. The
-user explicitly adds them via `/add-remote-project` or `/sandbox`.
+user explicitly adds them via `/new-machine`.
 This is the same trust level as running OpenCode locally.
 
 ## Implementation phases
 
-### Phase 1: sqld as single DB owner (2-3 days)
+### Phase 1: hrana tunnel + auth (DONE partially, ~1 day remaining)
 
-- Start sqld alongside kimaki bot in cli.ts (before initDatabase)
-- Change db.ts: all processes connect via `libsql://` URL
-  - Local: `http://localhost:8080` (no auth)
-  - Remote: tunnel URL (bot token as auth)
-- Run migrations through sqld on startup
-- Start traforo tunnel for sqld port
-- Pass `KIMAKI_DB_URL=http://localhost:8080` to local OpenCode
-- Test: local setup works identically through sqld
+- ~~Start hrana server alongside kimaki bot~~ (**done**: `hrana-server.ts`)
+- ~~All local processes connect via http URL~~ (**done**: `KIMAKI_DB_URL`)
+- Add auth token checking to hrana handler for non-localhost requests
+- Start traforo tunnel for hrana port in cli.ts
+- Persist tunnel ID in `~/.kimaki/tunnel-id`
+- Test: remote process connects to hrana via tunnel with bot token
 
-### Phase 2: remote server registration (2-3 days)
+### Phase 2: `/new-machine` command + machines table (2-3 days)
 
-- Add `runtime_type` + `remote_url` to channel_directories
-- Add `/add-remote-project` slash command
-- Modify `initializeOpencodeForDirectory` to handle remote URLs
-  - Use composite key for opencodeServers map (not just directory)
-- Skip `fs.existsSync` for remote channels
-- Disable worktree auto-creation for remote channels
-- Health check endpoint for remote servers
+- Add `machines` prisma model (thread_id, remote_url, password, etc.)
+- Run `pnpm generate` to update schema
+- Add `/new-machine` slash command with provider + label options
+- Generate random `OPENCODE_SERVER_PASSWORD` per machine
+- Store machine record in DB, create Discord thread
+- Modify `initializeOpencodeForDirectory` to check machines table
+  when message is in a thread → connect with basic auth to remote URL
+- Use composite key for opencodeServers map
+- Skip `fs.existsSync` for machine threads
+- Health check with basic auth for remote servers
 
-### Phase 3: session routing for remote (1-2 days)
+### Phase 3: session routing for machines (1-2 days)
 
-- Modify session-handler.ts to use remote SDK clients
+- In discord-bot.ts message handler, check if thread is a machine thread
+- Create SDK clients with basic auth headers from stored password
 - SSE event subscription works identically (just different base URL)
 - Permission/question replies route to correct server
-- Test: send message in remote channel, get AI response
+- Test: send message in machine thread, get AI response
 
 ### Phase 4: CLI + plugin verification (1 day)
 
@@ -657,26 +719,26 @@ This is the same trust level as running OpenCode locally.
 - Disable `kimaki_file_upload` for remote (graceful error message)
 - Test: AI agent in remote session uses kimaki CLI successfully
 
-### Phase 5: sandbox integrations (3-5 days)
+### Phase 5: machine providers (3-5 days)
 
-- Define `SandboxProvider` interface
+- Define `MachineProvider` interface
 - Implement Vercel sandbox provider (via API)
 - Implement SSH provider (for VPS/bare metal)
-- Add `/sandbox` slash command with provider selection
-- Sandbox lifecycle management (create, health check, destroy)
-- Auto-provision env vars into sandbox environments
+- `/new-machine` auto-provisions based on selected provider
+- Machine lifecycle management (create, health check, destroy)
+- Auto-provision all env vars (DB URL, tokens, password)
 
 ### Phase 6: UX polish (1-2 days)
 
-- Health check monitoring for remote servers (periodic ping)
-- Show online/offline status in Discord channel topic
-- `/remove-remote-project` and `/sandbox destroy` commands
+- Health check monitoring for machines (periodic ping with basic auth)
+- Show online/offline status in thread
+- `/destroy-machine` command
 - SSE reconnect logic for remote sessions (WAN blips)
-- Graceful degradation when sqld/tunnel is down
+- Graceful degradation when hrana tunnel is down
 
 ## Total estimated effort
 
-- **Phase 1 only (sqld migration):** ~2-3 days
-- **Phases 1-4 (remote sessions work):** ~8 days
-- **Full version with sandboxes (all phases):** ~2-3 weeks
-- **Risk:** medium (sqld reliability, SSE over WAN, provider APIs)
+- **Phase 1 (hrana tunnel + auth):** ~1 day (most is already done)
+- **Phases 1-4 (remote sessions work):** ~6 days
+- **Full version with providers (all phases):** ~2 weeks
+- **Risk:** medium (SSE over WAN, provider APIs, basic auth in SDK)
