@@ -462,8 +462,17 @@ export async function startDiscordBot({
             return
           }
 
-          // Include starter message as context for the session
           let prompt = resolveMentions(message)
+          const transcription = await processVoiceAttachment({
+            message,
+            thread,
+            projectDirectory,
+            appId: currentAppId,
+          })
+          if (transcription) {
+            prompt = `Voice message transcription from Discord user:\n\n${transcription}`
+          }
+
           const starterMessage = await thread
             .fetchStarterMessage()
             .catch((error) => {
@@ -474,8 +483,7 @@ export async function startDiscordBot({
               return null
             })
           if (starterMessage && starterMessage.content !== message.content) {
-            const starterTextAttachments =
-              await getTextAttachments(starterMessage)
+            const starterTextAttachments = await getTextAttachments(starterMessage)
             const starterContent = resolveMentions(starterMessage)
             const starterText = starterTextAttachments
               ? `${starterContent}\n\n${starterTextAttachments}`
@@ -511,7 +519,6 @@ export async function startDiscordBot({
         if (isCliInjectedPrompt) {
           messageContent = message.content || ''
         }
-
         let currentSessionContext: string | undefined
         let lastSessionContext: string | undefined
 
@@ -744,7 +751,6 @@ export async function startDiscordBot({
         }
 
         let messageContent = resolveMentions(message)
-
         const transcription = await processVoiceAttachment({
           message,
           thread,
