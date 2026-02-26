@@ -400,8 +400,14 @@ e2eTest('thread message queue ordering', () => {
       // signalThreadInterrupt is called (discord-bot.ts:462). At the next step-finish event,
       // the running session sees the pending interrupt and aborts with reason=next-step,
       // letting the queued message start sooner.
+      //
+      // NOTE: streamChunkDelayMs only affects cache HITS. On the first run (empty cache)
+      // all requests are cache misses and stream at upstream Gemini speed. We send C
+      // quickly after B (200ms) so the interrupt fires while B is still being processed
+      // regardless of cache state. On subsequent runs, cached responses with the delay
+      // make B stream even slower, making the interrupt even more reliable.
 
-      // 1. Fast setup: establish session + prime the cache
+      // 1. Fast setup: establish session
       proxy.setStreamChunkDelayMs(0)
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: delta',
@@ -423,35 +429,51 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Slow stream: follow-up B streams slowly so session stays active
+      // 2. Send B, then quickly send C to trigger the interrupt.
+      //    200ms gap gives B time to enter the queue and start processing.
+      //    signalThreadInterrupt sets pendingThreadInterrupts + 2s timeout.
+      //    If B hits step-finish first → reason=next-step. Otherwise → reason=next-step-timeout.
       proxy.setStreamChunkDelayMs(500)
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: echo',
       })
-
-      // 3. Wait for B to start streaming, then send C to trigger interrupt
       await new Promise((r) => {
-        setTimeout(r, 1500)
+        setTimeout(r, 200)
       })
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: foxtrot',
       })
 
-      // 4. Both B and C should get bot responses (B may be partial due to abort)
+      // 3. Poll until foxtrot's user message has a bot reply after it.
+      //    waitForBotMessageCount alone isn't enough — error messages from the
+      //    interrupted session can satisfy the count before foxtrot gets its reply.
       proxy.setStreamChunkDelayMs(0)
-      const after = await waitForBotMessageCount({
-        discord,
-        threadId: thread.id,
-        count: beforeBotCount + 2,
-        timeout: 120_000,
-      })
+      const start = Date.now()
+      let after = await discord.thread(thread.id).getMessages()
+      while (Date.now() - start < 120_000) {
+        after = await discord.thread(thread.id).getMessages()
+        const foxtrotIdx = after.findIndex((m) => {
+          return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
+        })
+        const hasBotAfterFoxtrot =
+          foxtrotIdx >= 0 &&
+          after.some((m, i) => {
+            return i > foxtrotIdx && m.author.id === discord.botUserId
+          })
+        if (hasBotAfterFoxtrot) {
+          break
+        }
+        await new Promise((r) => {
+          setTimeout(r, 500)
+        })
+      }
 
+      // 4. Both B and C got bot responses
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
 
-      // User messages appear before their bot responses
       const userEchoIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('echo')
       })
@@ -461,11 +483,11 @@ e2eTest('thread message queue ordering', () => {
       expect(userEchoIndex).toBeGreaterThan(-1)
       expect(userFoxtrotIndex).toBeGreaterThan(-1)
 
-      // Last bot message (response to C) appears after C's user message
-      const lastBotIndex = after.findLastIndex((m) => {
-        return m.author.id === discord.botUserId
+      // Foxtrot's bot reply appears after the foxtrot user message
+      const botAfterFoxtrot = after.findIndex((m, i) => {
+        return i > userFoxtrotIndex && m.author.id === discord.botUserId
       })
-      expect(userFoxtrotIndex).toBeLessThan(lastBotIndex)
+      expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
     },
     360_000,
   )
@@ -515,28 +537,39 @@ e2eTest('thread message queue ordering', () => {
       })
 
       // 4. The 2s timeout should force-abort B. C then gets processed.
+      //    Poll until india's user message has a bot reply after it.
       proxy.setStreamChunkDelayMs(0)
-      const after = await waitForBotMessageCount({
-        discord,
-        threadId: thread.id,
-        count: beforeBotCount + 2,
-        timeout: 120_000,
-      })
+      const start2 = Date.now()
+      let after = await discord.thread(thread.id).getMessages()
+      while (Date.now() - start2 < 120_000) {
+        after = await discord.thread(thread.id).getMessages()
+        const indiaIdx = after.findIndex((m) => {
+          return m.author.id === TEST_USER_ID && m.content.includes('india')
+        })
+        const hasBotAfterIndia =
+          indiaIdx >= 0 &&
+          after.some((m, i) => {
+            return i > indiaIdx && m.author.id === discord.botUserId
+          })
+        if (hasBotAfterIndia) {
+          break
+        }
+        await new Promise((r) => {
+          setTimeout(r, 500)
+        })
+      }
 
-      const afterBotMessages = after.filter((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
-
-      // C's user message appears before the last bot response
+      // C's user message appears before its bot response.
+      // The interrupted hotel session may or may not produce a visible bot message
+      // (depends on timing), so we only assert on india's reply existence.
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
       })
       expect(userIndiaIndex).toBeGreaterThan(-1)
-      const lastBotIndex = after.findLastIndex((m) => {
-        return m.author.id === discord.botUserId
+      const botAfterIndia = after.findIndex((m, i) => {
+        return i > userIndiaIndex && m.author.id === discord.botUserId
       })
-      expect(userIndiaIndex).toBeLessThan(lastBotIndex)
+      expect(botAfterIndia).toBeGreaterThan(userIndiaIndex)
     },
     360_000,
   )
@@ -632,6 +665,80 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       })
       expect(userNovemberIndex).toBeLessThan(lastBotIndex)
+    },
+    360_000,
+  )
+
+  test(
+    'slow tool call (sleep) gets aborted when new message queues',
+    async () => {
+      // Tests that long-running tool calls get properly aborted when a new
+      // message queues behind them. During tool execution no step-finish events
+      // arrive, so the 2s STEP_ABORT_TIMEOUT_MS fires (reason=next-step-timeout).
+      // The queue then processes the next message normally.
+
+      // 1. Fast setup: establish session
+      proxy.setStreamChunkDelayMs(0)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: oscar',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 60_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: oscar'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      const before = await th.getMessages()
+      const beforeBotCount = before.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
+      // 2. Ask the model to run a long sleep command
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Run the command `sleep 400` in bash. Do not explain, just run it.',
+      })
+
+      // 3. Brief wait so the bot picks up the sleep message and starts processing.
+      //    The interrupt fires either at step-finish (reason=next-step) or after
+      //    the 2s timeout (reason=next-step-timeout) — both abort the session.
+      await new Promise((r) => {
+        setTimeout(r, 1000)
+      })
+
+      // 4. Send interrupt message while sleep is still running
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: papa',
+      })
+
+      // 5. The 2s force-abort timeout fires (no step-finish during tool execution),
+      //    kills the sleep session, and the queue processes "papa".
+      const after = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: beforeBotCount + 2,
+        timeout: 120_000,
+      })
+
+      const afterBotMessages = after.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+
+      // "papa" user message appears before the last bot response
+      const userPapaIndex = after.findIndex((m) => {
+        return m.author.id === TEST_USER_ID && m.content.includes('papa')
+      })
+      expect(userPapaIndex).toBeGreaterThan(-1)
+      const lastBotIndex = after.findLastIndex((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(userPapaIndex).toBeLessThan(lastBotIndex)
     },
     360_000,
   )
