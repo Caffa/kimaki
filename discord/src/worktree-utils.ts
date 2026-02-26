@@ -38,6 +38,23 @@ export function execAsync(
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
+const LOCKFILE_TO_INSTALL_COMMAND: Array<[string, string]> = [
+  ['pnpm-lock.yaml', 'pnpm install --frozen-lockfile'],
+  ['bun.lock', 'bun install --frozen-lockfile'],
+  ['bun.lockb', 'bun install --frozen-lockfile'],
+  ['yarn.lock', 'yarn install --frozen-lockfile'],
+  ['package-lock.json', 'npm ci'],
+]
+
+function detectInstallCommand(directory: string): string | null {
+  for (const [lockfile, command] of LOCKFILE_TO_INSTALL_COMMAND) {
+    if (fs.existsSync(path.join(directory, lockfile))) {
+      return command
+    }
+  }
+  return null
+}
+
 type CommandError = Error & {
   cmd?: string
   stderr?: string
@@ -412,19 +429,10 @@ export async function createWorktreeWithSubmodules({
     return submoduleValidationError
   }
 
-  // 5. Install dependencies using ni (detects package manager from lockfile)
-  try {
-    logger.log(`Installing dependencies in ${worktreeDir}`)
-    await execAsync('npx -y ni', {
-      cwd: worktreeDir,
-    })
-    logger.log(`Dependencies installed in ${worktreeDir}`)
-  } catch (e) {
-    // Log but don't fail - might not be a JS project or might fail for various reasons
-    logger.warn(
-      `Failed to install dependencies in ${worktreeDir}: ${e instanceof Error ? e.message : String(e)}`,
-    )
-  }
+  // 5. Dependency install disabled.
+  // `npx -y ni` resolved to the wrong npm package `ni` (browser-launcher), not `@antfu/ni`.
+  // detectInstallCommand() was built as a replacement but install is skipped for now.
+  // Opencode sessions can run install themselves if needed.
 
   return { directory: worktreeDir, branch: name, diffApplied }
 }
