@@ -149,6 +149,11 @@ export type ThreadStartMarker = {
   scheduledTaskId?: number
 }
 
+export type AgentInfo = {
+  name: string
+  description?: string
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
@@ -158,6 +163,7 @@ export function getOpencodeSystemMessage({
   channelTopic,
   username,
   userId,
+  agents,
 }: {
   sessionId: string
   channelId?: string
@@ -171,6 +177,8 @@ export function getOpencodeSystemMessage({
   username?: string
   /** Current Discord user ID, used in example commands */
   userId?: string
+  /** Available agents from OpenCode */
+  agents?: AgentInfo[]
 }) {
   const topicContext = channelTopic?.trim()
     ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
@@ -257,6 +265,12 @@ Important:
 Use --agent to specify which agent to use for the session:
 
 npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the auth module" --agent plan${username ? ` --user "${username}"` : ''}
+${agents && agents.length > 0 ? `
+Available agents:
+${agents.map((a) => { return `- \`${a.name}\`${a.description ? `: ${a.description}` : ''}` }).join('\n')}
+
+Only agents listed above are valid for --agent.
+` : ''}
 
 ## scheduled sends and task management
 

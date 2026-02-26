@@ -46,6 +46,7 @@ import {
 import { formatPart } from './message-formatting.js'
 import {
   getOpencodeSystemMessage,
+  type AgentInfo,
   type WorktreeInfo,
 } from './system-message.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -305,7 +306,7 @@ async function resolveValidatedAgentPreference({
   sessionId: string
   channelId?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
-}): Promise<string | undefined> {
+}): Promise<{ agentPreference?: string; agents: AgentInfo[] }> {
   const agentPreference = await (async (): Promise<string | undefined> => {
     if (agent) {
       return agent
@@ -326,29 +327,45 @@ async function resolveValidatedAgentPreference({
     }
     return getChannelAgent(channelId)
   })()
-  if (!agentPreference) {
-    return undefined
-  }
 
   if (getClient instanceof Error) {
-    return agentPreference
+    return { agentPreference: agentPreference || undefined, agents: [] }
   }
 
   const agentsResponse = await errore.tryAsync(() => {
     return getClient().app.agents({})
   })
   if (agentsResponse instanceof Error) {
-    throw new Error(`Failed to validate agent "${agentPreference}"`, {
-      cause: agentsResponse,
-    })
+    if (agentPreference) {
+      throw new Error(`Failed to validate agent "${agentPreference}"`, {
+        cause: agentsResponse,
+      })
+    }
+    return { agentPreference: undefined, agents: [] }
   }
 
   const availableAgents = agentsResponse.data || []
+  // Non-hidden primary/all agents for system message context
+  const agents: AgentInfo[] = availableAgents
+    .filter((a) => {
+      return (
+        (a.mode === 'primary' || a.mode === 'all') &&
+        !a.hidden
+      )
+    })
+    .map((a) => {
+      return { name: a.name, description: a.description }
+    })
+
+  if (!agentPreference) {
+    return { agentPreference: undefined, agents }
+  }
+
   const hasAgent = availableAgents.some((availableAgent) => {
     return availableAgent.name === agentPreference
   })
   if (hasAgent) {
-    return agentPreference
+    return { agentPreference, agents }
   }
 
   const availableAgentNames = availableAgents
@@ -872,7 +889,8 @@ export async function handleOpencodeSession({
     )
     return
   }
-  const earlyAgentPreference = earlyAgentResult
+  const earlyAgentPreference = earlyAgentResult.agentPreference
+  const earlyAvailableAgents = earlyAgentResult.agents
   if (earlyAgentPreference) {
     sessionLogger.log(
       `[AGENT] Resolved agent preference early: ${earlyAgentPreference}`,
@@ -2304,6 +2322,7 @@ export async function handleOpencodeSession({
               channelTopic,
               username,
               userId,
+              agents: earlyAvailableAgents,
             }),
             model: modelParam,
             agent: agentPreference,
