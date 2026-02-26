@@ -124,10 +124,17 @@ function formatMessage(
 
 const noSpacing = { spacing: 0 }
 
+// Suppress clack terminal output during vitest runs to avoid flooding
+// test output with hundreds of log lines. File logging still works.
+const isVitest = !!process.env['KIMAKI_VITEST']
+
 export function createLogger(prefix: LogPrefixType | string) {
   const paddedPrefix = padPrefix(prefix)
   const log = (...args: unknown[]) => {
     writeToFile('LOG', prefix, args)
+    if (isVitest) {
+      return
+    }
     clackLog.message(
       formatMessage(getTimestamp(), pc.cyan(paddedPrefix), args),
       {
@@ -140,6 +147,9 @@ export function createLogger(prefix: LogPrefixType | string) {
     log,
     error: (...args: unknown[]) => {
       writeToFile('ERROR', prefix, args)
+      if (isVitest) {
+        return
+      }
       clackLog.error(
         formatMessage(getTimestamp(), pc.red(paddedPrefix), args),
         noSpacing,
@@ -147,6 +157,9 @@ export function createLogger(prefix: LogPrefixType | string) {
     },
     warn: (...args: unknown[]) => {
       writeToFile('WARN', prefix, args)
+      if (isVitest) {
+        return
+      }
       clackLog.warn(
         formatMessage(getTimestamp(), pc.yellow(paddedPrefix), args),
         noSpacing,
@@ -154,6 +167,9 @@ export function createLogger(prefix: LogPrefixType | string) {
     },
     info: (...args: unknown[]) => {
       writeToFile('INFO', prefix, args)
+      if (isVitest) {
+        return
+      }
       clackLog.info(
         formatMessage(getTimestamp(), pc.blue(paddedPrefix), args),
         noSpacing,
