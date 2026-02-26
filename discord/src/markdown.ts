@@ -19,6 +19,8 @@ class UnexpectedError extends createTaggedError({
 
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)
 
+const TOOL_OUTPUT_MAX_CHARS = 30_000
+
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
 
@@ -187,6 +189,16 @@ export class ShareMarkdown {
 
       case 'tool':
         if (part.state.status === 'completed') {
+          const output: string = part.state.output || ''
+          const isOversized = output.length > TOOL_OUTPUT_MAX_CHARS
+
+          if (isOversized) {
+            lines.push(
+              `> ⚠️ **Large tool output** (${output.length.toLocaleString()} chars, truncated to ${TOOL_OUTPUT_MAX_CHARS.toLocaleString()})`,
+            )
+            lines.push('')
+          }
+
           lines.push(`#### 🛠️ Tool: ${part.tool}`)
           lines.push('')
 
@@ -199,11 +211,16 @@ export class ShareMarkdown {
             lines.push('')
           }
 
-          // Render output
-          if (part.state.output) {
+          // Render output, truncated if too large
+          if (output) {
             lines.push('**Output:**')
             lines.push('```')
-            lines.push(part.state.output)
+            lines.push(
+              isOversized
+                ? output.slice(0, TOOL_OUTPUT_MAX_CHARS) +
+                    '\n...(truncated)'
+                : output,
+            )
             lines.push('```')
             lines.push('')
           }
