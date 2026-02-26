@@ -393,6 +393,9 @@ This is a software development environment. The speaker is giving instructions t
 - File paths, function names, CLI commands, package names, API endpoints
 
  RULES:
+ - NEVER change the meaning or intent of the user's message. Your job is ONLY to transcribe, not to respond or answer.
+ - If the user asks a question, keep it as a question. Do NOT answer it. Do NOT rephrase it as a statement.
+ - Only fix grammar, punctuation, and markdown formatting. Preserve the original content faithfully.
  - If audio is unclear, transcribe your best interpretation, even with strong accents. Always provide an approximation.
  - If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
  - Use the session context below to understand technical terms, file names, function names mentioned
