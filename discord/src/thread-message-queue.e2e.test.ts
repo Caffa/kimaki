@@ -391,4 +391,248 @@ e2eTest('thread message queue ordering', () => {
     },
     360_000,
   )
+
+  test(
+    'step-finish interrupt aborts running session when new message queues',
+    async () => {
+      // Tests the path at session-handler.ts:1611 where pendingThreadInterrupts.has(thread.id)
+      // is checked on step-finish. When a new message queues behind a running session,
+      // signalThreadInterrupt is called (discord-bot.ts:462). At the next step-finish event,
+      // the running session sees the pending interrupt and aborts with reason=next-step,
+      // letting the queued message start sooner.
+
+      // 1. Fast setup: establish session + prime the cache
+      proxy.setStreamChunkDelayMs(0)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: delta',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 60_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: delta'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      const before = await th.getMessages()
+      const beforeBotCount = before.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
+      // 2. Slow stream: follow-up B streams slowly so session stays active
+      proxy.setStreamChunkDelayMs(500)
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: echo',
+      })
+
+      // 3. Wait for B to start streaming, then send C to trigger interrupt
+      await new Promise((r) => {
+        setTimeout(r, 1500)
+      })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: foxtrot',
+      })
+
+      // 4. Both B and C should get bot responses (B may be partial due to abort)
+      proxy.setStreamChunkDelayMs(0)
+      const after = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: beforeBotCount + 2,
+        timeout: 120_000,
+      })
+
+      const afterBotMessages = after.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+
+      // User messages appear before their bot responses
+      const userEchoIndex = after.findIndex((m) => {
+        return m.author.id === TEST_USER_ID && m.content.includes('echo')
+      })
+      const userFoxtrotIndex = after.findIndex((m) => {
+        return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
+      })
+      expect(userEchoIndex).toBeGreaterThan(-1)
+      expect(userFoxtrotIndex).toBeGreaterThan(-1)
+
+      // Last bot message (response to C) appears after C's user message
+      const lastBotIndex = after.findLastIndex((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(userFoxtrotIndex).toBeLessThan(lastBotIndex)
+    },
+    360_000,
+  )
+
+  test(
+    '2s force-abort timeout fires when no step-finish arrives',
+    async () => {
+      // Tests the setTimeout at session-handler.ts:145 that fires after
+      // STEP_ABORT_TIMEOUT_MS (2000ms). When streamChunkDelayMs is very high,
+      // the session stays mid-stream without emitting step-finish. The 2s timeout
+      // fires and force-aborts with reason=next-step-timeout.
+
+      // 1. Fast setup: establish session + prime the cache
+      proxy.setStreamChunkDelayMs(0)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: golf',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 60_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: golf'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      const before = await th.getMessages()
+      const beforeBotCount = before.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
+      // 2. Very slow stream: 5s per chunk so no step-finish within the 2s timeout
+      proxy.setStreamChunkDelayMs(5000)
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: hotel',
+      })
+
+      // 3. Wait briefly for B to start, then send C to trigger the interrupt timeout
+      await new Promise((r) => {
+        setTimeout(r, 500)
+      })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: india',
+      })
+
+      // 4. The 2s timeout should force-abort B. C then gets processed.
+      proxy.setStreamChunkDelayMs(0)
+      const after = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: beforeBotCount + 2,
+        timeout: 120_000,
+      })
+
+      const afterBotMessages = after.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+
+      // C's user message appears before the last bot response
+      const userIndiaIndex = after.findIndex((m) => {
+        return m.author.id === TEST_USER_ID && m.content.includes('india')
+      })
+      expect(userIndiaIndex).toBeGreaterThan(-1)
+      const lastBotIndex = after.findLastIndex((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(userIndiaIndex).toBeLessThan(lastBotIndex)
+    },
+    360_000,
+  )
+
+  test(
+    'queue drains correctly after interrupted session',
+    async () => {
+      // Verifies the queue doesn't get stuck after multiple interrupts.
+      // Rapidly sends B, C, D — each interrupts the previous. Then after all
+      // complete, sends E to prove the queue is clean and accepting new work.
+
+      // 1. Fast setup: establish session + prime the cache
+      proxy.setStreamChunkDelayMs(0)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: juliet',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 60_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: juliet'
+        },
+      })
+
+      const th = discord.thread(thread.id)
+      const firstReply = await th.waitForBotReply({ timeout: 120_000 })
+      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+
+      const before = await th.getMessages()
+      const beforeBotCount = before.filter((m) => {
+        return m.author.id === discord.botUserId
+      }).length
+
+      // 2. Moderate delay so each session stays active long enough to be interrupted
+      proxy.setStreamChunkDelayMs(500)
+
+      // Rapidly send B, C, D — each queues behind the previous and triggers interrupt
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: kilo',
+      })
+      await new Promise((r) => {
+        setTimeout(r, 300)
+      })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: lima',
+      })
+      await new Promise((r) => {
+        setTimeout(r, 300)
+      })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: mike',
+      })
+
+      // 3. Wait for all 3 follow-ups to get bot responses
+      const afterBurst = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: beforeBotCount + 3,
+        timeout: 120_000,
+      })
+
+      const burstBotMessages = afterBurst.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(burstBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 3)
+
+      // 4. Queue should be clean — send E and verify it also gets processed
+      proxy.setStreamChunkDelayMs(0)
+      const burstBotCount = burstBotMessages.length
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: november',
+      })
+
+      const afterE = await waitForBotMessageCount({
+        discord,
+        threadId: thread.id,
+        count: burstBotCount + 1,
+        timeout: 120_000,
+      })
+
+      const finalBotMessages = afterE.filter((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount + 1)
+
+      // E's user message appears before the final bot response
+      const userNovemberIndex = afterE.findIndex((m) => {
+        return m.author.id === TEST_USER_ID && m.content.includes('november')
+      })
+      expect(userNovemberIndex).toBeGreaterThan(-1)
+      const lastBotIndex = afterE.findLastIndex((m) => {
+        return m.author.id === discord.botUserId
+      })
+      expect(userNovemberIndex).toBeLessThan(lastBotIndex)
+    },
+    360_000,
+  )
 })
