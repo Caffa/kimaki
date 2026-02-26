@@ -39,11 +39,11 @@ export function execAsync(
 const logger = createLogger(LogPrefix.WORKTREE)
 
 const LOCKFILE_TO_INSTALL_COMMAND: Array<[string, string]> = [
-  ['pnpm-lock.yaml', 'pnpm install --frozen-lockfile'],
-  ['bun.lock', 'bun install --frozen-lockfile'],
-  ['bun.lockb', 'bun install --frozen-lockfile'],
-  ['yarn.lock', 'yarn install --frozen-lockfile'],
-  ['package-lock.json', 'npm ci'],
+  ['pnpm-lock.yaml', 'pnpm install'],
+  ['bun.lock', 'bun install'],
+  ['bun.lockb', 'bun install'],
+  ['yarn.lock', 'yarn install'],
+  ['package-lock.json', 'npm install'],
 ]
 
 function detectInstallCommand(directory: string): string | null {
