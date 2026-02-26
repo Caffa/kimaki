@@ -427,7 +427,7 @@ Then use grep/read tools on the file to find what you need.
 
 ## cross-project commands
 
-When you need to work across multiple projects (e.g., update a dependency, fix a fork, or coordinate changes), use these commands:
+When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
 
 \`\`\`bash
 # List all registered projects with their channel IDs
