@@ -258,6 +258,9 @@ importers:
       errore:
         specifier: workspace:^
         version: link:../errore
+      eventsource-parser:
+        specifier: ^3.0.6
+        version: 3.0.6
       spiceflow:
         specifier: ^1.17.12
         version: 1.17.12

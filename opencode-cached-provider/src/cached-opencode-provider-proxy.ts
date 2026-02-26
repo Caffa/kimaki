@@ -3,6 +3,7 @@
 // responses in a local libsql-backed SQLite cache for deterministic replays.
 
 import { createClient, type Client } from '@libsql/client'
+import { createParser } from 'eventsource-parser'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -35,6 +36,9 @@ export type CachedOpencodeProviderProxyOptions = {
   upstreamApiKeyHeader?: string
   upstreamAuthorization?: string
   additionalHeaders?: Record<string, string>
+  /** Delay in ms between SSE chunks when replaying cached streaming responses.
+   *  0 = instant replay (default). Only affects cache hits with text/event-stream. */
+  streamChunkDelayMs?: number
 }
 
 export type CachedOpencodeProviderConfigOptions = {
@@ -81,6 +85,7 @@ export class CachedOpencodeProviderProxy {
   private runningPort: number | null = null
   private cacheHits = 0
   private cacheMisses = 0
+  private streamChunkDelayMs: number
 
   constructor({
     cacheDbPath,
@@ -94,6 +99,7 @@ export class CachedOpencodeProviderProxy {
     upstreamApiKeyHeader,
     upstreamAuthorization,
     additionalHeaders,
+    streamChunkDelayMs,
   }: CachedOpencodeProviderProxyOptions = {}) {
     this.cacheDbPath =
       cacheDbPath ||
@@ -110,9 +116,15 @@ export class CachedOpencodeProviderProxy {
     this.upstreamApiKeyHeader = upstreamApiKeyHeader
     this.upstreamAuthorization = upstreamAuthorization
     this.additionalHeaders = additionalHeaders || {}
+    this.streamChunkDelayMs = streamChunkDelayMs || 0
     this.app = new Spiceflow().use(async ({ request }) => {
       return this.handleRequest({ request })
     })
+  }
+
+  /** Change the SSE chunk delay at runtime (e.g. between test steps). */
+  setStreamChunkDelayMs(ms: number) {
+    this.streamChunkDelayMs = ms
   }
 
   get port(): number | null {
@@ -285,7 +297,12 @@ export class CachedOpencodeProviderProxy {
 
   private async handleRequest({ request }: { request: Request }) {
     const url = new URL(request.url)
-    const targetUrl = new URL(url.pathname + url.search, this.targetBaseUrl)
+    // Concatenate base URL + incoming path to preserve base path prefixes
+    // like /v1beta. new URL(absolutePath, base) would drop the base path
+    // because an absolute path (starting with /) replaces the entire path.
+    const targetUrl = new URL(
+      this.targetBaseUrl.replace(/\/$/, '') + url.pathname + url.search,
+    )
 
     const shouldUseCache = this.cacheMethods.has(request.method.toUpperCase())
 
@@ -308,6 +325,19 @@ export class CachedOpencodeProviderProxy {
     const cacheEntry = await this.lookupCache({ cacheKey })
     if (cacheEntry) {
       this.cacheHits += 1
+      const isSSE = (cacheEntry.headers['content-type'] || '').includes('text/event-stream')
+      if (isSSE && this.streamChunkDelayMs > 0) {
+        return new Response(
+          this.createDelayedSSEStream({
+            body: cacheEntry.body,
+            delayMs: this.streamChunkDelayMs,
+          }),
+          {
+            status: cacheEntry.status,
+            headers: cacheEntry.headers,
+          },
+        )
+      }
       return new Response(cacheEntry.body, {
         status: cacheEntry.status,
         headers: cacheEntry.headers,
@@ -320,12 +350,16 @@ export class CachedOpencodeProviderProxy {
       headers: upstream.headers,
     })
 
+    // Store proxy-local path as endpoint (not target path) so replays
+    // through the proxy produce the same cache key.
+    const storedEndpoint = url.pathname + url.search
+
     if (!upstream.body) {
       const emptyBody: Uint8Array = new Uint8Array(0)
       await this.storeCacheEntry({
         cacheKey,
         requestBody: requestText,
-        endpoint: targetUrl.pathname + targetUrl.search,
+        endpoint: storedEndpoint,
         method: request.method,
         status: upstream.status,
         headers: upstreamHeaders,
@@ -341,7 +375,7 @@ export class CachedOpencodeProviderProxy {
     void this.persistStreamToCache({
       cacheKey,
       requestBody: requestText,
-      endpoint: targetUrl.pathname + targetUrl.search,
+      endpoint: storedEndpoint,
       method: request.method,
       status: upstream.status,
       headers: upstreamHeaders,
@@ -697,5 +731,52 @@ export class CachedOpencodeProviderProxy {
       serialized[name] = value
     }
     return serialized
+  }
+
+  /** Parse cached SSE body with eventsource-parser, then re-serialize and
+   *  drip events with delays. This simulates slow streaming so e2e tests
+   *  can exercise timing-dependent paths like step-finish interrupts. */
+  private createDelayedSSEStream({
+    body,
+    delayMs,
+  }: {
+    body: Uint8Array
+    delayMs: number
+  }): ReadableStream<Uint8Array> {
+    const text = new TextDecoder().decode(body)
+    const events: string[] = []
+    const parser = createParser({
+      onEvent(event) {
+        // Re-serialize each parsed event back to SSE wire format
+        const parts: string[] = []
+        if (event.event) {
+          parts.push(`event: ${event.event}`)
+        }
+        if (event.id) {
+          parts.push(`id: ${event.id}`)
+        }
+        parts.push(`data: ${event.data}`)
+        events.push(parts.join('\n') + '\n\n')
+      },
+    })
+    parser.feed(text)
+
+    const encoder = new TextEncoder()
+    let index = 0
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (index >= events.length) {
+          controller.close()
+          return
+        }
+        if (index > 0) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, delayMs)
+          })
+        }
+        controller.enqueue(encoder.encode(events[index]!))
+        index++
+      },
+    })
   }
 }
