@@ -791,9 +791,21 @@ async function registerCommands({
       continue
     }
 
-    // Sanitize command name: oh-my-opencode uses MCP commands with colons, which Discord doesn't allow
-    // Also convert to lowercase since Discord only allows lowercase in command names
-    const sanitizedName = cmd.name.toLowerCase().replace(/:/g, '-')
+    // Sanitize command name: oh-my-opencode uses MCP commands with colons and slashes,
+    // which Discord doesn't allow in command names.
+    // Discord command names: lowercase, alphanumeric and hyphens only, must start with letter/number.
+    const sanitizedName = cmd.name
+      .toLowerCase()
+      .replace(/[:/]/g, '-') // Replace : and / with hyphens first
+      .replace(/[^a-z0-9-]/g, '-') // Replace any other non-alphanumeric chars
+      .replace(/-+/g, '-') // Collapse multiple hyphens
+      .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+
+    // Skip if sanitized name is empty - would create invalid command name like "-cmd"
+    if (!sanitizedName) {
+      continue
+    }
+
     const commandName = `${sanitizedName}-cmd`
     const description = cmd.description || `Run /${cmd.name} command`
 
@@ -822,6 +834,11 @@ async function registerCommands({
   )
   for (const agent of primaryAgents) {
     const sanitizedName = sanitizeAgentName(agent.name)
+    // Skip if sanitized name is empty or would create invalid command name
+    // Discord command names must start with a lowercase letter or number
+    if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
+      continue
+    }
     const commandName = `${sanitizedName}-agent`
     const description = agent.description || `Switch to ${agent.name} agent`
 
