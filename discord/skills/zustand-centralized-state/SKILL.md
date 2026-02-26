@@ -91,6 +91,33 @@ function findExtensionByKey(state: RelayState, key: string) {
 At small scales (dozens of entries, not millions), the linear scan is free and you've
 eliminated an entire class of consistency bugs.
 
+**Anti-pattern: parallel maps for the same entity.** A common mistake is splitting
+one entity across two maps to "separate state from I/O" — e.g. a `clients` map for
+domain fields and a `clientIO` map for WebSocket handles, keyed by the same ID.
+This forces every add/remove to touch both maps and inevitably one gets forgotten
+(leaking stale handles or leaving orphaned state). Instead, co-locate I/O handles
+on the entity type itself:
+
+```ts
+// BAD: two maps that must stay in sync
+type ClientState = { id: string; extensionId: string }
+type ClientIO = { id: string; ws: WSContext }
+type State = {
+  clients: Map<string, ClientState>
+  clientIO: Map<string, ClientIO>     // same keys, always
+}
+
+// GOOD: one map, one entity, one add/remove
+type Client = { id: string; extensionId: string; ws: WSContext }
+type State = {
+  clients: Map<string, Client>
+}
+```
+
+"Separate state from I/O" means keep `setState()` callbacks pure (no side effects) —
+it does NOT mean store I/O handles in a separate map. Co-locating handles with their
+entity prevents consistency bugs and makes cleanup trivial.
+
 ### 3. Centralize all state in one store
 
 All application state lives in a single Zustand store. There should be one place to
