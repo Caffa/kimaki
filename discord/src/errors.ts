@@ -2,7 +2,7 @@
 // Errors are grouped by category: infrastructure, domain, and validation.
 // Use errore.matchError() for exhaustive error handling in command handlers.
 
-import { createTaggedError } from 'errore'
+import { AbortError, createTaggedError } from 'errore'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INFRASTRUCTURE ERRORS - Server, filesystem, external services
@@ -32,6 +32,18 @@ export class ServerNotReadyError extends createTaggedError({
 export class ApiKeyMissingError extends createTaggedError({
   name: 'ApiKeyMissingError',
   message: '$service API key is required',
+}) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABORT ERRORS - Session cancellation with typed reasons
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Extends errore.AbortError so errore.isAbortError() detects it in cause chains.
+// Use reason field instead of string matching to identify abort cause.
+export class SessionAbortError extends createTaggedError({
+  name: 'SessionAbortError',
+  message: 'Session aborted: $reason',
+  extends: AbortError,
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════

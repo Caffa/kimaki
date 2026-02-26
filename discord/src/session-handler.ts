@@ -51,6 +51,7 @@ import {
 } from './system-message.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { isAbortError } from './utils.js'
+import { SessionAbortError } from './errors.js'
 import { notifyError } from './sentry.js'
 import {
   showAskUserQuestionDropdowns,
@@ -113,7 +114,7 @@ export function signalThreadInterrupt(threadId: string): void {
       sessionLogger.log(
         `[ABORT] reason=next-step-timeout threadId=${threadId} - no step-finish within ${STEP_ABORT_TIMEOUT_MS}ms, force-aborting`,
       )
-      controller.abort(new Error('next-step-timeout'))
+      controller.abort(new SessionAbortError({ reason: 'next-step-timeout' }))
     }, STEP_ABORT_TIMEOUT_MS)
   })()
 }
@@ -527,7 +528,7 @@ export async function abortAndRetrySession({
   sessionLogger.log(
     `[ABORT] reason=model-change sessionId=${sessionId} - user changed model mid-request, will retry with new model`,
   )
-  controller.abort(new Error('model-change'))
+  controller.abort(new SessionAbortError({ reason: 'model-change' }))
 
   // Also call the API abort endpoint
   const getClient = await initializeOpencodeForDirectory(projectDirectory, {
@@ -788,7 +789,7 @@ export async function handleOpencodeSession({
     sessionLogger.log(
       `[ABORT] reason=new-request sessionId=${session.id} threadId=${thread.id} - new user message arrived while previous request was still running`,
     )
-    existingController.abort(new Error('New request started'))
+    existingController.abort(new SessionAbortError({ reason: 'new-request' }))
     sessionLogger.log(
       `[ABORT-API] reason=new-request sessionId=${session.id} - sending API abort because new message arrived`,
     )
@@ -1068,7 +1069,7 @@ export async function handleOpencodeSession({
     sessionLogger.log(
       `[ABORT] reason=finished sessionId=${session.id} threadId=${thread.id} - session completed normally, received idle event after prompt resolved`,
     )
-    abortController.abort(new Error('finished'))
+    abortController.abort(new SessionAbortError({ reason: 'finished' }))
   }
 
   function clearTypingInterval(): void {
@@ -1573,7 +1574,7 @@ export async function handleOpencodeSession({
           sessionLogger.log(
             `[ABORT] reason=next-step sessionId=${session.id} threadId=${thread.id} - step-finish with pending message in queue`,
           )
-          abortController.abort(new Error('next-step'))
+          abortController.abort(new SessionAbortError({ reason: 'next-step' }))
           void errore.tryAsync(() => {
             return getClient().session.abort({
               sessionID: session.id,
@@ -1672,10 +1673,11 @@ export async function handleOpencodeSession({
       }
 
       const errorMessage = error?.data?.message || 'Unknown error'
-      // Skip abort errors - these are expected when operations are cancelled
+      // Skip abort errors from the server — these are expected when operations
+      // are cancelled. Checks server error name and the local abort signal.
       if (
-        errorMessage.includes('operation was aborted') ||
-        error?.name === 'MessageAbortedError'
+        error?.name === 'MessageAbortedError' ||
+        abortController.signal.aborted
       ) {
         sessionLogger.log(`Operation aborted (expected)`)
         return
@@ -2018,7 +2020,7 @@ export async function handleOpencodeSession({
         }
       }
     } catch (e) {
-      if (isAbortError(e, abortController.signal)) {
+      if (isAbortError(e)) {
         sessionLogger.log(
           'AbortController aborted event handling (normal exit)',
         )
@@ -2033,7 +2035,10 @@ export async function handleOpencodeSession({
       if (activeController === abortController) {
         abortControllers.delete(session.id)
       }
-      const abortReason = (abortController.signal.reason as Error)?.message
+      const abortReason =
+        abortController.signal.reason instanceof SessionAbortError
+          ? abortController.signal.reason.reason
+          : undefined
       const shouldFlushFinalParts =
         !abortController.signal.aborted || abortReason === 'finished'
       if (shouldFlushFinalParts) {
@@ -2403,7 +2408,7 @@ export async function handleOpencodeSession({
 
   const promptError: Error =
     promptResult instanceof Error ? promptResult : new Error('Unknown error')
-  if (isAbortError(promptError, abortController.signal)) {
+  if (isAbortError(promptError)) {
     return
   }
 
@@ -2412,7 +2417,7 @@ export async function handleOpencodeSession({
   sessionLogger.log(
     `[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`,
   )
-  abortController.abort(new Error('error'))
+  abortController.abort(new SessionAbortError({ reason: 'error' }))
 
   if (originalMessage) {
     const reactionResult = await errore.tryAsync(async () => {

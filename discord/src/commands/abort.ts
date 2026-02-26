@@ -14,6 +14,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { abortControllers } from '../session-handler.js'
+import { SessionAbortError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ABORT)
@@ -75,7 +76,7 @@ export async function handleAbortCommand({
     logger.log(
       `[ABORT] reason=user-requested sessionId=${sessionId} channelId=${channel.id} - user ran /abort command`,
     )
-    existingController.abort(new Error('User requested abort'))
+    existingController.abort(new SessionAbortError({ reason: 'user-requested' }))
     abortControllers.delete(sessionId)
   }
 

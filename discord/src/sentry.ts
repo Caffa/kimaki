@@ -36,8 +36,12 @@ export function initSentry({ dsn }: { dsn?: string } = {}): void {
       if (process.env.NODE_ENV === 'development') {
         return null
       }
-      // Skip AbortError — normal session cancellation
-      if (event.exception?.values?.some((v) => v.type === 'AbortError')) {
+      // Skip AbortError and SessionAbortError — normal session cancellation
+      if (
+        event.exception?.values?.some(
+          (v) => v.type === 'AbortError' || v.type === 'SessionAbortError',
+        )
+      ) {
         return null
       }
       return event

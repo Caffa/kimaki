@@ -20,6 +20,7 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { getAllThreadSessionIds, getThreadIdBySessionId } from '../database.js'
 import { abortControllers } from '../session-handler.js'
+import { SessionAbortError } from '../errors.js'
 import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.OPENCODE)
@@ -116,7 +117,7 @@ export async function handleRestartOpencodeServerCommand({
         logger.log(
           `[RESTART] Aborting session ${sessionId} in thread ${threadId}`,
         )
-        controller.abort(new Error('Server restart requested'))
+        controller.abort(new SessionAbortError({ reason: 'server-restart' }))
         abortControllers.delete(sessionId)
         abortedCount++
       }
