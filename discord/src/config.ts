@@ -112,8 +112,6 @@ export type RegisteredUserCommand = {
 }
 export const registeredUserCommands: RegisteredUserCommand[] = []
 
-
-
 const DEFAULT_LOCK_PORT = 29988
 
 /**
