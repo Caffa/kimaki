@@ -81,6 +81,42 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 
 export const abortControllers = new Map<string, AbortController>()
 
+// When a new message is queued behind a running session, the thread ID is added
+// here. The session handler aborts at the next step-finish (or after 2s fallback)
+// so the queued message can start sooner instead of waiting for the full response.
+const pendingThreadInterrupts = new Set<string>()
+
+const STEP_ABORT_TIMEOUT_MS = 2000
+
+export function signalThreadInterrupt(threadId: string): void {
+  pendingThreadInterrupts.add(threadId)
+  // Look up the running session's abort controller via existing state.
+  // Async because getThreadSession is a DB call, but fast (sqlite).
+  void (async () => {
+    const sessionId = await getThreadSession(threadId)
+    if (!sessionId) {
+      return
+    }
+    const controller = abortControllers.get(sessionId)
+    if (!controller || controller.signal.aborted) {
+      return
+    }
+    setTimeout(() => {
+      if (!pendingThreadInterrupts.has(threadId)) {
+        return
+      }
+      pendingThreadInterrupts.delete(threadId)
+      if (controller.signal.aborted) {
+        return
+      }
+      sessionLogger.log(
+        `[ABORT] reason=next-step-timeout threadId=${threadId} - no step-finish within ${STEP_ABORT_TIMEOUT_MS}ms, force-aborting`,
+      )
+      controller.abort(new Error('next-step-timeout'))
+    }, STEP_ABORT_TIMEOUT_MS)
+  })()
+}
+
 // Built-in tools that are hidden in text-and-essential-tools verbosity mode.
 // Essential tools (edits, bash with side effects, todos, tasks, custom MCP tools) are shown; these navigation/read tools are hidden.
 const NON_ESSENTIAL_TOOLS = new Set([
@@ -1512,6 +1548,22 @@ export async function handleOpencodeSession({
           messageID: assistantMessageId || part.messageID,
           force: true,
         })
+        // If a new message is queued behind this session, abort here so it can
+        // start sooner instead of waiting for the full response to complete.
+        if (pendingThreadInterrupts.has(thread.id)) {
+          pendingThreadInterrupts.delete(thread.id)
+          sessionLogger.log(
+            `[ABORT] reason=next-step sessionId=${session.id} threadId=${thread.id} - step-finish with pending message in queue`,
+          )
+          abortController.abort(new Error('next-step'))
+          void errore.tryAsync(() => {
+            return getClient().session.abort({
+              sessionID: session.id,
+              directory: sdkDirectory,
+            })
+          })
+          return
+        }
         scheduleTypingRestart()
       }
     }
@@ -1958,6 +2010,7 @@ export async function handleOpencodeSession({
       throw e
     } finally {
       handlerClosed = true
+      pendingThreadInterrupts.delete(thread.id)
       const activeController = abortControllers.get(session.id)
       if (activeController === abortController) {
         abortControllers.delete(session.id)

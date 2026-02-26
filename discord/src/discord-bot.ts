@@ -59,6 +59,7 @@ import {
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
   handleOpencodeSession,
+  signalThreadInterrupt,
   type SessionStartSourceContext,
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
@@ -454,8 +455,13 @@ export async function startDiscordBot({
 
         // Chain onto per-thread queue so messages (voice transcription + text)
         // are processed in Discord arrival order, not completion order.
-        const prev = threadMessageQueue.get(thread.id) || Promise.resolve()
-        const task = prev.then(
+        const prev = threadMessageQueue.get(thread.id)
+        if (prev) {
+          // Another message is being processed — signal it to abort at the next
+          // step-finish (or after 2s) so this message can start sooner.
+          signalThreadInterrupt(thread.id)
+        }
+        const task = (prev || Promise.resolve()).then(
           () => { return processThreadMessage() },
           () => { return processThreadMessage() },
         )
