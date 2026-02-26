@@ -114,6 +114,11 @@ setGlobalDispatcher(
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+// Per-thread serial queue so messages (voice + text) in the same thread are
+// processed one at a time in arrival order. Without this, a slow voice
+// transcription can finish after a fast text message and abort its session.
+const threadMessageQueue = new Map<string, Promise<void>>()
+
 function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   footer,
 }: {
@@ -447,167 +452,184 @@ export async function startDiscordBot({
           }
         }
 
-        const sessionId = await getThreadSession(thread.id)
+        // Chain onto per-thread queue so messages (voice transcription + text)
+        // are processed in Discord arrival order, not completion order.
+        const prev = threadMessageQueue.get(thread.id) || Promise.resolve()
+        const task = prev.then(
+          () => { return processThreadMessage() },
+          () => { return processThreadMessage() },
+        )
+        threadMessageQueue.set(thread.id, task)
+        void task.finally(() => {
+          if (threadMessageQueue.get(thread.id) === task) {
+            threadMessageQueue.delete(thread.id)
+          }
+        })
+        await task
+        return
 
-        // No existing session - start a new one (e.g., replying to a notification thread)
-        if (!sessionId) {
-          discordLogger.log(
-            `No session for thread ${thread.id}, starting new session`,
-          )
+        async function processThreadMessage() {
+          const sessionId = await getThreadSession(thread.id)
 
-          if (!projectDirectory) {
+          // No existing session - start a new one (e.g., replying to a notification thread)
+          if (!sessionId) {
             discordLogger.log(
-              `Cannot start session: no project directory for thread ${thread.id}`,
+              `No session for thread ${thread.id}, starting new session`,
             )
+
+            if (!projectDirectory) {
+              discordLogger.log(
+                `Cannot start session: no project directory for thread ${thread.id}`,
+              )
+              return
+            }
+
+            let prompt = resolveMentions(message)
+            const transcription = await processVoiceAttachment({
+              message,
+              thread,
+              projectDirectory,
+              appId: currentAppId,
+            })
+            if (transcription) {
+              prompt = `Voice message transcription from Discord user:\n\n${transcription}`
+            }
+
+            const starterMessage = await thread
+              .fetchStarterMessage()
+              .catch((error) => {
+                discordLogger.warn(
+                  `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
+                  error instanceof Error ? error.message : String(error),
+                )
+                return null
+              })
+            if (starterMessage && starterMessage.content !== message.content) {
+              const starterTextAttachments = await getTextAttachments(starterMessage)
+              const starterContent = resolveMentions(starterMessage)
+              const starterText = starterTextAttachments
+                ? `${starterContent}\n\n${starterTextAttachments}`
+                : starterContent
+              if (starterText) {
+                prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
+              }
+            }
+
+            await handleOpencodeSession({
+              prompt,
+              thread,
+              projectDirectory,
+              channelId: parent?.id || '',
+              username:
+                cliInjectedUsername ||
+                message.member?.displayName ||
+                message.author.displayName,
+              userId: cliInjectedUserId || message.author.id,
+              appId: currentAppId,
+              sessionStartSource,
+              agent: cliInjectedAgent,
+              model: cliInjectedModel,
+            })
             return
           }
 
-          let prompt = resolveMentions(message)
+          voiceLogger.log(
+            `[SESSION] Found session ${sessionId} for thread ${thread.id}`,
+          )
+
+          let messageContent = resolveMentions(message)
+          if (isCliInjectedPrompt) {
+            messageContent = message.content || ''
+          }
+          let currentSessionContext: string | undefined
+          let lastSessionContext: string | undefined
+
+          if (projectDirectory) {
+            try {
+              const getClient = await initializeOpencodeForDirectory(
+                projectDirectory,
+                { channelId: parent?.id },
+              )
+              if (getClient instanceof Error) {
+                voiceLogger.error(
+                  `[SESSION] Failed to initialize OpenCode client:`,
+                  getClient.message,
+                )
+                throw new Error(getClient.message)
+              }
+              const client = getClient()
+
+              // get current session context (without system prompt, it would be duplicated)
+              if (sessionId) {
+                const result = await getCompactSessionContext({
+                  client,
+                  sessionId: sessionId,
+                  includeSystemPrompt: false,
+                  maxMessages: 15,
+                })
+                if (errore.isOk(result)) {
+                  currentSessionContext = result
+                }
+              }
+
+              // get last session context (with system prompt for project context)
+              const lastSessionResult = await getLastSessionId({
+                client,
+                excludeSessionId: sessionId,
+              })
+              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
+              if (lastSessionId) {
+                const result = await getCompactSessionContext({
+                  client,
+                  sessionId: lastSessionId,
+                  includeSystemPrompt: true,
+                  maxMessages: 10,
+                })
+                if (errore.isOk(result)) {
+                  lastSessionContext = result
+                }
+              }
+            } catch (e) {
+              voiceLogger.error(`Could not get session context:`, e)
+              void notifyError(e, 'Failed to get session context')
+            }
+          }
+
           const transcription = await processVoiceAttachment({
             message,
             thread,
             projectDirectory,
             appId: currentAppId,
+            currentSessionContext,
+            lastSessionContext,
           })
           if (transcription) {
-            prompt = `Voice message transcription from Discord user:\n\n${transcription}`
+            messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
           }
 
-          const starterMessage = await thread
-            .fetchStarterMessage()
-            .catch((error) => {
-              discordLogger.warn(
-                `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-                error instanceof Error ? error.message : String(error),
-              )
-              return null
-            })
-          if (starterMessage && starterMessage.content !== message.content) {
-            const starterTextAttachments = await getTextAttachments(starterMessage)
-            const starterContent = resolveMentions(starterMessage)
-            const starterText = starterTextAttachments
-              ? `${starterContent}\n\n${starterTextAttachments}`
-              : starterContent
-            if (starterText) {
-              prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
-            }
-          }
-
+          const fileAttachments = await getFileAttachments(message)
+          const textAttachmentsContent = await getTextAttachments(message)
+          const promptWithAttachments = textAttachmentsContent
+            ? `${messageContent}\n\n${textAttachmentsContent}`
+            : messageContent
           await handleOpencodeSession({
-            prompt,
+            prompt: promptWithAttachments,
             thread,
             projectDirectory,
-            channelId: parent?.id || '',
+            originalMessage: message,
+            images: fileAttachments,
+            channelId: parent?.id,
             username:
               cliInjectedUsername ||
               message.member?.displayName ||
               message.author.displayName,
-            userId: cliInjectedUserId || message.author.id,
+            userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
             appId: currentAppId,
             sessionStartSource,
             agent: cliInjectedAgent,
             model: cliInjectedModel,
           })
-          return
         }
-
-        voiceLogger.log(
-          `[SESSION] Found session ${sessionId} for thread ${thread.id}`,
-        )
-
-        let messageContent = resolveMentions(message)
-        if (isCliInjectedPrompt) {
-          messageContent = message.content || ''
-        }
-        let currentSessionContext: string | undefined
-        let lastSessionContext: string | undefined
-
-        if (projectDirectory) {
-          try {
-            const getClient = await initializeOpencodeForDirectory(
-              projectDirectory,
-              { channelId: parent?.id },
-            )
-            if (getClient instanceof Error) {
-              voiceLogger.error(
-                `[SESSION] Failed to initialize OpenCode client:`,
-                getClient.message,
-              )
-              throw new Error(getClient.message)
-            }
-            const client = getClient()
-
-            // get current session context (without system prompt, it would be duplicated)
-            if (sessionId) {
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: sessionId,
-                includeSystemPrompt: false,
-                maxMessages: 15,
-              })
-              if (errore.isOk(result)) {
-                currentSessionContext = result
-              }
-            }
-
-            // get last session context (with system prompt for project context)
-            const lastSessionResult = await getLastSessionId({
-              client,
-              excludeSessionId: sessionId,
-            })
-            const lastSessionId = errore.unwrapOr(lastSessionResult, null)
-            if (lastSessionId) {
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: lastSessionId,
-                includeSystemPrompt: true,
-                maxMessages: 10,
-              })
-              if (errore.isOk(result)) {
-                lastSessionContext = result
-              }
-            }
-          } catch (e) {
-            voiceLogger.error(`Could not get session context:`, e)
-            void notifyError(e, 'Failed to get session context')
-          }
-        }
-
-        const transcription = await processVoiceAttachment({
-          message,
-          thread,
-          projectDirectory,
-          appId: currentAppId,
-          currentSessionContext,
-          lastSessionContext,
-        })
-        if (transcription) {
-          messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
-        }
-
-        const fileAttachments = await getFileAttachments(message)
-        const textAttachmentsContent = await getTextAttachments(message)
-        const promptWithAttachments = textAttachmentsContent
-          ? `${messageContent}\n\n${textAttachmentsContent}`
-          : messageContent
-        await handleOpencodeSession({
-          prompt: promptWithAttachments,
-          thread,
-          projectDirectory,
-          originalMessage: message,
-          images: fileAttachments,
-          channelId: parent?.id,
-          username:
-            cliInjectedUsername ||
-            message.member?.displayName ||
-            message.author.displayName,
-          userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
-          appId: currentAppId,
-          sessionStartSource,
-          agent: cliInjectedAgent,
-          model: cliInjectedModel,
-        })
-        return
       }
 
       if (channel.type === ChannelType.GuildText) {

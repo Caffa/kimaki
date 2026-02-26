@@ -58,9 +58,7 @@ export type VoiceConnectionData = {
 
 export const voiceConnections = new Map<string, VoiceConnectionData>()
 
-// Per-thread serial queue so voice messages in the same thread are
-// transcribed one at a time, preventing races when multiple arrive quickly.
-const voiceMessageQueue = new Map<string, Promise<string | null>>()
+
 
 export function convertToMono16k(buffer: Buffer): Buffer {
   const inputSampleRate = 48000
@@ -458,38 +456,9 @@ type ProcessVoiceAttachmentArgs = {
   lastSessionContext?: string
 }
 
-// Internally queues per thread so concurrent voice messages are transcribed
-// one at a time in order. Callers just await normally.
-export function processVoiceAttachment(
-  args: ProcessVoiceAttachmentArgs,
-): Promise<string | null> {
-  const hasAudioAttachment = Array.from(args.message.attachments.values()).some(
-    (attachment) => {
-      return attachment.contentType?.startsWith('audio/') || false
-    },
-  )
-
-  if (!hasAudioAttachment) {
-    return Promise.resolve(null)
-  }
-
-  const threadId = args.thread.id
-  const previousTask =
-    voiceMessageQueue.get(threadId) || Promise.resolve<string | null>(null)
-  const queuedTask = previousTask.then(
-    () => { return _processVoiceAttachment(args) },
-    () => { return _processVoiceAttachment(args) },
-  )
-  voiceMessageQueue.set(threadId, queuedTask)
-  void queuedTask.finally(() => {
-    if (voiceMessageQueue.get(threadId) === queuedTask) {
-      voiceMessageQueue.delete(threadId)
-    }
-  })
-  return queuedTask
-}
-
-async function _processVoiceAttachment({
+// Per-thread serialization is handled by threadMessageQueue in discord-bot.ts,
+// so this function no longer needs its own queue.
+export async function processVoiceAttachment({
   message,
   thread,
   projectDirectory,
