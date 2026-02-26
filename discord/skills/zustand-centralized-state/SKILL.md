@@ -5,11 +5,12 @@ description: >
   state atom, functional transitions via setState(), and a single subscribe() for
   all reactive side effects. Based on Rich Hickey's "Simple Made Easy" principles:
   prefer values over mutable state, derive instead of cache, centralize transitions,
-  and push side effects to the edges. Use this skill when building any stateful
-  TypeScript application (servers, extensions, CLIs, relays) to keep state simple,
-  testable, and easy to reason about. ALWAYS read this skill when a project uses
-  zustand/vanilla for state management outside of React.
-version: 0.1.0
+  and push side effects to the edges. Resource co-location in the same store is
+  also valid when lifecycle management is safer that way. Use this skill when
+  building any stateful TypeScript application (servers, extensions, CLIs, relays)
+  to keep state simple, testable, and easy to reason about. ALWAYS read this skill
+  when a project uses zustand/vanilla for state management outside of React.
+version: 0.2.0
 ---
 
 # Centralized State Management
@@ -137,7 +138,30 @@ store.setState((state) => {
 This makes every transition testable: given this state and this event, the new state
 should be X. No mocks needed, no I/O setup, just data in and data out.
 
-### 5. Centralize side effects in subscribe
+### 5. Resource co-location is allowed when it improves lifecycle safety
+
+Putting runtime resources in Zustand is valid when keeping them outside the store
+would create split-brain lifecycle management (state in one place, resources in
+another) and increase leak risk.
+
+Examples of colocated resources:
+- WebSocket handles
+- timers/interval handles
+- pending request callback maps
+- abort controllers
+
+If resources live in the store:
+- transitions still must be deterministic and side-effect free
+- store references, don't execute effects inside transitions
+- cleanup effects (close sockets, clear intervals) still run in handlers/subscribe
+  based on state transitions
+
+Rule of thumb:
+- Prefer plain-data state for maximal testability
+- Co-locate resources when one centralized store materially improves cleanup and
+  ownership tracking
+
+### 6. Centralize side effects in subscribe
 
 Side effects (I/O, UI updates, cleanup, logging) go in a single `subscribe()`
 callback that reacts to state changes. Side effects are **derived from state**, not
@@ -193,8 +217,8 @@ derived from the current state shape (not from specific events).
 2. Define all state in a single `createStore()` call with a typed state interface
 3. Never mutate state directly -- always use `store.setState()` with functional
    updates that return new objects
-4. Keep `setState()` callbacks pure -- no I/O, no side effects, only compute new
-   state from current state + event data
+4. Keep `setState()` callbacks deterministic -- no external effects, only compute
+   new state from current state + event data
 5. Use a single `subscribe()` for all reactive side effects -- not multiple
    subscribes scattered across the codebase
 6. Side effects in subscribe should be derived from state shape, not from specific
@@ -205,8 +229,11 @@ derived from the current state shape (not from specific events).
 8. Use `(state, prevState)` diffing in subscribe when you need to react to specific
    changes (e.g. "a connection was removed")
 9. Keep the state interface minimal -- only store what you can't derive
-10. For state transitions that are complex or reused, extract them as pure functions
-    that take state + event data and return new state
+10. For state transitions that are complex or reused, extract them as pure
+    functions that take state + event data and return new state
+11. Resource co-location is acceptable: storing sockets/timers/callback maps in
+    Zustand is fine when it prevents lifecycle drift. Keep side effects out of
+    transitions.
 
 ## When subscribe does NOT fit
 
@@ -484,5 +511,5 @@ const unsub = store.subscribe(
 | Centralize state | One `createStore()`, one state type, one source of truth |
 | Pure transitions | `setState((state) => newState)` with no side effects |
 | Centralize side effects | One `subscribe()` for all reactive effects |
-| Separate state from I/O | Handlers do I/O, transitions are pure |
+| State vs I/O boundary | Prefer separation, but co-location is valid for safer cleanup |
 | Test with data | State in -> state out, no mocks needed |
