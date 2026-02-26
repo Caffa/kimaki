@@ -426,6 +426,11 @@ export class CachedOpencodeProviderProxy {
     const database = createClient({
       url: `file:${this.cacheDbPath}`,
     })
+    // WAL mode + relaxed sync drastically reduce fsync overhead for local
+    // libsql file: databases (libsql inserts are ~60x slower than
+    // better-sqlite3 in default journal mode, WAL narrows the gap).
+    await database.execute('PRAGMA journal_mode = WAL')
+    await database.execute('PRAGMA synchronous = NORMAL')
     await database.execute(`
       CREATE TABLE IF NOT EXISTS ${CACHE_TABLE} (
         cache_key TEXT PRIMARY KEY,
@@ -464,14 +469,6 @@ export class CachedOpencodeProviderProxy {
     if (!firstRow) {
       return null
     }
-    await database.execute({
-      sql: `
-        UPDATE ${CACHE_TABLE}
-        SET last_accessed_at = ?
-        WHERE cache_key = ?
-      `,
-      args: [new Date().toISOString(), cacheKey],
-    })
     const parsed = this.parseCacheRow({
       row: firstRow as Record<string, unknown>,
     })
