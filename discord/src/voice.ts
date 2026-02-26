@@ -377,7 +377,9 @@ ${currentSessionContext}
   }
   const sessionContextSection =
     sessionContextParts.length > 0
-      ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
+      ? `\n<session_context>
+${sessionContextParts.join('\n\n')}
+</session_context>`
       : ''
 
   const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
@@ -398,7 +400,7 @@ This is a software development environment. The speaker is giving instructions t
  - Only fix grammar, punctuation, and markdown formatting. Preserve the original content faithfully.
  - If audio is unclear, transcribe your best interpretation, even with strong accents. Always provide an approximation.
  - If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
- - Use the session context below to understand technical terms, file names, function names mentioned
+ - The session context below is ONLY for understanding technical terms, file names, and function names. It may contain previous transcriptions — NEVER copy or reuse them. Always transcribe fresh from the current audio.
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"
