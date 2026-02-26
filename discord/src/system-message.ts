@@ -268,8 +268,6 @@ npx -y kimaki send --channel ${channelId} --prompt "Plan the refactor of the aut
 ${agents && agents.length > 0 ? `
 Available agents:
 ${agents.map((a) => { return `- \`${a.name}\`${a.description ? `: ${a.description}` : ''}` }).join('\n')}
-
-Only agents listed above are valid for --agent.
 ` : ''}
 
 ## scheduled sends and task management
