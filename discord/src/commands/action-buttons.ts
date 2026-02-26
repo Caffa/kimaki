@@ -18,6 +18,7 @@ import {
   sendThreadMessage,
 } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import {
   abortControllers,
   addToQueue,
@@ -348,6 +349,7 @@ export async function handleActionButton(
     })
   } catch (error) {
     logger.error('[ACTION] Failed to send click to model:', error)
+    void notifyError(error, 'Action button click send to model failed')
     await sendThreadMessage(
       thread,
       `Failed to send action click: ${error instanceof Error ? error.message : String(error)}`,

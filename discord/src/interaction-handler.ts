@@ -82,6 +82,7 @@ import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import { hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
@@ -442,6 +443,7 @@ export function registerInteractionHandler({
           '[INTERACTION] Error handling interaction:',
           error,
         )
+        void notifyError(error, 'Interaction handler error')
         try {
           if (
             interaction.isRepliable() &&

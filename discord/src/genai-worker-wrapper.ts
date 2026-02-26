@@ -5,6 +5,7 @@
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const genaiWorkerLogger = createLogger(LogPrefix.GENAI_WORKER)
 const genaiWrapperLogger = createLogger(LogPrefix.GENAI_WORKER)
@@ -141,6 +142,10 @@ export function createGenAIWorker(
     worker.on('exit', (code) => {
       if (code !== 0) {
         genaiWorkerLogger.error(`Worker stopped with exit code ${code}`)
+        void notifyError(
+          new Error(`GenAI worker exited with code ${code}`),
+          'GenAI worker non-zero exit after init',
+        )
       }
     })
 

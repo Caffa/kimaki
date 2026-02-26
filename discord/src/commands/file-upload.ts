@@ -23,6 +23,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 
 const logger = createLogger(LogPrefix.FILE_UPLOAD)
@@ -329,6 +330,7 @@ export async function handleFileUploadModalSubmit(
     // Ensure context is always resolved even on unexpected errors
     // so the plugin tool doesn't hang indefinitely
     logger.error('Error in file upload modal submit:', err)
+    void notifyError(err, 'File upload modal submit error')
     resolveContext(context, [])
   }
 }

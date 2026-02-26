@@ -16,6 +16,7 @@ import {
   clearQueue,
 } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { registeredUserCommands } from '../config.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
@@ -101,6 +102,7 @@ export async function handleQueueCommand({
       appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)
+      void notifyError(e, 'Queue: failed to send message')
       const errorMsg = e instanceof Error ? e.message : String(e)
       await sendThreadMessage(
         channel as ThreadChannel,
@@ -279,6 +281,7 @@ export async function handleQueueCommandCommand({
       appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send command:`, e)
+      void notifyError(e, 'Queue: failed to send command')
       const errorMsg = e instanceof Error ? e.message : String(e)
       await sendThreadMessage(
         channel as ThreadChannel,

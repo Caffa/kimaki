@@ -20,6 +20,7 @@ import {
 } from '../database.js'
 import { SILENT_MESSAGE_FLAGS, reactToThread } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import {
   createWorktreeWithSubmodules,
   captureGitDiff,
@@ -329,6 +330,7 @@ export async function handleNewWorktreeCommand({
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
+    void notifyError(e, 'Background worktree creation failed')
   })
 }
 
@@ -424,5 +426,6 @@ async function handleWorktreeInThread({
     rest: command.client.rest,
   }).catch((e) => {
     logger.error('[NEW-WORKTREE] Background error:', e)
+    void notifyError(e, 'Background worktree creation failed (in-thread)')
   })
 }

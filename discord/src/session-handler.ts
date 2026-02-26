@@ -50,6 +50,7 @@ import {
 } from './system-message.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { isAbortError } from './utils.js'
+import { notifyError } from './sentry.js'
 import {
   showAskUserQuestionDropdowns,
   cancelPendingQuestion,
@@ -554,6 +555,7 @@ export async function abortAndRetrySession({
           return
         }
         sessionLogger.error(`[ABORT+RETRY] Failed to retry:`, result)
+        void notifyError(result, 'Abort+retry session failed')
         await sendThreadMessage(
           thread,
           `✗ Failed to retry with new model: ${result.message.slice(0, 200)}`,
@@ -2113,6 +2115,7 @@ export async function handleOpencodeSession({
                 `[QUEUE] Failed to process queued message:`,
                 e,
               )
+              void notifyError(e, 'Queued message processing failed')
               const errorMsg = e instanceof Error ? e.message : String(e)
               await sendThreadMessage(
                 thread,
@@ -2333,6 +2336,7 @@ export async function handleOpencodeSession({
   }
 
   sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
+  void notifyError(promptError, 'Failed to send prompt to OpenCode')
   sessionLogger.log(
     `[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`,
   )

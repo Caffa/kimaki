@@ -38,6 +38,7 @@ type Config = Omit<SdkConfig, 'permission'> & {
 }
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 import {
   DirectoryNotAccessibleError,
   ServerStartError,
@@ -348,6 +349,9 @@ export async function initializeOpencodeForDirectory(
         ...(kimakiBotToken && { KIMAKI_BOT_TOKEN: kimakiBotToken }),
 
         ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
+        ...(process.env.KIMAKI_SENTRY_DSN && {
+          KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
+        }),
       },
     },
   )
@@ -424,13 +428,16 @@ export async function initializeOpencodeForDirectory(
           (result) => {
             if (result instanceof Error) {
               opencodeLogger.error(`Failed to restart opencode server:`, result)
+              void notifyError(result, `OpenCode server restart failed for ${directory}`)
             }
           },
         )
       } else {
-        opencodeLogger.error(
+        const crashError = new Error(
           `Server for ${directory} crashed too many times (5), not restarting`,
         )
+        opencodeLogger.error(crashError.message)
+        void notifyError(crashError, `OpenCode server crash loop exhausted`)
       }
     } else {
       serverRetryCount.delete(directory)

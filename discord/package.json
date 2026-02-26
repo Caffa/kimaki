@@ -52,6 +52,7 @@
     "@prisma/adapter-libsql": "7.3.0",
     "@prisma/client": "7.3.0",
     "@purinton/resampler": "^1.0.4",
+    "@sentry/node": "^10.40.0",
     "cron-parser": "^5.5.0",
     "diff": "^8.0.3",
     "discord.js": "^14.25.1",

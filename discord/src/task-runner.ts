@@ -13,6 +13,7 @@ import {
   type ScheduledTask,
 } from './database.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
 import {
   getLocalTimeZone,
@@ -394,6 +395,7 @@ export function startTaskRunner({
     const runResult = await currentTickPromise
     if (runResult instanceof Error) {
       taskLogger.error(`[task-runner] ${formatErrorWithStack(runResult)}`)
+      void notifyError(runResult, 'Task runner tick failed')
     }
     ticking = false
     tickPromise = null

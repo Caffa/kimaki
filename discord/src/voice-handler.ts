@@ -46,6 +46,7 @@ import { transcribeAudio } from './voice.js'
 import { FetchError } from './errors.js'
 
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -327,6 +328,7 @@ export async function setupVoiceHandling({
 
     decoder.on('error', (error) => {
       voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
+      void notifyError(error, `Opus decoder error for user ${userId}`)
     })
 
     const downsampleTransform = new Transform({
@@ -385,18 +387,22 @@ export async function setupVoiceHandling({
       })
       .on('error', (error) => {
         voiceLogger.error(`Pipeline error for user ${userId}:`, error)
+        void notifyError(error, `Voice pipeline error for user ${userId}`)
       })
 
     audioStream.on('error', (error) => {
       voiceLogger.error(`Audio stream error for user ${userId}:`, error)
+      void notifyError(error, `Audio stream error for user ${userId}`)
     })
 
     downsampleTransform.on('error', (error) => {
       voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
+      void notifyError(error, `Downsample transform error for user ${userId}`)
     })
 
     framer.on('error', (error) => {
       voiceLogger.error(`Framer error for user ${userId}:`, error)
+      void notifyError(error, `Framer error for user ${userId}`)
     })
   })
 }
@@ -818,13 +824,16 @@ export function registerVoiceStateHandler({
               `Connection error in guild ${newState.guild.name}:`,
               error,
             )
+            void notifyError(error, `Voice connection error in guild ${newState.guild.name}`)
           })
         } catch (error) {
           voiceLogger.error(`Failed to join voice channel:`, error)
+          void notifyError(error, 'Failed to join voice channel')
           await cleanupVoiceConnection(newState.guild.id)
         }
       } catch (error) {
         voiceLogger.error('Error in voice state update handler:', error)
+        void notifyError(error, 'Voice state update handler error')
       }
     },
   )

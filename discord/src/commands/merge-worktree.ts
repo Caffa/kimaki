@@ -6,6 +6,7 @@ import { type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadWorktree, getThreadSession } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { mergeWorktree } from '../worktree-utils.js'
 import { sendThreadMessage, resolveWorkingDirectory } from '../discord-utils.js'
 import {
@@ -92,6 +93,7 @@ async function sendPromptToModel({
     appId,
   }).catch((e) => {
     logger.error(`[merge] Failed to send prompt to model:`, e)
+    void notifyError(e, 'Merge-worktree prompt send failed')
     sendThreadMessage(
       thread,
       `Failed to send prompt: ${(e instanceof Error ? e.message : String(e)).slice(0, 1900)}`,

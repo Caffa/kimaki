@@ -14,6 +14,7 @@ import { getTools } from './tools.js'
 import { mkdir } from 'node:fs/promises'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { initSentry, notifyError } from './sentry.js'
 
 if (!parentPort) {
   throw new Error('This module must be run as a worker thread')
@@ -21,6 +22,9 @@ if (!parentPort) {
 
 const workerLogger = createLogger(`${LogPrefix.WORKER}_${threadId}`)
 workerLogger.log('GenAI worker started')
+
+// Initialize Sentry in worker thread (inherits KIMAKI_SENTRY_DSN from parent)
+initSentry()
 
 // Define sendError early so it can be used by global handlers
 function sendError(error: string) {
@@ -35,8 +39,8 @@ function sendError(error: string) {
 // Add global error handlers for the worker thread
 process.on('uncaughtException', (error) => {
   workerLogger.error('Uncaught exception in worker:', error)
+  void notifyError(error, 'Uncaught exception in GenAI worker')
   sendError(`Worker crashed: ${error.message}`)
-  // Exit immediately on uncaught exception
   process.exit(1)
 })
 
@@ -48,6 +52,11 @@ process.on('unhandledRejection', (reason, promise) => {
     'at promise:',
     promise,
   )
+  const error =
+    reason instanceof Error
+      ? reason
+      : new Error(formattedReason)
+  void notifyError(error, 'Unhandled rejection in GenAI worker')
   sendError(`Worker unhandled rejection: ${formattedReason}`)
 })
 
@@ -79,6 +88,7 @@ const opusEncoder = new prism.opus.Encoder({
 // Pipe resampler to encoder with error handling
 resampler.pipe(opusEncoder).on('error', (error) => {
   workerLogger.error('Pipe error between resampler and encoder:', error)
+  void notifyError(error, 'GenAI worker audio pipeline error')
   sendError(`Audio pipeline error: ${error.message}`)
 })
 
@@ -181,18 +191,21 @@ resampler.on('end', () => {
 })
 
 // Handle errors
-resampler.on('error', (error: any) => {
+resampler.on('error', (error: unknown) => {
   workerLogger.error(`Resampler error:`, error)
-  sendError(`Resampler error: ${error.message}`)
+  void notifyError(error, 'GenAI worker resampler error')
+  sendError(`Resampler error: ${(error as Error).message}`)
 })
 
-opusEncoder.on('error', (error: any) => {
+opusEncoder.on('error', (error: unknown) => {
   workerLogger.error(`Encoder error:`, error)
+  const errMsg = (error as Error).message || ''
   // Check for specific corrupted data errors
-  if (error.message?.includes('The compressed data passed is corrupted')) {
+  if (errMsg.includes('The compressed data passed is corrupted')) {
     workerLogger.warn('Received corrupted audio data in opus encoder')
   } else {
-    sendError(`Encoder error: ${error.message}`)
+    void notifyError(error, 'GenAI worker encoder error')
+    sendError(`Encoder error: ${errMsg}`)
   }
 })
 

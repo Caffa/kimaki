@@ -37,6 +37,7 @@ import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktree-utils.js'
 
 // Regex to match emoji characters (covers most common emojis)
@@ -151,6 +152,9 @@ async function resolveGitState({
 }
 
 const kimakiPlugin: Plugin = async ({ directory }) => {
+  // Initialize Sentry in the plugin process (runs inside OpenCode server, not bot)
+  initSentry()
+
   const botToken = process.env.KIMAKI_BOT_TOKEN
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
@@ -631,6 +635,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
         logger.warn(
           `[opencode-plugin chat.message] ${formatErrorWithStack(hookResult)}`,
         )
+        void notifyError(hookResult, 'opencode-plugin chat.message hook failed')
       }
     },
 
@@ -659,6 +664,7 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
         logger.warn(
           `[opencode-plugin event] ${formatErrorWithStack(cleanupResult)}`,
         )
+        void notifyError(cleanupResult, 'opencode-plugin event hook failed')
       }
     },
   }

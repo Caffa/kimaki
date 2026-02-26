@@ -75,6 +75,7 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { initSentry, notifyError } from './sentry.js'
 import {
   archiveThread,
   uploadFilesToDiscord,
@@ -1055,6 +1056,7 @@ async function backgroundInit({
       'Background init failed:',
       error instanceof Error ? error.message : String(error),
     )
+    void notifyError(error, 'Background init failed')
   }
 }
 
@@ -1599,6 +1601,7 @@ cli
     '--verbose-opencode-server',
     'Forward OpenCode server stdout/stderr to kimaki.log',
   )
+  .option('--no-sentry', 'Disable Sentry error reporting')
   .action(
     async (options: {
       restart?: boolean
@@ -1612,6 +1615,7 @@ cli
       noCritique?: boolean
       autoRestart?: boolean
       verboseOpencodeServer?: boolean
+      noSentry?: boolean
     }) => {
       try {
         // Set data directory early, before any database access
@@ -1660,6 +1664,13 @@ cli
           cliLogger.log(
             'Verbose OpenCode server: stdout/stderr will be forwarded to kimaki.log',
           )
+        }
+
+        if (options.noSentry) {
+          process.env.KIMAKI_SENTRY_DISABLED = '1'
+          cliLogger.log('Sentry error reporting disabled (--no-sentry)')
+        } else {
+          initSentry()
         }
 
         if (options.installUrl) {

@@ -16,6 +16,7 @@ import { showFileUploadButton } from './commands/file-upload.js'
 import { queueActionButtonsRequest } from './commands/action-buttons.js'
 import type { ActionButtonColor } from './commands/action-buttons.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const ipcLogger = createLogger(LogPrefix.IPC)
 
@@ -154,7 +155,9 @@ async function dispatchRequest({
             }),
           })
         })
-        .catch(() => {})
+        .catch((e) => {
+          void notifyError(e, 'IPC file upload completion update failed')
+        })
       return
     }
 
@@ -261,6 +264,7 @@ export async function startIpcPolling({
   // Clean up stale requests from previous runs before first poll tick
   await cancelAllPendingIpcRequests().catch((e) => {
     ipcLogger.warn('Failed to cancel stale IPC requests:', (e as Error).message)
+    void notifyError(e, 'Failed to cancel stale IPC requests')
   })
 
   let polling = false
@@ -275,6 +279,7 @@ export async function startIpcPolling({
       await cancelStaleProcessingRequests({ ttlMs: STALE_TTL_MS }).catch(
         (e) => {
           ipcLogger.warn('Stale sweep failed:', (e as Error).message)
+          void notifyError(e, 'IPC stale sweep failed')
         },
       )
     }
@@ -289,6 +294,7 @@ export async function startIpcPolling({
     )
     if (claimed instanceof Error) {
       ipcLogger.error('IPC claim failed:', claimed.message)
+      void notifyError(claimed, 'IPC claim failed')
       polling = false
       return
     }
@@ -304,6 +310,7 @@ export async function startIpcPolling({
       )
       if (result instanceof Error) {
         ipcLogger.error(`IPC dispatch error for ${req.type}:`, result.message)
+        void notifyError(result, `IPC dispatch error for ${req.type}`)
       }
     }
 

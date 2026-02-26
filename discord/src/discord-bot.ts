@@ -64,6 +64,7 @@ import {
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { stopHranaServer } from './hrana-server.js'
+import { notifyError } from './sentry.js'
 
 export {
   initDatabase,
@@ -561,6 +562,7 @@ export async function startDiscordBot({
             }
           } catch (e) {
             voiceLogger.error(`Could not get session context:`, e)
+            void notifyError(e, 'Failed to get session context')
           }
         }
 
@@ -775,6 +777,7 @@ export async function startDiscordBot({
       }
     } catch (error) {
       voiceLogger.error('Discord handler error:', error)
+      void notifyError(error, 'MessageCreate handler error')
       try {
         const errMsg = (
           error instanceof Error ? error.message : String(error)
@@ -978,6 +981,7 @@ export async function startDiscordBot({
         '[BOT_SESSION] Error handling bot-initiated thread:',
         error,
       )
+      void notifyError(error, 'ThreadCreate handler error')
       try {
         const errMsg = (
           error instanceof Error ? error.message : String(error)
@@ -1119,6 +1123,22 @@ export async function startDiscordBot({
     process.exit(0)
   })
 
+  process.on('uncaughtException', (error) => {
+    discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
+    notifyError(error, 'Uncaught exception in bot process')
+    void handleShutdown('uncaughtException', { skipExit: true }).catch(
+      (shutdownError) => {
+        discordLogger.error(
+          '[uncaughtException] shutdown failed:',
+          formatErrorWithStack(shutdownError),
+        )
+      },
+    )
+    setTimeout(() => {
+      process.exit(1)
+    }, 250).unref()
+  })
+
   process.on('unhandledRejection', (reason, promise) => {
     if ((global as any).shuttingDown) {
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
@@ -1130,5 +1150,10 @@ export async function startDiscordBot({
       'at promise:',
       promise,
     )
+    const error =
+      reason instanceof Error
+        ? reason
+        : new Error(formatErrorWithStack(reason))
+    void notifyError(error, 'Unhandled rejection in bot process')
   })
 }
