@@ -170,3 +170,13 @@ aim for a playwright-like style in tests:
 - separate wait methods for assertions: `discord.waitForThread(...)`, `discord.waitForBotReply(...)`, `discord.waitForInteractionAck(...)`
 
 if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*` so future tests can reuse it.
+
+## e2e testing learnings
+
+see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
+
+- e2e tests use `CachedOpencodeProviderProxy` which caches LLM responses. first run = cache miss (real provider speed), second run = cache hit. `streamChunkDelayMs` only affects cache hits. **always run a failing e2e test at least twice** before investigating — the first run populates cache, second run exercises cached path.
+- prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
+- keep test timeouts long: 360s per test, 120s for polling, 60s for beforeAll. LLM calls + opencode server startup + cache misses are slow. never use short timeouts in e2e.
+- bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
+- set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs.
