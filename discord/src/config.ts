@@ -103,8 +103,16 @@ export function setVerboseOpencodeServer(enabled: boolean): void {
 
 // Registered user commands, populated by registerCommands() in cli.ts.
 // Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
-export type RegisteredUserCommand = { name: string; description: string }
+// discordName is the sanitized Discord slash command name (without -cmd suffix),
+// name is the original OpenCode command name (may contain :, /, etc).
+export type RegisteredUserCommand = {
+  name: string
+  discordName: string
+  description: string
+}
 export const registeredUserCommands: RegisteredUserCommand[] = []
+
+
 
 const DEFAULT_LOCK_PORT = 29988
 

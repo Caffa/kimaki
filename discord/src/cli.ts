@@ -806,14 +806,22 @@ async function registerCommands({
       continue
     }
 
-    const commandName = `${sanitizedName}-cmd`
+    // Truncate base name before appending suffix so the -cmd suffix is never
+    // lost to Discord's 32-char command name limit.
+    const cmdSuffix = '-cmd'
+    const baseName = sanitizedName.slice(0, 32 - cmdSuffix.length)
+    const commandName = `${baseName}${cmdSuffix}`
     const description = cmd.description || `Run /${cmd.name} command`
 
-    registeredUserCommands.push({ name: cmd.name, description })
+    registeredUserCommands.push({
+      name: cmd.name,
+      discordName: baseName,
+      description,
+    })
 
     commands.push(
       new SlashCommandBuilder()
-        .setName(commandName.slice(0, 32)) // Discord limits to 32 chars
+        .setName(commandName)
         .setDescription(description.slice(0, 100)) // Discord limits to 100 chars
         .addStringOption((option) => {
           option
@@ -839,12 +847,16 @@ async function registerCommands({
     if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
       continue
     }
-    const commandName = `${sanitizedName}-agent`
+    // Truncate base name before appending suffix so the -agent suffix is never
+    // lost to Discord's 32-char command name limit.
+    const agentSuffix = '-agent'
+    const agentBaseName = sanitizedName.slice(0, 32 - agentSuffix.length)
+    const commandName = `${agentBaseName}${agentSuffix}`
     const description = agent.description || `Switch to ${agent.name} agent`
 
     commands.push(
       new SlashCommandBuilder()
-        .setName(commandName.slice(0, 32)) // Discord limits to 32 chars
+        .setName(commandName)
         .setDescription(description.slice(0, 100))
         .setDMPermission(false)
         .toJSON(),

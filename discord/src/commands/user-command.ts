@@ -12,6 +12,7 @@ import { handleOpencodeSession } from '../session-handler.js'
 import { sendThreadMessage, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getChannelDirectory, getThreadSession } from '../database.js'
+import { registeredUserCommands } from '../config.js'
 import fs from 'node:fs'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
@@ -21,8 +22,14 @@ export const handleUserCommand: CommandHandler = async ({
   appId,
 }: CommandContext) => {
   const discordCommandName = command.commandName
-  // Strip the -cmd suffix to get the actual OpenCode command name
-  const commandName = discordCommandName.replace(/-cmd$/, '')
+  // Look up the original OpenCode command name from the mapping populated at registration.
+  // The sanitized Discord name is lossy (e.g. foo:bar → foo-bar), so stripping -cmd
+  // would give the wrong name for commands with special characters.
+  const sanitizedBase = discordCommandName.replace(/-cmd$/, '')
+  const registered = registeredUserCommands.find(
+    (c) => c.discordName === sanitizedBase,
+  )
+  const commandName = registered?.name || sanitizedBase
   const args = command.options.getString('arguments') || ''
 
   userCommandLogger.log(
