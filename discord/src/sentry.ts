@@ -4,6 +4,7 @@
 // (opencode-plugin.ts). The plugin process receives the DSN via KIMAKI_SENTRY_DSN env var.
 
 import * as Sentry from '@sentry/node'
+import * as errore from 'errore'
 
 // DSN placeholder — replace with your Sentry project DSN.
 // Users can also set KIMAKI_SENTRY_DSN env var.
@@ -31,17 +32,13 @@ export function initSentry({ dsn }: { dsn?: string } = {}): void {
     tracesSampleRate: 0,
     sendDefaultPii: false,
     profilesSampleRate: 0,
-    beforeSend(event) {
+    beforeSend(event, hint) {
       // Skip in development — too noisy, errors appear in terminal
       if (process.env.NODE_ENV === 'development') {
         return null
       }
-      // Skip AbortError and SessionAbortError — normal session cancellation
-      if (
-        event.exception?.values?.some(
-          (v) => v.type === 'AbortError' || v.type === 'SessionAbortError',
-        )
-      ) {
+      // Skip abort errors — walks the cause chain so wrapped aborts are caught
+      if (errore.isAbortError(hint.originalException)) {
         return null
       }
       return event
