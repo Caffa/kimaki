@@ -87,18 +87,18 @@ async function cleanupOpencodeServers() {
 /** Poll getMessages until we see at least `count` bot messages. */
 async function waitForBotMessageCount({
   discord,
-  channelId,
+  threadId,
   count,
   timeout,
 }: {
   discord: DigitalDiscord
-  channelId: string
+  threadId: string
   count: number
   timeout: number
 }) {
   const start = Date.now()
   while (Date.now() - start < timeout) {
-    const messages = await discord.getMessages(channelId)
+    const messages = await discord.thread(threadId).getMessages()
     const botMessages = messages.filter((m) => {
       return m.author.id === discord.botUserId
     })
@@ -110,7 +110,7 @@ async function waitForBotMessageCount({
     })
   }
   throw new Error(
-    `Timed out waiting for ${count} bot messages in channel ${channelId}`,
+    `Timed out waiting for ${count} bot messages in thread ${threadId}`,
   )
 }
 
@@ -226,42 +226,40 @@ e2eTest('thread message queue ordering', () => {
     'text message during active session gets processed',
     async () => {
       // 1. Send initial message to text channel → thread created + session established
-      await discord.user(TEST_USER_ID).sendMessage({
-        channelId: TEXT_CHANNEL_ID,
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: alpha',
       })
 
-      const thread = await discord.waitForThread({
-        parentChannelId: TEXT_CHANNEL_ID,
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 60_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: alpha'
         },
       })
 
+      const th = discord.thread(thread.id)
+
       // Wait for the first bot reply so session is fully established in DB
-      const firstReply = await discord.waitForBotReply({
-        channelId: thread.id,
+      const firstReply = await th.waitForBotReply({
         timeout: 120_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       // Snapshot bot message count before sending follow-up
-      const before = await discord.getMessages(thread.id)
+      const before = await th.getMessages()
       const beforeBotCount = before.filter((m) => {
         return m.author.id === discord.botUserId
       }).length
 
       // 2. Send follow-up message B into the thread — goes through threadMessageQueue
-      await discord.user(TEST_USER_ID).sendMessage({
-        channelId: thread.id,
+      await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: beta',
       })
 
       // 3. Wait for exactly 1 new bot message (the response to B)
       const after = await waitForBotMessageCount({
         discord,
-        channelId: thread.id,
+        threadId: thread.id,
         count: beforeBotCount + 1,
         timeout: 120_000,
       })
@@ -300,46 +298,43 @@ e2eTest('thread message queue ordering', () => {
     'two rapid text messages in thread — both processed in order',
     async () => {
       // 1. Send initial message to text channel → thread + session established
-      await discord.user(TEST_USER_ID).sendMessage({
-        channelId: TEXT_CHANNEL_ID,
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: one',
       })
 
-      const thread = await discord.waitForThread({
-        parentChannelId: TEXT_CHANNEL_ID,
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 60_000,
         predicate: (t) => {
           return t.name === 'Reply with exactly: one'
         },
       })
 
+      const th = discord.thread(thread.id)
+
       // Wait for the first bot reply so session is established
-      const firstReply = await discord.waitForBotReply({
-        channelId: thread.id,
+      const firstReply = await th.waitForBotReply({
         timeout: 120_000,
       })
       expect(firstReply.content.trim().length).toBeGreaterThan(0)
 
       // Snapshot bot message count before sending follow-ups
-      const before = await discord.getMessages(thread.id)
+      const before = await th.getMessages()
       const beforeBotCount = before.filter((m) => {
         return m.author.id === discord.botUserId
       }).length
 
       // 2. Rapidly send messages B and C — both go through threadMessageQueue
-      await discord.user(TEST_USER_ID).sendMessage({
-        channelId: thread.id,
+      await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: two',
       })
-      await discord.user(TEST_USER_ID).sendMessage({
-        channelId: thread.id,
+      await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: three',
       })
 
       // 3. Wait for exactly 2 new bot messages (one per follow-up)
       const after = await waitForBotMessageCount({
         discord,
-        channelId: thread.id,
+        threadId: thread.id,
         count: beforeBotCount + 2,
         timeout: 120_000,
       })
