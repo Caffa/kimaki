@@ -83,6 +83,45 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
 
 export const abortControllers = new Map<string, AbortController>()
 
+/** Format opencode session error with status, provider, and response body for debugging. */
+function formatSessionError(error?: {
+  data?: {
+    message?: string
+    statusCode?: number
+    providerID?: string
+    isRetryable?: boolean
+    responseBody?: string
+  }
+  name?: string
+  message?: string
+}): string {
+  const name = error?.name || 'Error'
+  // Prefer data.message (SDK shape), fall back to error.message (plain Error)
+  const message =
+    error?.data?.message ||
+    error?.message ||
+    'Unknown error'
+  const details: string[] = []
+  if (error?.data?.statusCode !== undefined) {
+    details.push(`status=${error.data.statusCode}`)
+  }
+  if (error?.data?.providerID) {
+    details.push(`provider=${error.data.providerID}`)
+  }
+  if (typeof error?.data?.isRetryable === 'boolean') {
+    details.push(error.data.isRetryable ? 'retryable' : 'non-retryable')
+  }
+  const responseBody =
+    typeof error?.data?.responseBody === 'string'
+      ? error.data.responseBody.trim()
+      : ''
+  if (responseBody) {
+    details.push(`body=${responseBody.slice(0, 180)}`)
+  }
+  const suffix = details.length > 0 ? ` (${details.join(', ')})` : ''
+  return `${name}: ${message}${suffix}`
+}
+
 // When a new message is queued behind a running session, the thread ID is added
 // here. The session handler aborts at the next step-finish (or after 2s fallback)
 // so the queued message can start sooner instead of waiting for the full response.
@@ -1663,7 +1702,16 @@ export async function handleOpencodeSession({
       error,
     }: {
       sessionID?: string
-      error?: { data?: { message?: string }; name?: string }
+      error?: {
+        data?: {
+          message?: string
+          statusCode?: number
+          providerID?: string
+          isRetryable?: boolean
+          responseBody?: string
+        }
+        name?: string
+      }
     }) => {
       if (!sessionID || sessionID !== session.id) {
         sessionLogger.log(
@@ -1672,7 +1720,6 @@ export async function handleOpencodeSession({
         return
       }
 
-      const errorMessage = error?.data?.message || 'Unknown error'
       // Skip abort errors from the server — these are expected when operations
       // are cancelled. Checks server error name and the local abort signal.
       if (
@@ -1682,7 +1729,16 @@ export async function handleOpencodeSession({
         sessionLogger.log(`Operation aborted (expected)`)
         return
       }
+      const errorMessage = formatSessionError(error)
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
+      const errorPayload = (() => {
+        try {
+          return JSON.stringify(error)
+        } catch {
+          return '[unserializable error payload]'
+        }
+      })()
+      sessionLogger.error(`Session error payload:`, errorPayload)
       await sendThreadMessage(
         thread,
         `✗ opencode session error: ${errorMessage}`,
