@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.4.70",
+  "version": "0.4.71",
   "scripts": {
     "dev": "tsx --env-file .env src/cli.ts",
     "prepublishOnly": "pnpm generate && pnpm tsc",
@@ -35,6 +35,7 @@
     "@types/node": "^24.3.0",
     "discord-digital-twin": "workspace:^",
     "opencode-cached-provider": "workspace:^",
+    "opencode-deterministic-provider": "workspace:^",
     "prisma": "7.3.0",
     "tsx": "^4.20.5"
   },
@@ -65,7 +66,6 @@
     "libsql": "^0.5.22",
     "marked": "^16.3.0",
     "mime": "^4.1.0",
-    "opencode-deterministic-provider": "workspace:^",
     "picocolors": "^1.1.1",
     "pretty-ms": "^9.3.0",
     "ripgrep-js": "^3.0.0",

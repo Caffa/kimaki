@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.71
+
+1. **Fixed package.json dependency classification** — `opencode-deterministic-provider` moved from `dependencies` to `devDependencies` so it no longer appears as a runtime dependency in the published package
+
 ## 0.4.70
 
 1. **Immediate interrupt handling** — sending a new message while the AI is working now aborts the running session at the next step boundary, so your follow-up is processed right away instead of waiting for the full response to finish
