@@ -1,27 +1,31 @@
-import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
-import { describe, expect, test } from "vitest"
-import { getPrisma, closePrisma } from "./db.js"
+// Tests for Prisma client initialization and schema migration.
+// Auto-isolated via VITEST guards in config.ts (temp data dir) and db.ts (clears KIMAKI_DB_URL).
 
-describe("getPrisma", () => {
-    test("creates sqlite file and migrates schema automatically", async () => {
-        const prisma = await getPrisma()
+import { afterAll, describe, expect, test } from 'vitest'
+import { getPrisma, closePrisma } from './db.js'
 
-        const session = await prisma.thread_sessions.create({
-            data: { thread_id: "test-thread-123", session_id: "test-session-456" },
-        })
-        expect(session.thread_id).toBe("test-thread-123")
-        expect(session.created_at).toBeInstanceOf(Date)
+afterAll(async () => {
+  await closePrisma()
+})
 
-        const found = await prisma.thread_sessions.findUnique({
-            where: { thread_id: session.thread_id },
-        })
-        expect(found?.session_id).toBe("test-session-456")
+describe('getPrisma', () => {
+  test('creates sqlite file and migrates schema automatically', async () => {
+    const prisma = await getPrisma()
 
-        // Cleanup test data
-        await prisma.thread_sessions.delete({
-            where: { thread_id: "test-thread-123" },
-        })
+    const session = await prisma.thread_sessions.create({
+      data: { thread_id: 'test-thread-123', session_id: 'test-session-456' },
     })
+    expect(session.thread_id).toBe('test-thread-123')
+    expect(session.created_at).toBeInstanceOf(Date)
+
+    const found = await prisma.thread_sessions.findUnique({
+      where: { thread_id: session.thread_id },
+    })
+    expect(found?.session_id).toBe('test-session-456')
+
+    // Cleanup test data
+    await prisma.thread_sessions.delete({
+      where: { thread_id: 'test-thread-123' },
+    })
+  })
 })

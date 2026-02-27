@@ -13,6 +13,7 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -54,7 +55,7 @@ export async function handleLoginCommand({
   loginLogger.log('[LOGIN] handleLoginCommand called')
 
   // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   loginLogger.log('[LOGIN] Deferred reply')
 
   const channel = interaction.channel
@@ -119,7 +120,7 @@ export async function handleLoginCommand({
     }
 
     const providersResponse = await getClient().provider.list({
-      query: { directory: projectDirectory },
+      directory: projectDirectory,
     })
 
     if (!providersResponse.data) {
@@ -146,21 +147,27 @@ export async function handleLoginCommand({
     const contextHash = crypto.randomBytes(8).toString('hex')
     pendingLoginContexts.set(contextHash, context)
 
-    const options = allProviders.slice(0, 25).map((provider) => {
-      const isConnected = connected.includes(provider.id)
-      return {
-        label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
-        value: provider.id,
-        description: isConnected ? 'Connected - select to re-authenticate' : 'Not connected',
-      }
-    })
+    const options = [...allProviders]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 25)
+      .map((provider) => {
+        const isConnected = connected.includes(provider.id)
+        return {
+          label: `${provider.name}${isConnected ? ' ✓' : ''}`.slice(0, 100),
+          value: provider.id,
+          description: isConnected
+            ? 'Connected - select to re-authenticate'
+            : 'Not connected',
+        }
+      })
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`login_provider:${contextHash}`)
       .setPlaceholder('Select a provider to authenticate')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: '**Authenticate with Provider**\nSelect a provider:',
@@ -222,15 +229,17 @@ export async function handleLoginProviderSelectMenu(
 
     // Get provider info for display
     const providersResponse = await getClient().provider.list({
-      query: { directory: context.dir },
+      directory: context.dir,
     })
 
-    const provider = providersResponse.data?.all.find((p) => p.id === selectedProviderId)
+    const provider = providersResponse.data?.all.find(
+      (p) => p.id === selectedProviderId,
+    )
     const providerName = provider?.name || selectedProviderId
 
     // Get auth methods for all providers
     const authMethodsResponse = await getClient().provider.auth({
-      query: { directory: context.dir },
+      directory: context.dir,
     })
 
     if (!authMethodsResponse.data) {
@@ -243,9 +252,9 @@ export async function handleLoginProviderSelectMenu(
     }
 
     // Get methods for this specific provider, default to API key if none defined
-    const methods: ProviderAuthMethod[] = authMethodsResponse.data[selectedProviderId] || [
-      { type: 'api', label: 'API Key' },
-    ]
+    const methods: ProviderAuthMethod[] = authMethodsResponse.data[
+      selectedProviderId
+    ] || [{ type: 'api', label: 'API Key' }]
 
     if (methods.length === 0) {
       await interaction.deferUpdate()
@@ -290,7 +299,10 @@ export async function handleLoginProviderSelectMenu(
     const options = methods.slice(0, 25).map((method, index) => ({
       label: method.label.slice(0, 100),
       value: String(index),
-      description: method.type === 'oauth' ? 'OAuth authentication' : 'Enter API key manually',
+      description:
+        method.type === 'oauth'
+          ? 'OAuth authentication'
+          : 'Enter API key manually',
     }))
 
     const selectMenu = new StringSelectMenuBuilder()
@@ -298,7 +310,8 @@ export async function handleLoginProviderSelectMenu(
       .setPlaceholder('Select authentication method')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Authenticate with ${providerName}**\nSelect authentication method:`,
@@ -356,12 +369,12 @@ export async function handleLoginMethodSelectMenu(
 
     // Get auth methods again to get the selected one
     const authMethodsResponse = await getClient().provider.auth({
-      query: { directory: context.dir },
+      directory: context.dir,
     })
 
-    const methods: ProviderAuthMethod[] = authMethodsResponse.data?.[context.providerId] || [
-      { type: 'api', label: 'API Key' },
-    ]
+    const methods: ProviderAuthMethod[] = authMethodsResponse.data?.[
+      context.providerId
+    ] || [{ type: 'api', label: 'API Key' }]
 
     const selectedMethod = methods[selectedMethodIndex]
     if (!selectedMethod) {
@@ -422,7 +435,9 @@ async function showApiKeyModal(
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
 
-  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(apiKeyInput)
+  const actionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(
+    apiKeyInput,
+  )
   modal.addComponents(actionRow)
 
   await interaction.showModal(modal)
@@ -467,13 +482,15 @@ async function startOAuthFlow(
 
     // Start OAuth authorization
     const authorizeResponse = await getClient().provider.oauth.authorize({
-      path: { id: context.providerId },
-      body: { method: context.methodIndex },
-      query: { directory: context.dir },
+      providerID: context.providerId,
+      method: context.methodIndex,
+      directory: context.dir,
     })
 
     if (!authorizeResponse.data) {
-      const errorData = authorizeResponse.error as { data?: { message?: string } } | undefined
+      const errorData = authorizeResponse.error as
+        | { data?: { message?: string } }
+        | undefined
       await interaction.editReply({
         content: `Failed to start authorization: ${errorData?.data?.message || 'Unknown error'}`,
         components: [],
@@ -509,13 +526,15 @@ async function startOAuthFlow(
     if (method === 'auto') {
       // Poll for completion (device flow)
       const callbackResponse = await getClient().provider.oauth.callback({
-        path: { id: context.providerId },
-        body: { method: context.methodIndex },
-        query: { directory: context.dir },
+        providerID: context.providerId,
+        method: context.methodIndex,
+        directory: context.dir,
       })
 
       if (callbackResponse.error) {
-        const errorData = callbackResponse.error as { data?: { message?: string } } | undefined
+        const errorData = callbackResponse.error as
+          | { data?: { message?: string } }
+          | undefined
         await interaction.editReply({
           content: `**Authentication Failed**\n${errorData?.data?.message || 'Authorization was not completed'}`,
           components: [],
@@ -524,7 +543,7 @@ async function startOAuthFlow(
       }
 
       // Dispose to refresh provider state so new credentials are recognized
-      await getClient().instance.dispose({ query: { directory: context.dir } })
+      await getClient().instance.dispose({ directory: context.dir })
 
       await interaction.editReply({
         content: `✅ **Successfully authenticated with ${context.providerName}!**\n\nYou can now use models from this provider.`,
@@ -558,7 +577,7 @@ export async function handleApiKeyModalSubmit(
     return
   }
 
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const contextHash = customId.replace('login_apikey:', '')
   const context = pendingLoginContexts.get(contextHash)
@@ -590,16 +609,15 @@ export async function handleApiKeyModalSubmit(
 
     // Set the API key
     await getClient().auth.set({
-      path: { id: context.providerId },
-      body: {
+      providerID: context.providerId,
+      auth: {
         type: 'api',
         key: apiKey.trim(),
       },
-      query: { directory: context.dir },
     })
 
     // Dispose to refresh provider state so new credentials are recognized
-    await getClient().instance.dispose({ query: { directory: context.dir } })
+    await getClient().instance.dispose({ directory: context.dir })
 
     await interaction.editReply({
       content: `✅ **Successfully authenticated with ${context.providerName}!**\n\nYou can now use models from this provider.`,

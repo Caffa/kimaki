@@ -2,7 +2,7 @@
 // Errors are grouped by category: infrastructure, domain, and validation.
 // Use errore.matchError() for exhaustive error handling in command handlers.
 
-import { createTaggedError } from 'errore'
+import { AbortError, createTaggedError } from 'errore'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INFRASTRUCTURE ERRORS - Server, filesystem, external services
@@ -25,12 +25,25 @@ export class ServerNotFoundError extends createTaggedError({
 
 export class ServerNotReadyError extends createTaggedError({
   name: 'ServerNotReadyError',
-  message: 'OpenCode server for directory "$directory" is in an error state (no client available)',
+  message:
+    'OpenCode server for directory "$directory" is in an error state (no client available)',
 }) {}
 
 export class ApiKeyMissingError extends createTaggedError({
   name: 'ApiKeyMissingError',
   message: '$service API key is required',
+}) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABORT ERRORS - Session cancellation with typed reasons
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Extends errore.AbortError so errore.isAbortError() detects it in cause chains.
+// Use reason field instead of string matching to identify abort cause.
+export class SessionAbortError extends createTaggedError({
+  name: 'SessionAbortError',
+  message: 'Session aborted: $reason',
+  extends: AbortError,
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -44,7 +57,6 @@ export class SessionNotFoundError extends createTaggedError({
 
 export class SessionCreateError extends createTaggedError({
   name: 'SessionCreateError',
-  message: '$message',
 }) {}
 
 export class MessagesNotFoundError extends createTaggedError({
@@ -120,7 +132,8 @@ export class OpenCodeApiError extends createTaggedError({
 
 export class DirtyWorktreeError extends createTaggedError({
   name: 'DirtyWorktreeError',
-  message: 'Uncommitted changes in worktree. Commit all changes before merging.',
+  message:
+    'Uncommitted changes in worktree. Commit all changes before merging.',
 }) {}
 
 export class NothingToMergeError extends createTaggedError({
@@ -135,7 +148,8 @@ export class SquashError extends createTaggedError({
 
 export class RebaseConflictError extends createTaggedError({
   name: 'RebaseConflictError',
-  message: 'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
+  message:
+    'Rebase conflict while rebasing onto $target. Resolve conflicts, then run merge again.',
 }) {}
 
 export class RebaseError extends createTaggedError({
@@ -150,7 +164,8 @@ export class NotFastForwardError extends createTaggedError({
 
 export class ConflictingFilesError extends createTaggedError({
   name: 'ConflictingFilesError',
-  message: 'Cannot merge: $target worktree has uncommitted changes in overlapping files',
+  message:
+    'Cannot merge: $target worktree has uncommitted changes in overlapping files',
 }) {}
 
 export class PushError extends createTaggedError({

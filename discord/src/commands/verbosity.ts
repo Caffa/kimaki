@@ -4,8 +4,18 @@
 // 'tools-and-text': shows all output including tool executions
 // 'text-only': only shows text responses (⬥ diamond parts)
 
-import { ChatInputCommandInteraction, ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
-import { getChannelVerbosity, setChannelVerbosity, type VerbosityLevel } from '../database.js'
+import {
+  ChatInputCommandInteraction,
+  MessageFlags,
+  ChannelType,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
+import {
+  getChannelVerbosity,
+  setChannelVerbosity,
+  type VerbosityLevel,
+} from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const verbosityLogger = createLogger(LogPrefix.VERBOSITY)
@@ -27,7 +37,7 @@ export async function handleVerbosityCommand({
   if (!channel) {
     await command.reply({
       content: 'Could not determine channel.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -53,7 +63,7 @@ export async function handleVerbosityCommand({
   if (currentLevel === level) {
     await command.reply({
       content: `Verbosity is already set to **${level}** for this channel.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -73,6 +83,6 @@ export async function handleVerbosityCommand({
 
   await command.reply({
     content: `Verbosity set to **${level}** for this channel.\n${description}\nThis is a per-channel setting and applies immediately, including any active sessions.`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   })
 }

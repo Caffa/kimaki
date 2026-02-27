@@ -55,11 +55,13 @@ function jsonSchemaToGenAISchema(jsonSchema: JSONSchema7Definition): Schema {
         break
       case 'number':
         schema.type = Type.NUMBER
-        schema.format = typeof jsonSchema.format === 'string' ? jsonSchema.format : 'float'
+        schema.format =
+          typeof jsonSchema.format === 'string' ? jsonSchema.format : 'float'
         break
       case 'integer':
         schema.type = Type.INTEGER
-        schema.format = typeof jsonSchema.format === 'string' ? jsonSchema.format : 'int32'
+        schema.format =
+          typeof jsonSchema.format === 'string' ? jsonSchema.format : 'int32'
         break
       case 'boolean':
         schema.type = Type.BOOLEAN
@@ -206,14 +208,20 @@ export function aiToolToCallableTool(
 
       for (const functionCall of functionCalls) {
         // Check if this function call matches our tool
-        if (functionCall.name !== toolName && name && functionCall.name !== name) {
+        if (
+          functionCall.name !== toolName &&
+          name &&
+          functionCall.name !== name
+        ) {
           continue
         }
 
         // Execute the tool if it has an execute function
         if (tool.execute) {
           try {
-            const args: unknown = isRecord(functionCall.args) ? functionCall.args : {}
+            const args: unknown = isRecord(functionCall.args)
+              ? functionCall.args
+              : {}
             const result = await tool.execute(args, {
               toolCallId: functionCall.id || '',
               messages: [],
@@ -268,5 +276,7 @@ export function extractSchemaFromTool(tool: AnyTool): JSONSchema7 {
 export function callableToolsFromObject(
   tools: Record<string, AnyTool>,
 ): Array<CallableTool & { name: string }> {
-  return Object.entries(tools).map(([name, tool]) => aiToolToCallableTool(tool, name))
+  return Object.entries(tools).map(([name, tool]) =>
+    aiToolToCallableTool(tool, name),
+  )
 }

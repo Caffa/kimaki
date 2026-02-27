@@ -33,6 +33,7 @@ import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 import {
   getVoiceChannelDirectory,
   getGeminiApiKey,
+  getTranscriptionApiKey,
   findTextChannelByVoiceChannel,
 } from './database.js'
 import {
@@ -45,6 +46,7 @@ import { transcribeAudio } from './voice.js'
 import { FetchError } from './errors.js'
 
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -55,6 +57,8 @@ export type VoiceConnectionData = {
 }
 
 export const voiceConnections = new Map<string, VoiceConnectionData>()
+
+
 
 export function convertToMono16k(buffer: Buffer): Buffer {
   const inputSampleRate = 48000
@@ -89,7 +93,12 @@ export async function createUserAudioLogStream(
   if (!process.env.DEBUG) return undefined
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const audioDir = path.join(process.cwd(), 'discord-audio-logs', guildId, channelId)
+  const audioDir = path.join(
+    process.cwd(),
+    'discord-audio-logs',
+    guildId,
+    channelId,
+  )
 
   try {
     await mkdir(audioDir, { recursive: true })
@@ -157,12 +166,16 @@ export async function setupVoiceHandling({
   appId: string
   discordClient: Client
 }) {
-  voiceLogger.log(`Setting up voice handling for guild ${guildId}, channel ${channelId}`)
+  voiceLogger.log(
+    `Setting up voice handling for guild ${guildId}, channel ${channelId}`,
+  )
 
   const directory = await getVoiceChannelDirectory(channelId)
 
   if (!directory) {
-    voiceLogger.log(`Voice channel ${channelId} has no associated directory, skipping setup`)
+    voiceLogger.log(
+      `Voice channel ${channelId} has no associated directory, skipping setup`,
+    )
     return
   }
 
@@ -270,7 +283,7 @@ export async function setupVoiceHandling({
           const textChannel = await discordClient.channels.fetch(textChannelId)
           if (textChannel?.isTextBased() && 'send' in textChannel) {
             await textChannel.send({
-              content: `⚠️ Voice session error: ${error}`,
+              content: `⚠️ Voice session error: ${String(error).slice(0, 1900)}`,
               flags: SILENT_MESSAGE_FLAGS,
             })
           }
@@ -317,6 +330,7 @@ export async function setupVoiceHandling({
 
     decoder.on('error', (error) => {
       voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
+      void notifyError(error, `Opus decoder error for user ${userId}`)
     })
 
     const downsampleTransform = new Transform({
@@ -332,7 +346,10 @@ export async function setupVoiceHandling({
 
     const framer = frameMono16khz()
 
-    const pipeline = audioStream.pipe(decoder).pipe(downsampleTransform).pipe(framer)
+    const pipeline = audioStream
+      .pipe(decoder)
+      .pipe(downsampleTransform)
+      .pipe(framer)
 
     pipeline
       .on('data', (frame: Buffer) => {
@@ -358,7 +375,9 @@ export async function setupVoiceHandling({
       })
       .on('end', () => {
         if (currentSessionCount === speakingSessionCount) {
-          voiceLogger.log(`User ${userId} stopped speaking (session ${currentSessionCount})`)
+          voiceLogger.log(
+            `User ${userId} stopped speaking (session ${currentSessionCount})`,
+          )
           voiceData.genAiWorker?.sendRealtimeInput({
             audioStreamEnd: true,
           })
@@ -370,18 +389,22 @@ export async function setupVoiceHandling({
       })
       .on('error', (error) => {
         voiceLogger.error(`Pipeline error for user ${userId}:`, error)
+        void notifyError(error, `Voice pipeline error for user ${userId}`)
       })
 
     audioStream.on('error', (error) => {
       voiceLogger.error(`Audio stream error for user ${userId}:`, error)
+      void notifyError(error, `Audio stream error for user ${userId}`)
     })
 
     downsampleTransform.on('error', (error) => {
       voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
+      void notifyError(error, `Downsample transform error for user ${userId}`)
     })
 
     framer.on('error', (error) => {
       voiceLogger.error(`Framer error for user ${userId}:`, error)
+      void notifyError(error, `Framer error for user ${userId}`)
     })
   })
 }
@@ -423,6 +446,18 @@ export async function cleanupVoiceConnection(guildId: string) {
   }
 }
 
+type ProcessVoiceAttachmentArgs = {
+  message: Message
+  thread: ThreadChannel
+  projectDirectory?: string
+  isNewThread?: boolean
+  appId?: string
+  currentSessionContext?: string
+  lastSessionContext?: string
+}
+
+// Per-thread serialization is handled by threadMessageQueue in discord-bot.ts,
+// so this function no longer needs its own queue.
 export async function processVoiceAttachment({
   message,
   thread,
@@ -431,17 +466,9 @@ export async function processVoiceAttachment({
   appId,
   currentSessionContext,
   lastSessionContext,
-}: {
-  message: Message
-  thread: ThreadChannel
-  projectDirectory?: string
-  isNewThread?: boolean
-  appId?: string
-  currentSessionContext?: string
-  lastSessionContext?: string
-}): Promise<string | null> {
-  const audioAttachment = Array.from(message.attachments.values()).find((attachment) =>
-    attachment.contentType?.startsWith('audio/'),
+}: ProcessVoiceAttachmentArgs): Promise<string | null> {
+  const audioAttachment = Array.from(message.attachments.values()).find(
+    (attachment) => attachment.contentType?.startsWith('audio/'),
   )
 
   if (!audioAttachment) return null
@@ -457,8 +484,14 @@ export async function processVoiceAttachment({
     catch: (e) => new FetchError({ url: audioAttachment.url, cause: e }),
   })
   if (audioResponse instanceof Error) {
-    voiceLogger.error(`Failed to download audio attachment:`, audioResponse.message)
-    await sendThreadMessage(thread, `⚠️ Failed to download audio: ${audioResponse.message}`)
+    voiceLogger.error(
+      `Failed to download audio attachment:`,
+      audioResponse.message,
+    )
+    await sendThreadMessage(
+      thread,
+      `⚠️ Failed to download audio: ${audioResponse.message}`,
+    )
     return null
   }
   const audioBuffer = Buffer.from(await audioResponse.arrayBuffer())
@@ -484,33 +517,45 @@ export async function processVoiceAttachment({
     }
   }
 
-  let geminiApiKey: string | undefined
+  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  let transcriptionApiKey: string | undefined
+  let transcriptionProvider: 'openai' | 'gemini' | undefined
   if (appId) {
-    const apiKey = await getGeminiApiKey(appId)
-    if (apiKey) {
-      geminiApiKey = apiKey
+    const stored = await getTranscriptionApiKey(appId)
+    if (stored) {
+      transcriptionApiKey = stored.apiKey
+      transcriptionProvider = stored.provider
+    }
+  }
+  if (!transcriptionApiKey) {
+    if (process.env.OPENAI_API_KEY) {
+      transcriptionApiKey = process.env.OPENAI_API_KEY
+      transcriptionProvider = 'openai'
+    } else if (process.env.GEMINI_API_KEY) {
+      transcriptionApiKey = process.env.GEMINI_API_KEY
+      transcriptionProvider = 'gemini'
     }
   }
 
-  if (!geminiApiKey && !process.env.GEMINI_API_KEY) {
+  if (!transcriptionApiKey) {
     if (appId) {
       const button = new ButtonBuilder()
-        .setCustomId(`gemini_apikey:${appId}`)
-        .setLabel('Set Gemini API Key')
+        .setCustomId(`transcription_apikey:${appId}`)
+        .setLabel('Set Transcription API Key')
         .setStyle(ButtonStyle.Primary)
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
 
       await thread.send({
         content:
-          'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey. The key will be stored and used for future voice messages.',
+          'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
         components: [row],
         flags: SILENT_MESSAGE_FLAGS,
       })
     } else {
       await sendThreadMessage(
         thread,
-        'Voice transcription requires a Gemini API key. Get one at https://aistudio.google.com/apikey and set it with /login in this channel.',
+        'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
       )
     }
     return null
@@ -519,7 +564,9 @@ export async function processVoiceAttachment({
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    geminiApiKey,
+    apiKey: transcriptionApiKey,
+    provider: transcriptionProvider,
+    mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,
   })
@@ -581,65 +628,35 @@ export function registerVoiceStateHandler({
   discordClient: Client
   appId: string
 }) {
-  discordClient.on(Events.VoiceStateUpdate, async (oldState: VoiceState, newState: VoiceState) => {
-    try {
-      const member = newState.member || oldState.member
-      if (!member) return
+  discordClient.on(
+    Events.VoiceStateUpdate,
+    async (oldState: VoiceState, newState: VoiceState) => {
+      try {
+        const member = newState.member || oldState.member
+        if (!member) return
 
-      if (!hasKimakiBotPermission(member)) {
-        return
-      }
-
-      const guild = newState.guild || oldState.guild
-
-      if (oldState.channelId !== null && newState.channelId === null) {
-        voiceLogger.log(
-          `Permitted user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
-        )
-
-        const guildId = guild.id
-        const voiceData = voiceConnections.get(guildId)
-
-        if (voiceData && voiceData.connection.joinConfig.channelId === oldState.channelId) {
-          const voiceChannel = oldState.channel as VoiceChannel
-          if (!voiceChannel) return
-
-          const hasOtherPermittedUsers = voiceChannel.members.some((m) => {
-            if (m.id === member.id || m.user.bot) {
-              return false
-            }
-            return hasKimakiBotPermission(m)
-          })
-
-          if (!hasOtherPermittedUsers) {
-            voiceLogger.log(
-              `No other permitted users in channel, bot leaving voice channel in guild: ${guild.name}`,
-            )
-
-            await cleanupVoiceConnection(guildId)
-          } else {
-            voiceLogger.log(`Other permitted users still in channel, bot staying in voice channel`)
-          }
+        if (!hasKimakiBotPermission(member)) {
+          return
         }
-        return
-      }
 
-      if (
-        oldState.channelId !== null &&
-        newState.channelId !== null &&
-        oldState.channelId !== newState.channelId
-      ) {
-        voiceLogger.log(
-          `Permitted user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
-        )
+        const guild = newState.guild || oldState.guild
 
-        const guildId = guild.id
-        const voiceData = voiceConnections.get(guildId)
+        if (oldState.channelId !== null && newState.channelId === null) {
+          voiceLogger.log(
+            `Permitted user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+          )
 
-        if (voiceData && voiceData.connection.joinConfig.channelId === oldState.channelId) {
-          const oldVoiceChannel = oldState.channel as VoiceChannel
-          if (oldVoiceChannel) {
-            const hasOtherPermittedUsers = oldVoiceChannel.members.some((m) => {
+          const guildId = guild.id
+          const voiceData = voiceConnections.get(guildId)
+
+          if (
+            voiceData &&
+            voiceData.connection.joinConfig.channelId === oldState.channelId
+          ) {
+            const voiceChannel = oldState.channel as VoiceChannel
+            if (!voiceChannel) return
+
+            const hasOtherPermittedUsers = voiceChannel.members.some((m) => {
               if (m.id === member.id || m.user.bot) {
                 return false
               }
@@ -647,112 +664,183 @@ export function registerVoiceStateHandler({
             })
 
             if (!hasOtherPermittedUsers) {
-              voiceLogger.log(`Following admin to new channel: ${newState.channel?.name}`)
-              const voiceChannel = newState.channel as VoiceChannel
-              if (voiceChannel) {
-                voiceData.connection.rejoin({
-                  channelId: voiceChannel.id,
-                  selfDeaf: false,
-                  selfMute: false,
-                })
-              }
+              voiceLogger.log(
+                `No other permitted users in channel, bot leaving voice channel in guild: ${guild.name}`,
+              )
+
+              await cleanupVoiceConnection(guildId)
             } else {
-              voiceLogger.log(`Other permitted users still in old channel, bot staying put`)
+              voiceLogger.log(
+                `Other permitted users still in channel, bot staying in voice channel`,
+              )
+            }
+          }
+          return
+        }
+
+        if (
+          oldState.channelId !== null &&
+          newState.channelId !== null &&
+          oldState.channelId !== newState.channelId
+        ) {
+          voiceLogger.log(
+            `Permitted user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+          )
+
+          const guildId = guild.id
+          const voiceData = voiceConnections.get(guildId)
+
+          if (
+            voiceData &&
+            voiceData.connection.joinConfig.channelId === oldState.channelId
+          ) {
+            const oldVoiceChannel = oldState.channel as VoiceChannel
+            if (oldVoiceChannel) {
+              const hasOtherPermittedUsers = oldVoiceChannel.members.some(
+                (m) => {
+                  if (m.id === member.id || m.user.bot) {
+                    return false
+                  }
+                  return hasKimakiBotPermission(m)
+                },
+              )
+
+              if (!hasOtherPermittedUsers) {
+                voiceLogger.log(
+                  `Following admin to new channel: ${newState.channel?.name}`,
+                )
+                const voiceChannel = newState.channel as VoiceChannel
+                if (voiceChannel) {
+                  voiceData.connection.rejoin({
+                    channelId: voiceChannel.id,
+                    selfDeaf: false,
+                    selfMute: false,
+                  })
+                }
+              } else {
+                voiceLogger.log(
+                  `Other permitted users still in old channel, bot staying put`,
+                )
+              }
             }
           }
         }
-      }
 
-      if (oldState.channelId === null && newState.channelId !== null) {
-        voiceLogger.log(
-          `Permitted user ${member.user.tag} joined voice channel: ${newState.channel?.name}`,
-        )
-      }
-
-      if (newState.channelId === null) return
-
-      const voiceChannel = newState.channel as VoiceChannel
-      if (!voiceChannel) return
-
-      const existingVoiceData = voiceConnections.get(newState.guild.id)
-      if (
-        existingVoiceData &&
-        existingVoiceData.connection.state.status !== VoiceConnectionStatus.Destroyed
-      ) {
-        voiceLogger.log(`Bot already connected to a voice channel in guild ${newState.guild.name}`)
-
-        if (existingVoiceData.connection.joinConfig.channelId !== voiceChannel.id) {
+        if (oldState.channelId === null && newState.channelId !== null) {
           voiceLogger.log(
-            `Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
+            `Permitted user ${member.user.tag} joined voice channel: ${newState.channel?.name}`,
           )
-          existingVoiceData.connection.rejoin({
+        }
+
+        if (newState.channelId === null) return
+
+        const voiceChannel = newState.channel as VoiceChannel
+        if (!voiceChannel) return
+
+        const existingVoiceData = voiceConnections.get(newState.guild.id)
+        if (
+          existingVoiceData &&
+          existingVoiceData.connection.state.status !==
+            VoiceConnectionStatus.Destroyed
+        ) {
+          voiceLogger.log(
+            `Bot already connected to a voice channel in guild ${newState.guild.name}`,
+          )
+
+          if (
+            existingVoiceData.connection.joinConfig.channelId !==
+            voiceChannel.id
+          ) {
+            voiceLogger.log(
+              `Moving bot from channel ${existingVoiceData.connection.joinConfig.channelId} to ${voiceChannel.id}`,
+            )
+            existingVoiceData.connection.rejoin({
+              channelId: voiceChannel.id,
+              selfDeaf: false,
+              selfMute: false,
+            })
+          }
+          return
+        }
+
+        try {
+          voiceLogger.log(
+            `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
+          )
+
+          const connection = joinVoiceChannel({
             channelId: voiceChannel.id,
+            guildId: newState.guild.id,
+            adapterCreator: newState.guild.voiceAdapterCreator,
             selfDeaf: false,
+            debug: true,
+            daveEncryption: false,
             selfMute: false,
           })
-        }
-        return
-      }
 
-      try {
-        voiceLogger.log(
-          `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,
-        )
+          voiceConnections.set(newState.guild.id, { connection })
 
-        const connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: newState.guild.id,
-          adapterCreator: newState.guild.voiceAdapterCreator,
-          selfDeaf: false,
-          debug: true,
-          daveEncryption: false,
-          selfMute: false,
-        })
+          await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
+          voiceLogger.log(
+            `Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
+          )
 
-        voiceConnections.set(newState.guild.id, { connection })
+          await setupVoiceHandling({
+            connection,
+            guildId: newState.guild.id,
+            channelId: voiceChannel.id,
+            appId,
+            discordClient,
+          })
 
-        await entersState(connection, VoiceConnectionStatus.Ready, 30_000)
-        voiceLogger.log(
-          `Successfully joined voice channel: ${voiceChannel.name} in guild: ${newState.guild.name}`,
-        )
+          connection.on(VoiceConnectionStatus.Disconnected, async () => {
+            voiceLogger.log(
+              `Disconnected from voice channel in guild: ${newState.guild.name}`,
+            )
+            try {
+              await Promise.race([
+                entersState(
+                  connection,
+                  VoiceConnectionStatus.Signalling,
+                  5_000,
+                ),
+                entersState(
+                  connection,
+                  VoiceConnectionStatus.Connecting,
+                  5_000,
+                ),
+              ])
+              voiceLogger.log(`Reconnecting to voice channel`)
+            } catch (error) {
+              voiceLogger.log(`Failed to reconnect, destroying connection`)
+              connection.destroy()
+              voiceConnections.delete(newState.guild.id)
+            }
+          })
 
-        await setupVoiceHandling({
-          connection,
-          guildId: newState.guild.id,
-          channelId: voiceChannel.id,
-          appId,
-          discordClient,
-        })
+          connection.on(VoiceConnectionStatus.Destroyed, async () => {
+            voiceLogger.log(
+              `Connection destroyed for guild: ${newState.guild.name}`,
+            )
+            await cleanupVoiceConnection(newState.guild.id)
+          })
 
-        connection.on(VoiceConnectionStatus.Disconnected, async () => {
-          voiceLogger.log(`Disconnected from voice channel in guild: ${newState.guild.name}`)
-          try {
-            await Promise.race([
-              entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-              entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-            ])
-            voiceLogger.log(`Reconnecting to voice channel`)
-          } catch (error) {
-            voiceLogger.log(`Failed to reconnect, destroying connection`)
-            connection.destroy()
-            voiceConnections.delete(newState.guild.id)
-          }
-        })
-
-        connection.on(VoiceConnectionStatus.Destroyed, async () => {
-          voiceLogger.log(`Connection destroyed for guild: ${newState.guild.name}`)
+          connection.on('error', (error) => {
+            voiceLogger.error(
+              `Connection error in guild ${newState.guild.name}:`,
+              error,
+            )
+            void notifyError(error, `Voice connection error in guild ${newState.guild.name}`)
+          })
+        } catch (error) {
+          voiceLogger.error(`Failed to join voice channel:`, error)
+          void notifyError(error, 'Failed to join voice channel')
           await cleanupVoiceConnection(newState.guild.id)
-        })
-
-        connection.on('error', (error) => {
-          voiceLogger.error(`Connection error in guild ${newState.guild.name}:`, error)
-        })
+        }
       } catch (error) {
-        voiceLogger.error(`Failed to join voice channel:`, error)
-        await cleanupVoiceConnection(newState.guild.id)
+        voiceLogger.error('Error in voice state update handler:', error)
+        void notifyError(error, 'Voice state update handler error')
       }
-    } catch (error) {
-      voiceLogger.error('Error in voice state update handler:', error)
-    }
-  })
+    },
+  )
 }

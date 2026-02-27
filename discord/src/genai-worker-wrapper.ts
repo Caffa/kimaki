@@ -5,6 +5,7 @@
 import { Worker } from 'node:worker_threads'
 import type { WorkerInMessage, WorkerOutMessage } from './worker-types.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { notifyError } from './sentry.js'
 
 const genaiWorkerLogger = createLogger(LogPrefix.GENAI_WORKER)
 const genaiWrapperLogger = createLogger(LogPrefix.GENAI_WORKER)
@@ -40,9 +41,13 @@ export interface GenAIWorker {
   stop(): Promise<void>
 }
 
-export function createGenAIWorker(options: GenAIWorkerOptions): Promise<GenAIWorker> {
+export function createGenAIWorker(
+  options: GenAIWorkerOptions,
+): Promise<GenAIWorker> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('../dist/genai-worker.js', import.meta.url))
+    const worker = new Worker(
+      new URL('../dist/genai-worker.js', import.meta.url),
+    )
 
     // Handle messages from worker
     worker.on('message', (message: WorkerOutMessage) => {
@@ -101,7 +106,9 @@ export function createGenAIWorker(options: GenAIWorkerOptions): Promise<GenAIWor
                 worker.once('exit', (code) => {
                   if (!resolved) {
                     resolved = true
-                    genaiWrapperLogger.log(`[GENAI WORKER WRAPPER] Worker exited with code ${code}`)
+                    genaiWrapperLogger.log(
+                      `[GENAI WORKER WRAPPER] Worker exited with code ${code}`,
+                    )
                     resolve()
                   }
                 })
@@ -135,6 +142,10 @@ export function createGenAIWorker(options: GenAIWorkerOptions): Promise<GenAIWor
     worker.on('exit', (code) => {
       if (code !== 0) {
         genaiWorkerLogger.error(`Worker stopped with exit code ${code}`)
+        void notifyError(
+          new Error(`GenAI worker exited with code ${code}`),
+          'GenAI worker non-zero exit after init',
+        )
       }
     })
 

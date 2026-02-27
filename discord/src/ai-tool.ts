@@ -32,6 +32,8 @@ export type AnyTool = {
   >
 }
 
-export function tool<Input, Output>(definition: Tool<Input, Output>): Tool<Input, Output> {
+export function tool<Input, Output>(
+  definition: Tool<Input, Output>,
+): Tool<Input, Output> {
   return definition
 }

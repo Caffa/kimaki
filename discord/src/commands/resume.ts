@@ -8,7 +8,12 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { getChannelDirectory, setThreadSession, setPartMessagesBatch, getAllThreadSessionIds } from '../database.js'
+import {
+  getChannelDirectory,
+  setThreadSession,
+  setPartMessagesBatch,
+  getAllThreadSessionIds,
+} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { sendThreadMessage, resolveTextChannel } from '../discord-utils.js'
 import { collectLastAssistantParts } from '../message-formatting.js'
@@ -17,7 +22,10 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.RESUME)
 
-export async function handleResumeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleResumeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const sessionId = command.options.getString('session', true)
@@ -25,12 +33,16 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
   const isThread =
     channel &&
-    [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(
-      channel.type,
-    )
+    [
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+    ].includes(channel.type)
 
   if (isThread) {
-    await command.editReply('This command can only be used in project channels, not threads')
+    await command.editReply(
+      'This command can only be used in project channels, not threads',
+    )
     return
   }
 
@@ -51,7 +63,9 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
   }
 
   if (!projectDirectory) {
-    await command.editReply('This channel is not configured with a project directory')
+    await command.editReply(
+      'This channel is not configured with a project directory',
+    )
     return
   }
 
@@ -68,7 +82,7 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
     }
 
     const sessionResponse = await getClient().session.get({
-      path: { id: sessionId },
+      sessionID: sessionId,
     })
 
     if (!sessionResponse.data) {
@@ -92,7 +106,7 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 
     const messagesResponse = await getClient().session.messages({
-      path: { id: sessionId },
+      sessionID: sessionId,
     })
 
     if (!messagesResponse.data) {
@@ -101,40 +115,53 @@ export async function handleResumeCommand({ command, appId }: CommandContext): P
 
     const messages = messagesResponse.data
 
-    await command.editReply(`Resumed session "${sessionTitle}" in ${thread.toString()}`)
+    await command.editReply(
+      `Resumed session "${sessionTitle}" in ${thread.toString()}`,
+    )
 
     await sendThreadMessage(
       thread,
-      `📂 **Resumed session:** ${sessionTitle}\n📅 **Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
     )
 
-    const { partIds, content, skippedCount } = collectLastAssistantParts({
-      messages,
-    })
+    try {
+      const { partIds, content, skippedCount } = collectLastAssistantParts({
+        messages,
+      })
 
-    if (skippedCount > 0) {
-      await sendThreadMessage(thread, `*Skipped ${skippedCount} older assistant parts...*`)
-    }
+      if (skippedCount > 0) {
+        await sendThreadMessage(
+          thread,
+          `*Skipped ${skippedCount} older assistant parts...*`,
+        )
+      }
 
-    if (content.trim()) {
-      const discordMessage = await sendThreadMessage(thread, content)
+      if (content.trim()) {
+        const discordMessage = await sendThreadMessage(thread, content)
 
-      // Store part-message mappings atomically
-      await setPartMessagesBatch(
-        partIds.map((partId) => ({
-          partId,
-          messageId: discordMessage.id,
-          threadId: thread.id,
-        })),
+        // Store part-message mappings atomically
+        await setPartMessagesBatch(
+          partIds.map((partId) => ({
+            partId,
+            messageId: discordMessage.id,
+            threadId: thread.id,
+          })),
+        )
+      }
+
+      const messageCount = messages.length
+
+      await sendThreadMessage(
+        thread,
+        `**Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
+      )
+    } catch (sendError) {
+      logger.error('[RESUME] Error sending messages to thread:', sendError)
+      await sendThreadMessage(
+        thread,
+        `Failed to load message history, but session is connected. You can still send new messages.`,
       )
     }
-
-    const messageCount = messages.length
-
-    await sendThreadMessage(
-      thread,
-      `✅ **Session resumed!** Loaded ${messageCount} messages.\n\nYou can now continue the conversation by sending messages in this thread.`,
-    )
   } catch (error) {
     logger.error('[RESUME] Error:', error)
     await command.editReply(
@@ -187,7 +214,9 @@ export async function handleResumeAutocomplete({
 
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))
-      .filter((session) => session.title.toLowerCase().includes(focusedValue.toLowerCase()))
+      .filter((session) =>
+        session.title.toLowerCase().includes(focusedValue.toLowerCase()),
+      )
       .slice(0, 25)
       .map((session) => {
         const dateStr = new Date(session.time.updated).toLocaleString()

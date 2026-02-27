@@ -6,9 +6,14 @@ import { type ThreadChannel } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadWorktree, getThreadSession } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { mergeWorktree } from '../worktree-utils.js'
 import { sendThreadMessage, resolveWorkingDirectory } from '../discord-utils.js'
-import { handleOpencodeSession, abortControllers, addToQueue } from '../session-handler.js'
+import {
+  handleOpencodeSession,
+  abortControllers,
+  addToQueue,
+} from '../session-handler.js'
 import { RebaseConflictError, DirtyWorktreeError } from '../errors.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
@@ -16,7 +21,9 @@ const logger = createLogger(LogPrefix.WORKTREE)
 /** Worktree thread title prefix - indicates unmerged worktree */
 export const WORKTREE_PREFIX = '⬦ '
 
-async function removeWorktreePrefixFromTitle(thread: ThreadChannel): Promise<void> {
+async function removeWorktreePrefixFromTitle(
+  thread: ThreadChannel,
+): Promise<void> {
   if (!thread.name.startsWith(WORKTREE_PREFIX)) {
     return
   }
@@ -24,7 +31,9 @@ async function removeWorktreePrefixFromTitle(thread: ThreadChannel): Promise<voi
   const timeoutMs = 5000
   await Promise.race([
     thread.setName(newName).catch((e) => {
-      logger.warn(`Failed to update thread title: ${e instanceof Error ? e.message : String(e)}`)
+      logger.warn(
+        `Failed to update thread title: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }),
     new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -39,7 +48,13 @@ async function removeWorktreePrefixFromTitle(thread: ThreadChannel): Promise<voi
  * Send a prompt to the AI model in the thread.
  * If a session is actively streaming, queues it. Otherwise sends directly.
  */
-async function sendPromptToModel({ prompt, thread, projectDirectory, command, appId }: {
+async function sendPromptToModel({
+  prompt,
+  thread,
+  projectDirectory,
+  command,
+  appId,
+}: {
   prompt: string
   thread: ThreadChannel
   projectDirectory: string
@@ -48,7 +63,9 @@ async function sendPromptToModel({ prompt, thread, projectDirectory, command, ap
 }): Promise<void> {
   const sessionId = await getThreadSession(thread.id)
   const existingController = sessionId ? abortControllers.get(sessionId) : null
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
 
   if (hasActiveRequest) {
     addToQueue({
@@ -76,11 +93,18 @@ async function sendPromptToModel({ prompt, thread, projectDirectory, command, ap
     appId,
   }).catch((e) => {
     logger.error(`[merge] Failed to send prompt to model:`, e)
-    sendThreadMessage(thread, `Failed to send prompt: ${e instanceof Error ? e.message : String(e)}`).catch(() => {})
+    void notifyError(e, 'Merge-worktree prompt send failed')
+    sendThreadMessage(
+      thread,
+      `Failed to send prompt: ${(e instanceof Error ? e.message : String(e)).slice(0, 1900)}`,
+    ).catch(() => {})
   })
 }
 
-export async function handleMergeWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleMergeWorktreeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const channel = command.channel
@@ -114,12 +138,16 @@ export async function handleMergeWorktreeCommand({ command, appId }: CommandCont
 
   if (result instanceof Error) {
     if (result instanceof DirtyWorktreeError) {
-      await command.editReply('Merge failed: uncommitted changes in the worktree. Commit changes first, then run `/merge-worktree` again.')
+      await command.editReply(
+        'Merge failed: uncommitted changes in the worktree. Commit changes first, then run `/merge-worktree` again.',
+      )
       return
     }
 
     if (result instanceof RebaseConflictError) {
-      await command.editReply('Rebase conflict detected. Asking the model to resolve...')
+      await command.editReply(
+        'Rebase conflict detected. Asking the model to resolve...',
+      )
       await sendPromptToModel({
         prompt: [
           'A rebase conflict occurred while merging this worktree into the default branch.',

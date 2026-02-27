@@ -1,8 +1,24 @@
-// Audio transcription service using Google Gemini.
-// Transcribes voice messages with code-aware context.
+// Audio transcription service using AI SDK providers.
+// Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
+// so we can pass full context (file tree, session info) for better word recognition.
+//   - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
+//     because the default Responses API doesn't support audio file parts. The Chat
+//     Completions handler converts audio/mpeg file parts to input_audio format.
+//   - Gemini: gemini-2.5-flash natively accepts audio file parts in chat.
+// Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
 
-import { GoogleGenAI, FunctionCallingConfigMode, Type, type Content } from '@google/genai'
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3FunctionTool,
+  LanguageModelV3Content,
+  LanguageModelV3ToolCall,
+} from '@ai-sdk/provider'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createOpenAI } from '@ai-sdk/openai'
+import { Readable } from 'node:stream'
+import prism from 'prism-media'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import {
@@ -16,106 +32,222 @@ import {
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+// OpenAI input_audio only supports wav and mp3. Other formats (OGG Opus, etc)
+// must be converted before sending.
+const OPENAI_SUPPORTED_AUDIO_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+])
+
+/**
+ * Convert OGG Opus audio to WAV using prism-media (already installed for Discord voice).
+ * Pipeline: OGG buffer → OggDemuxer → Opus Decoder → PCM → WAV (with header).
+ * No ffmpeg needed — uses @discordjs/opus native bindings.
+ */
+export function convertOggToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+  return new Promise((resolve) => {
+    const pcmChunks: Buffer[] = []
+
+    const demuxer = new prism.opus.OggDemuxer()
+    const decoder = new prism.opus.Decoder({
+      rate: 48000,
+      channels: 1,
+      frameSize: 960,
+    })
+
+    decoder.on('data', (chunk: Buffer) => {
+      pcmChunks.push(chunk)
+    })
+
+    decoder.on('end', () => {
+      const pcmData = Buffer.concat(pcmChunks)
+      const wavHeader = createWavHeader({
+        dataLength: pcmData.length,
+        sampleRate: 48000,
+        numChannels: 1,
+        bitsPerSample: 16,
+      })
+      resolve(Buffer.concat([wavHeader, pcmData]))
+    })
+
+    decoder.on('error', (err: Error) => {
+      resolve(
+        new TranscriptionError({
+          reason: `Opus decode failed: ${err.message}`,
+          cause: err,
+        }),
+      )
+    })
+
+    demuxer.on('error', (err: Error) => {
+      resolve(
+        new TranscriptionError({
+          reason: `OGG demux failed: ${err.message}`,
+          cause: err,
+        }),
+      )
+    })
+
+    Readable.from(input).pipe(demuxer).pipe(decoder)
+  })
+}
+
+function createWavHeader({
+  dataLength,
+  sampleRate,
+  numChannels,
+  bitsPerSample,
+}: {
+  dataLength: number
+  sampleRate: number
+  numChannels: number
+  bitsPerSample: number
+}): Buffer {
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8
+  const blockAlign = (numChannels * bitsPerSample) / 8
+  const buffer = Buffer.alloc(44)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataLength, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(numChannels, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataLength, 40)
+  return buffer
+}
+
 type TranscriptionLoopError =
   | NoResponseContentError
   | TranscriptionError
   | EmptyTranscriptionError
   | NoToolResponseError
 
-async function runTranscriptionOnce({
-  genAI,
-  model,
-  initialContents,
-  temperature,
-}: {
-  genAI: GoogleGenAI
-  model: string
-  initialContents: Content[]
-  temperature: number
-}): Promise<TranscriptionLoopError | string> {
-  const response = await errore.tryAsync({
-    try: () =>
-      genAI.models.generateContent({
-        model,
+const transcriptionTool: LanguageModelV3FunctionTool = {
+  type: 'function',
+  name: 'transcriptionResult',
+  description:
+    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      transcription: {
+        type: 'string',
+        description:
+          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
+      },
+    },
+    required: ['transcription'],
+  },
+}
 
-        contents: initialContents,
-        config: {
+/**
+ * Extract transcription string from doGenerate content array.
+ * Looks for a tool-call named 'transcriptionResult', falls back to text content.
+ */
+export function extractTranscription(
+  content: Array<LanguageModelV3Content>,
+): TranscriptionLoopError | string {
+  const toolCall = content.find(
+    (c): c is LanguageModelV3ToolCall =>
+      c.type === 'tool-call' && c.toolName === 'transcriptionResult',
+  )
 
-          temperature,
-          maxOutputTokens: 2048,
-          thinkingConfig: {
-            thinkingBudget: 1024,
-          },
-          tools: [
-            {
-              functionDeclarations: [
-                {
-                  name: 'transcriptionResult',
-                  description:
-                    'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      transcription: {
-                        type: Type.STRING,
-                        description:
-                          'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
-                      },
-                    },
-                    required: ['transcription'],
-                  },
-                },
-              ],
-            },
-          ],
-          toolConfig: {
-            functionCallingConfig: {
-              mode: FunctionCallingConfigMode.ANY,
-              allowedFunctionNames: ['transcriptionResult'],
-            },
-          },
-        },
-      }),
-    catch: (e) => new TranscriptionError({ reason: `API call failed: ${String(e)}`, cause: e }),
-  })
-
-  if (response instanceof Error) {
-    return response
+  if (toolCall) {
+    // toolCall.input is a JSON string in LanguageModelV3
+    const args: Record<string, string> = (() => {
+      if (typeof toolCall.input === 'string') {
+        return JSON.parse(toolCall.input) as Record<string, string>
+      }
+      return {}
+    })()
+    const transcription = args.transcription?.trim() || ''
+    voiceLogger.log(
+      `Transcription result received: "${transcription.slice(0, 100)}..."`,
+    )
+    if (!transcription) {
+      return new EmptyTranscriptionError()
+    }
+    return transcription
   }
 
-  const candidate = response.candidates?.[0]
-  const parts = candidate?.content?.parts
-  if (!parts) {
-    const text = response.text?.trim()
-    if (text) {
-      voiceLogger.log(`No parts but got text response: "${text.slice(0, 100)}..."`)
-      return text
-    }
+  // Fall back to text content if no tool call
+  const textPart = content.find((c) => c.type === 'text')
+  if (textPart && textPart.type === 'text' && textPart.text.trim()) {
+    voiceLogger.log(
+      `No tool call but got text: "${textPart.text.trim().slice(0, 100)}..."`,
+    )
+    return textPart.text.trim()
+  }
+
+  if (content.length === 0) {
     return new NoResponseContentError()
   }
 
-  const call = parts
-    .map((part) => part.functionCall)
-    .find((functionCall) => functionCall?.name === 'transcriptionResult')
+  return new TranscriptionError({
+    reason: 'Model did not produce a transcription',
+  })
+}
 
-  if (!call) {
-    const text = response.text?.trim()
-    if (text) {
-      voiceLogger.log(`No function call but got text: "${text.slice(0, 100)}..."`)
-      return text
-    }
-    return new TranscriptionError({ reason: 'Model did not produce a transcription' })
+async function runTranscriptionOnce({
+  model,
+  prompt,
+  audioBase64,
+  mediaType,
+  temperature,
+}: {
+  model: LanguageModelV3
+  prompt: string
+  audioBase64: string
+  mediaType: string
+  temperature: number
+}): Promise<TranscriptionLoopError | string> {
+  const options: LanguageModelV3CallOptions = {
+    prompt: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          {
+            type: 'file',
+            data: audioBase64,
+            mediaType,
+          },
+        ],
+      },
+    ],
+    temperature,
+    maxOutputTokens: 2048,
+    tools: [transcriptionTool],
+    toolChoice: { type: 'tool', toolName: 'transcriptionResult' },
+    providerOptions: {
+      google: {
+        thinkingConfig: { thinkingBudget: 1024 },
+      },
+    },
   }
 
-  const args = call.args as Record<string, string> | undefined
-  const transcription = args?.transcription?.trim() || ''
-  voiceLogger.log(`Transcription result received: "${transcription.slice(0, 100)}..."`)
+  // doGenerate returns PromiseLike, wrap in Promise.resolve for errore compatibility
+  const response = await errore.tryAsync({
+    try: () => Promise.resolve(model.doGenerate(options)),
+    catch: (e: Error) =>
+      new TranscriptionError({
+        reason: `API call failed: ${String(e)}`,
+        cause: e,
+      }),
+  })
 
-  if (!transcription) {
-    return new EmptyTranscriptionError()
+  if (response instanceof TranscriptionError) {
+    return response
   }
 
-  return transcription
+  return extractTranscription(response.content)
 }
 
 export type TranscribeAudioErrors =
@@ -123,12 +255,45 @@ export type TranscribeAudioErrors =
   | InvalidAudioFormatError
   | TranscriptionLoopError
 
-export function transcribeAudio({
+export type TranscriptionProvider = 'openai' | 'gemini'
+
+/**
+ * Create a LanguageModelV3 for transcription.
+ * Both providers use chat models that accept audio file parts, so we get full
+ * context (prompt, session info, tool calling) for better word recognition.
+ *
+ * OpenAI: must use .chat() to get the Chat Completions API model, because the
+ * default callable (Responses API) doesn't support audio file parts.
+ * Gemini: language models natively accept audio in chat.
+ */
+export function createTranscriptionModel({
+  apiKey,
+  provider,
+}: {
+  apiKey: string
+  provider?: TranscriptionProvider
+}): LanguageModelV3 {
+  const resolvedProvider: TranscriptionProvider =
+    provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
+
+  if (resolvedProvider === 'openai') {
+    const openai = createOpenAI({ apiKey })
+    return openai.chat('gpt-4o-audio-preview')
+  }
+
+  const google = createGoogleGenerativeAI({ apiKey })
+  return google('gemini-2.5-flash')
+}
+
+export async function transcribeAudio({
   audio,
   prompt,
   language,
   temperature,
-  geminiApiKey,
+  apiKey: apiKeyParam,
+  model,
+  provider,
+  mediaType: mediaTypeParam,
   currentSessionContext,
   lastSessionContext,
 }: {
@@ -136,36 +301,64 @@ export function transcribeAudio({
   prompt?: string
   language?: string
   temperature?: number
-  geminiApiKey?: string
+  apiKey?: string
+  model?: LanguageModelV3
+  provider?: TranscriptionProvider
+  /** MIME type of the audio data (e.g. 'audio/ogg'). Defaults to 'audio/mpeg'. */
+  mediaType?: string
   currentSessionContext?: string
   lastSessionContext?: string
 }): Promise<TranscribeAudioErrors | string> {
-  const apiKey = geminiApiKey || process.env.GEMINI_API_KEY
+  const apiKey =
+    apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
-  if (!apiKey) {
-    return Promise.resolve(new ApiKeyMissingError({ service: 'Gemini' }))
+  if (!model && !apiKey) {
+    return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
   }
 
-  const genAI = new GoogleGenAI({ apiKey })
-
-  const audioBase64: string = (() => {
-    if (typeof audio === 'string') {
-      return audio
+  const resolvedProvider: TranscriptionProvider = (() => {
+    if (provider) {
+      return provider
     }
-    if (audio instanceof Buffer) {
-      return audio.toString('base64')
+    if (apiKey) {
+      return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
     }
-    if (audio instanceof Uint8Array) {
-      return Buffer.from(audio).toString('base64')
-    }
-    if (audio instanceof ArrayBuffer) {
-      return Buffer.from(audio).toString('base64')
-    }
-    return ''
+    return 'gemini'
   })()
 
-  if (!audioBase64) {
-    return Promise.resolve(new InvalidAudioFormatError())
+  const languageModel: LanguageModelV3 =
+    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+
+  // Convert audio to Buffer for potential format conversion
+  const audioBuffer: Buffer = (() => {
+    if (typeof audio === 'string') {
+      return Buffer.from(audio, 'base64')
+    }
+    if (audio instanceof Buffer) {
+      return audio
+    }
+    if (audio instanceof ArrayBuffer) {
+      return Buffer.from(new Uint8Array(audio))
+    }
+    return Buffer.from(audio)
+  })()
+
+  if (audioBuffer.length === 0) {
+    return new InvalidAudioFormatError()
+  }
+
+  let mediaType = mediaTypeParam || 'audio/mpeg'
+  let finalAudioBase64 = audioBuffer.toString('base64')
+
+  // OpenAI input_audio only supports mp3/wav. Convert OGG Opus (Discord voice) to WAV.
+  if (resolvedProvider === 'openai' && !OPENAI_SUPPORTED_AUDIO_TYPES.has(mediaType)) {
+    voiceLogger.log(`Converting ${mediaType} to WAV for OpenAI compatibility`)
+    const converted = await convertOggToWav(audioBuffer)
+    if (converted instanceof Error) {
+      return converted
+    }
+    finalAudioBase64 = converted.toString('base64')
+    mediaType = 'audio/wav'
   }
 
   const languageHint = language ? `The audio is in ${language}.\n\n` : ''
@@ -184,7 +377,9 @@ ${currentSessionContext}
   }
   const sessionContextSection =
     sessionContextParts.length > 0
-      ? `\nSession context (use to understand references to files, functions, tools used):\n${sessionContextParts.join('\n\n')}`
+      ? `\n<session_context>
+${sessionContextParts.join('\n\n')}
+</session_context>`
       : ''
 
   const transcriptionPrompt = `${languageHint}Transcribe this audio for a coding agent (like Claude Code or OpenCode).
@@ -200,9 +395,12 @@ This is a software development environment. The speaker is giving instructions t
 - File paths, function names, CLI commands, package names, API endpoints
 
  RULES:
+ - NEVER change the meaning or intent of the user's message. Your job is ONLY to transcribe, not to respond or answer.
+ - If the user asks a question, keep it as a question. Do NOT answer it. Do NOT rephrase it as a statement.
+ - Only fix grammar, punctuation, and markdown formatting. Preserve the original content faithfully.
  - If audio is unclear, transcribe your best interpretation, even with strong accents. Always provide an approximation.
  - If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
- - Use the session context below to understand technical terms, file names, function names mentioned
+ - The session context below is ONLY for understanding technical terms, file names, and function names. It may contain previous transcriptions — NEVER copy or reuse them. Always transcribe fresh from the current audio.
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"
@@ -217,25 +415,11 @@ REMEMBER: Call "transcriptionResult" tool with your transcription. This is manda
 
 Note: "critique" is a CLI tool for showing diffs in the browser.`
 
-  const initialContents: Content[] = [
-    {
-      role: 'user',
-      parts: [
-        { text: transcriptionPrompt },
-        {
-          inlineData: {
-            data: audioBase64,
-            mimeType: 'audio/mpeg',
-          },
-        },
-      ],
-    },
-  ]
-
   return runTranscriptionOnce({
-    genAI,
-    model: 'gemini-2.5-flash',
-    initialContents,
+    model: languageModel,
+    prompt: transcriptionPrompt,
+    audioBase64: finalAudioBase64,
+    mediaType,
     temperature: temperature ?? 0.3,
   })
 }

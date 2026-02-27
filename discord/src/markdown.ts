@@ -3,7 +3,7 @@
 // user messages, assistant responses, tool calls, and reasoning blocks.
 // Uses errore for type-safe error handling.
 
-import type { OpencodeClient } from '@opencode-ai/sdk'
+import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import * as errore from 'errore'
 import { createTaggedError } from 'errore'
 import * as yaml from 'js-yaml'
@@ -15,10 +15,11 @@ import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
 // Generic error for unexpected exceptions in async operations
 class UnexpectedError extends createTaggedError({
   name: 'UnexpectedError',
-  message: '$message',
 }) {}
 
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)
+
+const TOOL_OUTPUT_MAX_CHARS = 30_000
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -37,7 +38,7 @@ export class ShareMarkdown {
 
     // Get session info
     const sessionResponse = await this.client.session.get({
-      path: { id: sessionID },
+      sessionID,
     })
     if (!sessionResponse.data) {
       return new SessionNotFoundError({ sessionId: sessionID })
@@ -46,7 +47,7 @@ export class ShareMarkdown {
 
     // Get all messages
     const messagesResponse = await this.client.session.messages({
-      path: { id: sessionID },
+      sessionID,
     })
     if (!messagesResponse.data) {
       return new MessagesNotFoundError({ sessionId: sessionID })
@@ -56,7 +57,9 @@ export class ShareMarkdown {
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
       ? (() => {
-          const assistantMessages = messages.filter((m) => m.info.role === 'assistant')
+          const assistantMessages = messages.filter(
+            (m) => m.info.role === 'assistant',
+          )
           return assistantMessages.length > 0
             ? [assistantMessages[assistantMessages.length - 1]]
             : []
@@ -76,8 +79,12 @@ export class ShareMarkdown {
       if (includeSystemInfo === true) {
         lines.push('## Session Information')
         lines.push('')
-        lines.push(`- **Created**: ${formatDateTime(new Date(session.time.created))}`)
-        lines.push(`- **Updated**: ${formatDateTime(new Date(session.time.updated))}`)
+        lines.push(
+          `- **Created**: ${formatDateTime(new Date(session.time.created))}`,
+        )
+        lines.push(
+          `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
+        )
         if (session.version) {
           lines.push(`- **OpenCode Version**: v${session.version}`)
         }
@@ -182,6 +189,16 @@ export class ShareMarkdown {
 
       case 'tool':
         if (part.state.status === 'completed') {
+          const output: string = part.state.output || ''
+          const isOversized = output.length > TOOL_OUTPUT_MAX_CHARS
+
+          if (isOversized) {
+            lines.push(
+              `> ⚠️ **Large tool output** (${output.length.toLocaleString()} chars, truncated to ${TOOL_OUTPUT_MAX_CHARS.toLocaleString()})`,
+            )
+            lines.push('')
+          }
+
           lines.push(`#### 🛠️ Tool: ${part.tool}`)
           lines.push('')
 
@@ -194,11 +211,16 @@ export class ShareMarkdown {
             lines.push('')
           }
 
-          // Render output
-          if (part.state.output) {
+          // Render output, truncated if too large
+          if (output) {
             lines.push('**Output:**')
             lines.push('```')
-            lines.push(part.state.output)
+            lines.push(
+              isOversized
+                ? output.slice(0, TOOL_OUTPUT_MAX_CHARS) +
+                    '\n...(truncated)'
+                : output,
+            )
             lines.push('```')
             lines.push('')
           }
@@ -258,7 +280,7 @@ export function getCompactSessionContext({
   return errore.tryAsync({
     try: async () => {
       const messagesResponse = await client.session.messages({
-        path: { id: sessionId },
+        sessionID: sessionId,
       })
       const messages = messagesResponse.data || []
 
@@ -303,7 +325,9 @@ export function getCompactSessionContext({
         } else if (msg.info.role === 'assistant') {
           // Get assistant text parts (non-synthetic, non-empty)
           const textParts = (msg.parts || [])
-            .filter((p) => p.type === 'text' && 'text' in p && !p.synthetic && p.text)
+            .filter(
+              (p) => p.type === 'text' && 'text' in p && !p.synthetic && p.text,
+            )
             .map((p) => ('text' in p ? p.text : ''))
             .filter(Boolean)
           if (textParts.length > 0) {
@@ -313,7 +337,10 @@ export function getCompactSessionContext({
 
           // Get tool calls in compact form (name + params only)
           const toolParts = (msg.parts || []).filter(
-            (p) => p.type === 'tool' && 'state' in p && p.state?.status === 'completed',
+            (p) =>
+              p.type === 'tool' &&
+              'state' in p &&
+              p.state?.status === 'completed',
           )
           for (const part of toolParts) {
             if (part.type === 'tool' && 'tool' in part && 'state' in part) {
@@ -323,12 +350,15 @@ export function getCompactSessionContext({
                 continue
               }
               const input = part.state?.input || {}
-              const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
+              const normalize = (value: string) =>
+                value.replace(/\s+/g, ' ').trim()
               // compact params: just key=value on one line
               const params = Object.entries(input)
                 .map(([k, v]) => {
                   const val =
-                    typeof v === 'string' ? v.slice(0, 100) : JSON.stringify(v).slice(0, 100)
+                    typeof v === 'string'
+                      ? v.slice(0, 100)
+                      : JSON.stringify(v).slice(0, 100)
                   return `${k}=${normalize(val)}`
                 })
                 .join(', ')
@@ -342,7 +372,10 @@ export function getCompactSessionContext({
     },
     catch: (e) => {
       markdownLogger.error('Failed to get compact session context:', e)
-      return new UnexpectedError({ message: 'Failed to get compact session context', cause: e })
+      return new UnexpectedError({
+        message: 'Failed to get compact session context',
+        cause: e,
+      })
     },
   })
 }
@@ -368,7 +401,10 @@ export function getLastSessionId({
     },
     catch: (e) => {
       markdownLogger.error('Failed to get last session:', e)
-      return new UnexpectedError({ message: 'Failed to get last session', cause: e })
+      return new UnexpectedError({
+        message: 'Failed to get last session',
+        cause: e,
+      })
     },
   })
 }

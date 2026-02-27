@@ -1,23 +1,32 @@
 // /diff command - Show git diff as a shareable URL.
 
-import { ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  EmbedBuilder,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import path from 'node:path'
 import type { CommandContext } from './types.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { execAsync } from '../worktree-utils.js'
 
-
 const logger = createLogger(LogPrefix.DIFF)
 
-export async function handleDiffCommand({ command }: CommandContext): Promise<void> {
+export async function handleDiffCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -33,19 +42,19 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
   if (!isThread && !isTextChannel) {
     await command.reply({
       content: 'This command can only be used in a text channel or thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -57,10 +66,13 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
   try {
     const projectName = path.basename(workingDirectory)
     const title = `${projectName}: Discord /diff`
-    const { stdout, stderr } = await execAsync(`bunx critique --web "${title}" --json`, {
-      cwd: workingDirectory,
-      timeout: 30000,
-    })
+    const { stdout, stderr } = await execAsync(
+      `bunx critique --web "${title}" --json`,
+      {
+        cwd: workingDirectory,
+        timeout: 30000,
+      },
+    )
 
     // critique --json outputs JSON on the last line: {"url":"...","id":"..."} or {"error":"..."}
     const output = stdout || stderr
@@ -100,7 +112,10 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     }
 
     const imageUrl = `https://critique.work/og/${result.id}.png`
-    const embed = new EmbedBuilder().setTitle(title).setURL(result.url).setImage(imageUrl)
+    const embed = new EmbedBuilder()
+      .setTitle(title)
+      .setURL(result.url)
+      .setImage(imageUrl)
 
     await command.editReply({
       embeds: [embed],
@@ -110,7 +125,11 @@ export async function handleDiffCommand({ command }: CommandContext): Promise<vo
     logger.error('[DIFF] Error:', error)
 
     // exec error includes stdout/stderr - try to parse JSON from it
-    const execError = error as { stdout?: string; stderr?: string; message?: string }
+    const execError = error as {
+      stdout?: string
+      stderr?: string
+      message?: string
+    }
     const output = execError.stdout || execError.stderr || ''
 
     // Check if critique output JSON even on error

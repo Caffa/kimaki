@@ -1,5 +1,122 @@
 # Changelog
 
+## 0.4.71
+
+1. **Fixed package.json dependency classification** — `opencode-deterministic-provider` moved from `dependencies` to `devDependencies` so it no longer appears as a runtime dependency in the published package
+
+## 0.4.70
+
+1. **Immediate interrupt handling** — sending a new message while the AI is working now aborts the running session at the next step boundary, so your follow-up is processed right away instead of waiting for the full response to finish
+2. **Memory simplified to `MEMORY.md`** — the `--memory` flag and Discord forum-based memory infrastructure are removed; the agent now reads and updates a `MEMORY.md` file in your project root automatically, with no flags or setup required
+3. **Agent descriptions in system prompt** — all configured agents and their descriptions are now injected into the session context so the AI can make smarter agent selection decisions
+4. **Slash command name fixes** — user-defined commands containing slashes, colons, or other special characters now register and route correctly in Discord
+5. **Voice transcription reliability** — voice messages are now processed in the correct order; the transcription model no longer accidentally answers user questions; stale transcriptions from previous sessions are no longer reused
+6. **Worktree creation fixes** — worktree creation no longer fails due to broken dependency install steps (`ni` and `--frozen-lockfile` removed)
+7. **Fork dropdown filtering** — the `/fork` message picker no longer shows internal synthetic messages, only real user and assistant turns
+8. **Large tool output truncation** — tool call outputs exceeding 30k characters are truncated to prevent context window overflow during session reads
+9. **Permission prompt suppression** — the agent no longer triggers permission prompts when accessing `MEMORY.md` and other config paths
+
+## 0.4.69
+
+### Patch Changes
+
+- feat: **OpenAI voice transcription** — new `/transcription-key` command stores API key for voice message transcription; auto-detects provider from key prefix (`sk-*` → OpenAI, otherwise Gemini)
+- feat: **`gpt-4o-audio-preview` transcription model** — uses the chat completions API with OGG-to-WAV conversion for high-quality voice-to-text; falls back gracefully on decode errors
+- feat: **in-process Hrana v2 server** — replaces the 39 MB `sqld` Rust binary with a lightweight Node.js HTTP server speaking the [Hrana v2 protocol](https://github.com/tursodatabase/libsql/blob/main/docs/HTTP_V2_SPEC.md), backed by `libsql`; eliminates a large binary dependency and startup overhead
+  ```
+  Before: sqld child process (39 MB Rust binary)
+  After:  in-process HTTP server on the lock port — same Prisma adapter, no separate process
+  ```
+- feat: **bot-to-bot sessions** — bots with the Kimaki role can now trigger OpenCode sessions; a self-message guard prevents infinite loops when the bot also has the Kimaki role
+- feat: **action button TTL extended to 24 hours** — buttons no longer expire after 30 minutes, so late replies to pending confirmations still work
+- feat: **auto-derive App ID from bot token** — no interactive prompt needed; when `KIMAKI_BOT_TOKEN` is set the App ID is extracted automatically
+- feat: **thread ID in system prompt** — `threadId` is now injected into the OpenCode system prompt so agents can reference the current Discord thread for scheduling reminders (`--send-at`)
+- feat: **termcast skill** — new built-in skill for building Raycast-style TUIs with React in the terminal via `termcast`/`opentui`
+- feat: **memory forum auto-tags** — project tags are created automatically on the memory forum channel; embeds are suppressed in forum messages for cleaner appearance
+- fix: **remove `/upgrade-and-restart` command** — the command caused confusion and is no longer needed (fixes #49)
+- fix: **`/login` and `/model` dropdowns sorted** — provider and model options are now sorted alphabetically for easier scanning
+- fix: **archive thread delay** — increased from 5 s to 10 s so the final bot message is readable before the thread hides from the sidebar
+- fix: **project channel footer** — footer now survives the Discord 2000-char limit and falls back gracefully on empty body
+- fix: **test isolation** — vitest runs now auto-isolate from the real `~/.kimaki/` database via `KIMAKI_VITEST` env var injected by `vitest.config.ts`
+- fix: **`waitForServer` simplified** — all scripts now poll only `/api/health` (matching `opencode.ts`) and use `127.0.0.1` to avoid DNS/IPv6 ambiguity
+
+## 0.4.68
+
+### Patch Changes
+
+- feat: **`kimaki_action_buttons` tool** - AI can now show Discord buttons for quick confirmations; buttons are dismissed automatically when user sends a new message
+- feat: **persistent memory** - `--memory` flag enables a project-scoped memory folder synced as a Discord forum channel, with system prompt instructions injected each session
+- feat: **global memory scope** - memory forum threads can be tagged as global to share context across all projects
+- feat: **scheduled tasks** - `kimaki send --send-at` allows scheduling messages to run at a future UTC time, with cron-style recurring tasks supported
+- feat: **forum markdown sync engine** - bidirectional sync between Discord forum channels and local markdown files, replacing `forum-sync.json` with SQLite-backed config
+- feat: **session origin tracking** - track where sessions were started (slash command, message, scheduled task, etc.) for better diagnostics
+- feat: **project list improvements** - `kimaki project list` now shows Discord channel name and folder name
+- fix: **action button rendering** - render action buttons after stream flush and hide tool call output during button wait
+- fix: **agent/model preference snapshots** - correctly snapshot thread agent and model preferences at session start
+- fix: **archive-thread race** - parallelize footer async calls to eliminate archive-thread race condition
+- fix: **session idle race** - resolve deferred session idle race in interactive flows (permissions, questions, file uploads)
+- fix: **worktree parent row** - ensure `thread_sessions` parent row exists before creating worktree child row
+- fix: **file attachments in bot-initiated threads** - read file attachments correctly when thread is started by the bot
+- fix: **resume stuck forever** - fix `/resume` command getting stuck on "Loading N messages..." indefinitely
+- fix: **interactive UI echo** - prevent user messages from being echoed back when flushing interactive UI state
+- fix: **duplicate part output** - prevent duplicate part output on interrupted/replayed runs
+- fix: **send-at UTC format** - require explicit UTC date format for scheduled task timestamps
+- fix: **startup timeout errors** - include opencode stderr tail in startup timeout error messages for easier debugging
+- perf: **non-blocking quick-start** - bot startup is now non-blocking so the ready message appears faster
+
+## 0.4.67
+
+### Patch Changes
+
+- feat: **`/session-id` command** - new slash command shows current session ID and `opencode attach` command to connect directly from terminal
+- fix: **harden opencode plugin hooks** - wrap `chat.message` and `event` hooks in `errore.tryAsync` to prevent unhandled rejections from crashing the plugin; log warnings instead
+- fix: **file upload timeout** - replace `AbortSignal.timeout()` with explicit `AbortController` + `errore.tryAsync` for cleaner error handling in `kimaki_file_upload` tool
+- fix: **suppress embed previews** in `/model` confirmation replies to avoid noisy link unfurls
+- fix: **label voice transcriptions** - prepend `Voice message transcription from Discord user:` prefix so the model understands the message origin
+- fix: **`/context-usage` format** - show percentage first (`95%, 12,345 / 13,000 tokens`) for quicker scanning
+- docs: **`kimaki tunnel` help** - clarify that custom `--tunnel-id` is only safe for services meant to be public
+- chore: **update tuistory skill** guidance from upstream
+- chore: **bump traforo submodule** after Retry-After fix
+
+## 0.4.66
+
+### Patch Changes
+
+- feat: **session search command** - add `kimaki session search <query>` CLI command to search past conversations with text or regex patterns
+- feat: **plugin branch detection** - inject synthetic parts showing current branch and branch changes mid-session
+- feat: **plugin idle-time awareness** - inject timestamp parts when >10min elapsed between messages
+- feat: **skill tool visibility** - show skill invocations (playwriter, tuistory, jitter) in essential tools verbosity mode
+- feat: **verbose OpenCode server flag** - add `--verbose-opencode-server` to forward server logs to kimaki.log for debugging
+- feat: **skills infrastructure** - sync-skills script clones and discovers skills from remote repos, add skills paths to OpenCode config
+- feat: **V8 heap snapshots** - inject `--heapsnapshot-near-heap-limit=3` to catch OOM crashes before SIGKILL
+- feat: **CLI upgrade restart** - `kimaki upgrade` now automatically restarts the running bot after upgrading
+- fix: **read-only explore permissions** - prevent explore subagents from inheriting global allow rules for edits and bash
+- fix: **typing indicator lifecycle** - clear delayed typing restarts on session cleanup to prevent zombie typing
+- fix: **detached git state warnings** - detect detached HEAD and detached submodule states in branch context
+- fix: **message content truncation** - truncate unbounded error messages and AI text to prevent Discord API errors (fixes #38)
+- fix: **archive delay** - increase from 3s to 5s so final messages are read before thread hides
+- refactor: **migrate to SDK v2** - complete migration from @opencode-ai/sdk v1 to v2 flat parameter convention
+- chore: **increase bash inline threshold** - raise from 50 to 100 chars for better command visibility
+- chore: **bump errore to 0.12.0** - includes cleanup/cancellation docs and SuppressedError handling
+- docs: add **traforo comprehensive guide**, essential tools filtering reference, plan-first guidance for cross-project prompts
+
+## 0.4.65
+
+### Patch Changes
+
+- feat: **store model variant** in model tables with session/channel/global cascade for thinking level preferences
+- perf: **parallelize session-handler** async operations for faster session initialization
+- fix: **guard against non-hydrated guild members** in permission check to prevent crashes
+- fix: **parallelization bugs** in session-handler affecting concurrent operations
+- fix: **keep /fork customId under 100 chars** to comply with Discord's custom_id length limit
+- fix: **remove decimal digits** from session duration in footer for cleaner display
+- refactor: **replace deprecated ephemeral: true** with MessageFlags.Ephemeral
+- style: **run oxfmt formatter** across src for consistent code style
+- docs: add **tool permissions section** to README
+- docs: clarify **--thread vs --session** usage
+- docs: document **long --wait timeout** + fallback behavior
+- docs: warn about **Discord custom_id length limit** in agents instructions
+
 ## 0.4.64
 
 ### Patch Changes
@@ -553,7 +670,6 @@
 
 - Batch assistant messages in resume command to avoid spamming Discord with multiple messages for single response
 - Add SIGUSR2 signal handler to restart the process
-
 
 ## 0.4.4
 

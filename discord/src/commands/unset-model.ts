@@ -5,6 +5,7 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import {
   getChannelModel,
@@ -54,7 +55,7 @@ export async function handleUnsetModelCommand({
 }): Promise<void> {
   unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')
 
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const channel = interaction.channel
 
@@ -114,7 +115,7 @@ export async function handleUnsetModelCommand({
   const effectiveAppId = channelAppId || appId
 
   // Check what overrides exist
-  const [sessionModel, channelModel] = await Promise.all([
+  const [sessionPref, channelPref] = await Promise.all([
     sessionId ? getSessionModel(sessionId) : Promise.resolve(undefined),
     getChannelModel(targetChannelId),
   ])
@@ -122,21 +123,23 @@ export async function handleUnsetModelCommand({
   let clearedType: 'session' | 'channel' | null = null
   let clearedModel: string | undefined
 
-  if (isThread && sessionId && sessionModel) {
+  if (isThread && sessionId && sessionPref) {
     // In thread with session override: clear session
     await clearSessionModel(sessionId)
     clearedType = 'session'
-    clearedModel = sessionModel
+    clearedModel = sessionPref.modelId
     unsetModelLogger.log(`[UNSET-MODEL] Cleared session model for ${sessionId}`)
-  } else if (channelModel) {
+  } else if (channelPref) {
     // Clear channel override
     const prisma = await getPrisma()
     await prisma.channel_models.deleteMany({
       where: { channel_id: targetChannelId },
     })
     clearedType = 'channel'
-    clearedModel = channelModel
-    unsetModelLogger.log(`[UNSET-MODEL] Cleared channel model for ${targetChannelId}`)
+    clearedModel = channelPref.modelId
+    unsetModelLogger.log(
+      `[UNSET-MODEL] Cleared channel model for ${targetChannelId}`,
+    )
   } else {
     await interaction.editReply({
       content: 'No model override to clear.',
@@ -171,11 +174,14 @@ export async function handleUnsetModelCommand({
       thread,
       projectDirectory,
       appId: effectiveAppId,
+      channelId: targetChannelId,
     })
   }
 
   const clearedTypeText = clearedType === 'session' ? 'Session' : 'Channel'
-  const retriedText = retried ? '\n_Retrying current request with new model..._' : ''
+  const retriedText = retried
+    ? '\n_Retrying current request with new model..._'
+    : ''
 
   await interaction.editReply({
     content: `${clearedTypeText} model override removed.\n**Was:** \`${clearedModel}\`\n**Now using:** ${newModelText}${retriedText}`,

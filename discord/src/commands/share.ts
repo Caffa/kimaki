@@ -1,22 +1,31 @@
 // /share command - Share the current session as a public URL.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.SHARE)
 
-export async function handleShareCommand({ command }: CommandContext): Promise<void> {
+export async function handleShareCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -29,20 +38,21 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'This command can only be used in a thread with an active session',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -54,8 +64,7 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -64,22 +73,20 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to share session: ${getClient.message}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
   try {
     const response = await getClient().session.share({
-      path: { id: sessionId },
+      sessionID: sessionId,
     })
 
     if (!response.data?.share?.url) {
       await command.reply({
         content: 'Failed to generate share URL',
-        ephemeral: true,
-        flags: SILENT_MESSAGE_FLAGS,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
       })
       return
     }
@@ -93,8 +100,7 @@ export async function handleShareCommand({ command }: CommandContext): Promise<v
     logger.error('[SHARE] Error:', error)
     await command.reply({
       content: `Failed to share session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
   }
 }

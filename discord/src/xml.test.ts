@@ -3,7 +3,8 @@ import { extractNonXmlContent } from './xml.js'
 
 describe('extractNonXmlContent', () => {
   test('removes xml tags and returns only text content', () => {
-    const xml = 'Hello <tag>content</tag> world <nested><inner>deep</inner></nested> end'
+    const xml =
+      'Hello <tag>content</tag> world <nested><inner>deep</inner></nested> end'
     expect(extractNonXmlContent(xml)).toMatchInlineSnapshot(`
       "Hello
       world

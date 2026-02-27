@@ -13,10 +13,17 @@ let dataDir: string | null = null
 /**
  * Get the data directory path.
  * Falls back to ~/.kimaki if not explicitly set.
+ * Under vitest (KIMAKI_VITEST env var), auto-creates an isolated temp dir so
+ * tests never touch the real ~/.kimaki/ database. Tests that need a specific
+ * dir can still call setDataDir() before any DB access to override this.
  */
 export function getDataDir(): string {
   if (!dataDir) {
-    dataDir = DEFAULT_DATA_DIR
+    if (process.env.KIMAKI_VITEST) {
+      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
+    } else {
+      dataDir = DEFAULT_DATA_DIR
+    }
   }
   return dataDir
 }
@@ -82,19 +89,46 @@ export function setCritiqueEnabled(enabled: boolean): void {
   critiqueEnabled = enabled
 }
 
+// Whether to forward OpenCode server stdout/stderr to kimaki.log.
+// Disabled by default, enabled via --verbose-opencode-server CLI flag.
+let verboseOpencodeServer = false
+
+export function getVerboseOpencodeServer(): boolean {
+  return verboseOpencodeServer
+}
+
+export function setVerboseOpencodeServer(enabled: boolean): void {
+  verboseOpencodeServer = enabled
+}
+
 // Registered user commands, populated by registerCommands() in cli.ts.
 // Stored here (not cli.ts) to avoid circular imports since commands/ modules need this.
-export type RegisteredUserCommand = { name: string; description: string }
+// discordName is the sanitized Discord slash command name (without -cmd suffix),
+// name is the original OpenCode command name (may contain :, /, etc).
+export type RegisteredUserCommand = {
+  name: string
+  discordName: string
+  description: string
+}
 export const registeredUserCommands: RegisteredUserCommand[] = []
 
 const DEFAULT_LOCK_PORT = 29988
 
 /**
  * Derive a lock port from the data directory path.
+ * If KIMAKI_LOCK_PORT is set to a valid TCP port, it takes precedence.
  * Returns 29988 for the default ~/.kimaki directory (backwards compatible).
  * For custom data dirs, uses a hash to generate a port in the range 30000-39999.
  */
 export function getLockPort(): number {
+  const envPortRaw = process.env['KIMAKI_LOCK_PORT']
+  if (envPortRaw) {
+    const envPort = Number.parseInt(envPortRaw, 10)
+    if (Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535) {
+      return envPort
+    }
+  }
+
   const dir = getDataDir()
 
   // Use original port for default data dir (backwards compatible)

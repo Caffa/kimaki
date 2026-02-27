@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS "channel_directories" (
 CREATE TABLE IF NOT EXISTS "bot_api_keys" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "gemini_api_key" TEXT,
+    "openai_api_key" TEXT,
     "xai_api_key" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "bot_api_keys_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS "thread_worktrees" (
 CREATE TABLE IF NOT EXISTS "channel_models" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,
+    "variant" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "channel_models_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS "channel_models" (
 CREATE TABLE IF NOT EXISTS "session_models" (
     "session_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,
+    "variant" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "channel_agents" (
@@ -88,7 +91,68 @@ CREATE TABLE IF NOT EXISTS "channel_mention_mode" (
 CREATE TABLE IF NOT EXISTS "global_models" (
     "app_id" TEXT NOT NULL PRIMARY KEY,
     "model_id" TEXT NOT NULL,
+    "variant" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "global_models_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "scheduled_tasks" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "status" TEXT NOT NULL DEFAULT 'planned',
+    "schedule_kind" TEXT NOT NULL,
+    "run_at" DATETIME,
+    "cron_expr" TEXT,
+    "timezone" TEXT,
+    "next_run_at" DATETIME NOT NULL,
+    "running_started_at" DATETIME,
+    "last_run_at" DATETIME,
+    "last_error" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "payload_json" TEXT NOT NULL,
+    "prompt_preview" TEXT NOT NULL,
+    "channel_id" TEXT,
+    "thread_id" TEXT,
+    "session_id" TEXT,
+    "project_directory" TEXT,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "scheduled_tasks_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channel_directories" ("channel_id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "scheduled_tasks_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+CREATE TABLE sqlite_sequence(name,seq);
+CREATE TABLE IF NOT EXISTS "session_start_sources" (
+    "session_id" TEXT NOT NULL PRIMARY KEY,
+    "schedule_kind" TEXT NOT NULL,
+    "scheduled_task_id" INTEGER,
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "session_start_sources_scheduled_task_id_fkey" FOREIGN KEY ("scheduled_task_id") REFERENCES "scheduled_tasks" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "forum_sync_configs" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "app_id" TEXT NOT NULL,
+    "forum_channel_id" TEXT NOT NULL,
+    "output_dir" TEXT NOT NULL,
+    "direction" TEXT NOT NULL DEFAULT 'bidirectional',
+    "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "forum_sync_configs_app_id_fkey" FOREIGN KEY ("app_id") REFERENCES "bot_tokens" ("app_id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE IF NOT EXISTS "ipc_requests" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "type" TEXT NOT NULL,
+    "session_id" TEXT NOT NULL,
+    "thread_id" TEXT NOT NULL,
+    "payload" TEXT NOT NULL,
+    "response" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ipc_requests_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "thread_sessions" ("thread_id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
+CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
+CREATE INDEX "scheduled_tasks_thread_id_status_idx" ON "scheduled_tasks"("thread_id", "status");
+CREATE INDEX "session_start_sources_scheduled_task_id_idx" ON "session_start_sources"("scheduled_task_id");
+CREATE UNIQUE INDEX "forum_sync_configs_app_id_forum_channel_id_key" ON "forum_sync_configs"("app_id", "forum_channel_id");
+CREATE INDEX "ipc_requests_status_created_at_idx" ON "ipc_requests"("status", "created_at");

@@ -9,9 +9,17 @@ import {
   ChannelType,
   type ThreadChannel,
   type TextChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { setChannelAgent, setSessionAgent, clearSessionModel, getThreadSession, getSessionAgent, getChannelAgent } from '../database.js'
+import {
+  setChannelAgent,
+  setSessionAgent,
+  clearSessionModel,
+  getThreadSession,
+  getSessionAgent,
+  getChannelAgent,
+} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -74,7 +82,11 @@ export async function getCurrentAgentInfo({
  * Lowercase, alphanumeric and hyphens only.
  */
 export function sanitizeAgentName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 /**
@@ -91,7 +103,9 @@ export async function resolveAgentCommandContext({
   const channel = interaction.channel
 
   if (!channel) {
-    await interaction.editReply({ content: 'This command can only be used in a channel' })
+    await interaction.editReply({
+      content: 'This command can only be used in a channel',
+    })
     return null
   }
 
@@ -129,7 +143,9 @@ export async function resolveAgentCommandContext({
   }
 
   if (channelAppId && channelAppId !== appId) {
-    await interaction.editReply({ content: 'This channel is not configured for this bot' })
+    await interaction.editReply({
+      content: 'This channel is not configured for this bot',
+    })
     return null
   }
 
@@ -164,7 +180,9 @@ export async function setAgentForContext({
     await setSessionAgent(context.sessionId, agentName)
     // Clear session model so the new agent's model takes effect
     await clearSessionModel(context.sessionId)
-    agentLogger.log(`Set agent ${agentName} for session ${context.sessionId} (cleared session model)`)
+    agentLogger.log(
+      `Set agent ${agentName} for session ${context.sessionId} (cleared session model)`,
+    )
   } else {
     await setChannelAgent(context.channelId, agentName)
     agentLogger.log(`Set agent ${agentName} for channel ${context.channelId}`)
@@ -178,7 +196,7 @@ export async function handleAgentCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await interaction.deferReply({ ephemeral: true })
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const context = await resolveAgentCommandContext({ interaction, appId })
   if (!context) {
@@ -193,7 +211,7 @@ export async function handleAgentCommand({
     }
 
     const agentsResponse = await getClient().app.agents({
-      query: { directory: context.dir },
+      directory: context.dir,
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -243,7 +261,8 @@ export async function handleAgentCommand({
       .setPlaceholder('Select an agent')
       .addOptions(options)
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await interaction.editReply({
       content: `**Set Agent Preference**\n${currentAgentText}\nSelect an agent:`,
@@ -333,9 +352,12 @@ export async function handleQuickAgentCommand({
   // Extract agent name from command: "plan-agent" → "plan"
   const sanitizedAgentName = command.commandName.replace(/-agent$/, '')
 
-  await command.deferReply({ ephemeral: true })
+  await command.deferReply({ flags: MessageFlags.Ephemeral })
 
-  const context = await resolveAgentCommandContext({ interaction: command, appId })
+  const context = await resolveAgentCommandContext({
+    interaction: command,
+    appId,
+  })
   if (!context) {
     return
   }
@@ -347,7 +369,8 @@ export async function handleQuickAgentCommand({
       sessionId: context.sessionId,
       channelId: context.channelId,
     })
-    const previousAgentName = previousAgent.type !== 'none' ? previousAgent.agent : undefined
+    const previousAgentName =
+      previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
     if (previousAgentName === sanitizedAgentName) {
       await command.editReply({
@@ -359,7 +382,9 @@ export async function handleQuickAgentCommand({
     // Set the agent preference (DB write only, no HTTP calls)
     await setAgentForContext({ context, agentName: sanitizedAgentName })
 
-    const previousText = previousAgentName ? ` (was **${previousAgentName}**)` : ''
+    const previousText = previousAgentName
+      ? ` (was **${previousAgentName}**)`
+      : ''
 
     if (context.isThread && context.sessionId) {
       await command.editReply({

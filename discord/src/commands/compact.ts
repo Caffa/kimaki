@@ -1,22 +1,34 @@
 // /compact command - Trigger context compaction (summarization) for the current session.
 
-import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
+import {
+  ChannelType,
+  MessageFlags,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
 import type { CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
-import { initializeOpencodeForDirectory, getOpencodeClientV2 } from '../opencode.js'
-import { resolveWorkingDirectory, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  initializeOpencodeForDirectory,
+  getOpencodeClient,
+} from '../opencode.js'
+import {
+  resolveWorkingDirectory,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.COMPACT)
 
-export async function handleCompactCommand({ command }: CommandContext): Promise<void> {
+export async function handleCompactCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -29,20 +41,21 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'This command can only be used in a thread with an active session',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const resolved = await resolveWorkingDirectory({ channel: channel as TextChannel | ThreadChannel })
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
 
   if (!resolved) {
     await command.reply({
       content: 'Could not determine project directory for this channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -54,8 +67,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (!sessionId) {
     await command.reply({
       content: 'No active session in this thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -65,18 +77,16 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
   if (getClient instanceof Error) {
     await command.reply({
       content: `Failed to compact: ${getClient.message}`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
-  const clientV2 = getOpencodeClientV2(projectDirectory)
-  if (!clientV2) {
+  const client = getOpencodeClient(projectDirectory)
+  if (!client) {
     await command.reply({
       content: 'Failed to get OpenCode client',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -86,7 +96,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
   try {
     // Get session messages to find the model from the last user message
-    const messagesResult = await clientV2.session.messages({
+    const messagesResult = await client.session.messages({
       sessionID: sessionId,
       directory: workingDirectory,
     })
@@ -113,7 +123,7 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
     const { providerID, modelID } = lastUserMessage.info.model
 
-    const result = await clientV2.session.summarize({
+    const result = await client.session.summarize({
       sessionID: sessionId,
       directory: workingDirectory,
       providerID,
@@ -123,9 +133,11 @@ export async function handleCompactCommand({ command }: CommandContext): Promise
 
     if (result.error) {
       logger.error('[COMPACT] Error:', result.error)
-      const errorMessage = 'data' in result.error && result.error.data
-        ? (result.error.data as { message?: string }).message || 'Unknown error'
-        : 'Unknown error'
+      const errorMessage =
+        'data' in result.error && result.error.data
+          ? (result.error.data as { message?: string }).message ||
+            'Unknown error'
+          : 'Unknown error'
       await command.editReply({
         content: `Failed to compact: ${errorMessage}`,
       })

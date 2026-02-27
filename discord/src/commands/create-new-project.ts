@@ -65,14 +65,21 @@ export async function createNewProject({
   execSync('git init', { cwd: projectDirectory, stdio: 'pipe' })
   logger.log(`Initialized git in: ${projectDirectory}`)
 
-  const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
-    guild,
-    projectDirectory,
-    appId,
-    botName,
-  })
+  const { textChannelId, voiceChannelId, channelName } =
+    await createProjectChannels({
+      guild,
+      projectDirectory,
+      appId,
+      botName,
+    })
 
-  return { textChannelId, voiceChannelId, channelName, projectDirectory, sanitizedName }
+  return {
+    textChannelId,
+    voiceChannelId,
+    channelName,
+    projectDirectory,
+    sanitizedName,
+  }
 }
 
 export async function handleCreateNewProjectCommand({
@@ -117,12 +124,22 @@ export async function handleCreateNewProjectCommand({
       }
 
       const projectDirectory = path.join(getProjectsDir(), sanitizedName)
-      await command.editReply(`Project directory already exists: ${projectDirectory}`)
+      await command.editReply(
+        `Project directory already exists: ${projectDirectory}`,
+      )
       return
     }
 
-    const { textChannelId, voiceChannelId, channelName, projectDirectory, sanitizedName } = result
-    const textChannel = (await guild.channels.fetch(textChannelId)) as TextChannel
+    const {
+      textChannelId,
+      voiceChannelId,
+      channelName,
+      projectDirectory,
+      sanitizedName,
+    } = result
+    const textChannel = (await guild.channels.fetch(
+      textChannelId,
+    )) as TextChannel
 
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
@@ -144,7 +161,8 @@ export async function handleCreateNewProjectCommand({
     await thread.members.add(command.user.id)
 
     await handleOpencodeSession({
-      prompt: 'The project was just initialized. Say hi and ask what the user wants to build.',
+      prompt:
+        'The project was just initialized. Say hi and ask what the user wants to build.',
       thread,
       projectDirectory,
       channelId: textChannel.id,

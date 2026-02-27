@@ -1,6 +1,9 @@
 import { test, expect } from 'vitest'
 import { Lexer } from 'marked'
-import { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
+import {
+  escapeBackticksInCodeBlocks,
+  splitMarkdownForDiscord,
+} from './discord-utils.js'
 
 test('escapes single backticks in code blocks', () => {
   const input = '```js\nconst x = `hello`\n```'
@@ -15,7 +18,8 @@ const x = \\\`hello\\\`
 })
 
 test('escapes backticks in code blocks with language', () => {
-  const input = '```typescript\nconst greeting = `Hello, ${name}!`\nconst inline = `test`\n```'
+  const input =
+    '```typescript\nconst greeting = `Hello, ${name}!`\nconst inline = `test`\n```'
   const result = escapeBackticksInCodeBlocks(input)
 
   expect(result).toMatchInlineSnapshot(`
@@ -28,7 +32,8 @@ const inline = \\\`test\\\`
 })
 
 test('does not escape backticks outside code blocks', () => {
-  const input = 'This is `inline code` and this is a code block:\n```\nconst x = `template`\n```'
+  const input =
+    'This is `inline code` and this is a code block:\n```\nconst x = `template`\n```'
   const result = escapeBackticksInCodeBlocks(input)
 
   expect(result).toMatchInlineSnapshot(`

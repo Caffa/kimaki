@@ -1,6 +1,6 @@
 // Queue commands - /queue, /queue-command, /clear-queue
 
-import { ChannelType, type ThreadChannel } from 'discord.js'
+import { ChannelType, MessageFlags, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import {
@@ -16,19 +16,22 @@ import {
   clearQueue,
 } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { registeredUserCommands } from '../config.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
-export async function handleQueueCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleQueueCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   const message = command.options.getString('message', true)
   const channel = command.channel
 
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -41,9 +44,9 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'This command can only be used in a thread with an active session',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -52,29 +55,32 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   if (!sessionId) {
     await command.reply({
-      content: 'No active session in this thread. Send a message directly instead.',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'No active session in this thread. Send a message directly instead.',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
 
   // Check if there's an active request running
   const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
   if (existingController && existingController.signal.aborted) {
     abortControllers.delete(sessionId)
   }
 
   if (!hasActiveRequest) {
     // No active request, send immediately
-    const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
+    const resolved = await resolveWorkingDirectory({
+      channel: channel as ThreadChannel,
+    })
 
     if (!resolved) {
       await command.reply({
         content: 'Could not determine project directory',
-        ephemeral: true,
-        flags: SILENT_MESSAGE_FLAGS,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
       })
       return
     }
@@ -84,7 +90,9 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    logger.log(`[QUEUE] No active request, sending immediately in thread ${channel.id}`)
+    logger.log(
+      `[QUEUE] No active request, sending immediately in thread ${channel.id}`,
+    )
 
     handleOpencodeSession({
       prompt: message,
@@ -94,8 +102,12 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
       appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send message:`, e)
+      void notifyError(e, 'Queue: failed to send message')
       const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(channel as ThreadChannel, `✗ Failed: ${errorMsg.slice(0, 200)}`)
+      await sendThreadMessage(
+        channel as ThreadChannel,
+        `✗ Failed: ${errorMsg.slice(0, 200)}`,
+      )
     })
 
     return
@@ -115,21 +127,23 @@ export async function handleQueueCommand({ command, appId }: CommandContext): Pr
 
   await command.reply({
     content: `✅ Message queued (position: ${queuePosition}). Will be sent after current response.`,
-    ephemeral: true,
-    flags: SILENT_MESSAGE_FLAGS,
+    flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`,
+  )
 }
 
-export async function handleClearQueueCommand({ command }: CommandContext): Promise<void> {
+export async function handleClearQueueCommand({
+  command,
+}: CommandContext): Promise<void> {
   const channel = command.channel
 
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -143,8 +157,7 @@ export async function handleClearQueueCommand({ command }: CommandContext): Prom
   if (!isThread) {
     await command.reply({
       content: 'This command can only be used in a thread',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -154,8 +167,7 @@ export async function handleClearQueueCommand({ command }: CommandContext): Prom
   if (queueLength === 0) {
     await command.reply({
       content: 'No messages in queue',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -167,10 +179,15 @@ export async function handleClearQueueCommand({ command }: CommandContext): Prom
     flags: SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
+  )
 }
 
-export async function handleQueueCommandCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleQueueCommandCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   const commandName = command.options.getString('command', true)
   const args = command.options.getString('arguments') || ''
   const channel = command.channel
@@ -178,8 +195,7 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
   if (!channel) {
     await command.reply({
       content: 'This command can only be used in a channel',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -192,9 +208,9 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   if (!isThread) {
     await command.reply({
-      content: 'This command can only be used in a thread with an active session',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'This command can only be used in a thread with an active session',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -203,9 +219,9 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   if (!sessionId) {
     await command.reply({
-      content: 'No active session in this thread. Send a message directly instead.',
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      content:
+        'No active session in this thread. Send a message directly instead.',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -217,8 +233,7 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
   if (!isKnownCommand) {
     await command.reply({
       content: `Unknown command: /${commandName}. Use autocomplete to pick from available commands.`,
-      ephemeral: true,
-      flags: SILENT_MESSAGE_FLAGS,
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
   }
@@ -228,19 +243,22 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   // Check if there's an active request running
   const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(existingController && !existingController.signal.aborted)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
   if (existingController && existingController.signal.aborted) {
     abortControllers.delete(sessionId)
   }
 
   if (!hasActiveRequest) {
-    const resolved = await resolveWorkingDirectory({ channel: channel as ThreadChannel })
+    const resolved = await resolveWorkingDirectory({
+      channel: channel as ThreadChannel,
+    })
 
     if (!resolved) {
       await command.reply({
         content: 'Could not determine project directory',
-        ephemeral: true,
-        flags: SILENT_MESSAGE_FLAGS,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
       })
       return
     }
@@ -250,7 +268,9 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
       flags: SILENT_MESSAGE_FLAGS,
     })
 
-    logger.log(`[QUEUE] No active request, sending command immediately in thread ${channel.id}`)
+    logger.log(
+      `[QUEUE] No active request, sending command immediately in thread ${channel.id}`,
+    )
 
     handleOpencodeSession({
       prompt: '',
@@ -261,8 +281,12 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
       appId,
     }).catch(async (e) => {
       logger.error(`[QUEUE] Failed to send command:`, e)
+      void notifyError(e, 'Queue: failed to send command')
       const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(channel as ThreadChannel, `Failed: ${errorMsg.slice(0, 200)}`)
+      await sendThreadMessage(
+        channel as ThreadChannel,
+        `Failed: ${errorMsg.slice(0, 200)}`,
+      )
     })
 
     return
@@ -283,14 +307,17 @@ export async function handleQueueCommandCommand({ command, appId }: CommandConte
 
   await command.reply({
     content: `Command queued (position: ${queuePosition}): ${displayText}`,
-    ephemeral: true,
-    flags: SILENT_MESSAGE_FLAGS,
+    flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
   })
 
-  logger.log(`[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`)
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`,
+  )
 }
 
-export async function handleQueueCommandAutocomplete({ interaction }: AutocompleteContext): Promise<void> {
+export async function handleQueueCommandAutocomplete({
+  interaction,
+}: AutocompleteContext): Promise<void> {
   const focused = interaction.options.getFocused(true)
 
   if (focused.name !== 'command') {

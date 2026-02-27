@@ -1,11 +1,11 @@
 #!/usr/bin/env tsx
-import { createOpencodeClient } from '@opencode-ai/sdk'
+import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 
 async function listProjectsAndData() {
   // Connect to OpenCode server
   // Default port is 3318, but you can override with OPENCODE_PORT env var
   const port = process.env.OPENCODE_PORT || '3318'
-  const baseUrl = `http://localhost:${port}`
+  const baseUrl = `http://127.0.0.1:${port}`
 
   console.log(`Connecting to OpenCode server at ${baseUrl}...`)
   console.log(

@@ -13,7 +13,10 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.SESSION)
 
-export async function handleSessionCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleSessionCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const prompt = command.options.getString('prompt', true)
@@ -38,7 +41,9 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
   }
 
   if (!projectDirectory) {
-    await command.editReply('This channel is not configured with a project directory')
+    await command.editReply(
+      'This channel is not configured with a project directory',
+    )
     return
   }
 
@@ -96,12 +101,18 @@ export async function handleSessionCommand({ command, appId }: CommandContext): 
   }
 }
 
-async function handleAgentAutocomplete({ interaction, appId }: AutocompleteContext): Promise<void> {
+async function handleAgentAutocomplete({
+  interaction,
+  appId,
+}: AutocompleteContext): Promise<void> {
   const focusedValue = interaction.options.getFocused()
 
   let projectDirectory: string | undefined
 
-  if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
+  if (
+    interaction.channel &&
+    interaction.channel.type === ChannelType.GuildText
+  ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
       if (channelConfig.appId && channelConfig.appId !== appId) {
@@ -125,7 +136,7 @@ async function handleAgentAutocomplete({ interaction, appId }: AutocompleteConte
     }
 
     const agentsResponse = await getClient().app.agents({
-      query: { directory: projectDirectory },
+      directory: projectDirectory,
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -179,7 +190,10 @@ export async function handleSessionAutocomplete({
 
   let projectDirectory: string | undefined
 
-  if (interaction.channel && interaction.channel.type === ChannelType.GuildText) {
+  if (
+    interaction.channel &&
+    interaction.channel.type === ChannelType.GuildText
+  ) {
     const channelConfig = await getChannelDirectory(interaction.channel.id)
     if (channelConfig) {
       if (channelConfig.appId && channelConfig.appId !== appId) {
@@ -203,14 +217,13 @@ export async function handleSessionAutocomplete({
     }
 
     const response = await getClient().find.files({
-      query: {
-        query: currentQuery || '',
-      },
+      query: currentQuery || '',
     })
 
     const files = response.data || []
 
-    const prefix = previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''
+    const prefix =
+      previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''
 
     const choices = files
       .map((file: string) => {

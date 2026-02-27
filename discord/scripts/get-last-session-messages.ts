@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { createOpencodeClient } from '@opencode-ai/sdk'
+import { createOpencodeClient } from '@opencode-ai/sdk/v2'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 
@@ -24,25 +24,12 @@ async function getOpenPort(): Promise<number> {
 async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const endpoints = [
-        `http://localhost:${port}/api/health`,
-        `http://localhost:${port}/`,
-        `http://localhost:${port}/api`,
-      ]
-
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint)
-          if (response.status < 500) {
-            console.log(`Server ready on port ${port}`)
-            return true
-          }
-        } catch (e) {
-          // expected during polling, server not ready yet
-        }
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
+      if (response.status < 500) {
+        return true
       }
-    } catch (e) {
-      // expected during polling
+    } catch {
+      // Server not ready yet
     }
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
@@ -54,10 +41,10 @@ async function waitForServer(port: number, maxAttempts = 30): Promise<boolean> {
 async function getLastSessionMessages() {
   // Get a free port
   const port = await getOpenPort()
-  const baseUrl = `http://localhost:${port}`
+  const baseUrl = `http://127.0.0.1:${port}`
 
   console.log(`Starting OpenCode server on port ${port}...`)
-  
+
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
   const directory = process.cwd()
 
@@ -140,21 +127,20 @@ async function getLastSessionMessages() {
 
     // Get messages for the session
     const messagesResponse = await client.session.messages({
-      path: { id: latestSession.id },
+      sessionID: latestSession.id,
     })
-    
+
     if (!messagesResponse.data) {
       console.error('Failed to fetch session messages')
       return
     }
-    
+
     const messages = messagesResponse.data
     console.log(`Found ${messages.length} message(s) in the session\n`)
-    
+
     // Log the messages as prettified JSON
     console.log('=== Session Messages (JSON) ===\n')
     console.log(JSON.stringify(messages, null, 2))
-
   } catch (error) {
     console.error('Error fetching session messages:', error)
     serverProcess.kill()

@@ -60,9 +60,7 @@ export function splitTablesFromMarkdown(markdown: string): ContentSegment[] {
  * Large tables are split into multiple component segments, each containing a
  * Container with up to MAX_ROWS_PER_CONTAINER rows.
  */
-export function buildTableComponents(
-  table: Tokens.Table,
-): ContentSegment[] {
+export function buildTableComponents(table: Tokens.Table): ContentSegment[] {
   const headers = table.header.map((cell) => {
     return extractCellText(cell.tokens)
   })
@@ -83,7 +81,11 @@ export function buildTableComponents(
 
     for (let i = 0; i < chunkRows.length; i++) {
       if (i > 0) {
-        children.push({ type: 14, divider: true, spacing: SeparatorSpacingSize.Small })
+        children.push({
+          type: 14,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small,
+        })
       }
       const row = chunkRows[i]!
       const lines = headers.map((key, j) => {
@@ -98,7 +100,10 @@ export function buildTableComponents(
       components: children,
     }
 
-    return { type: 'components' as const, components: [container] as APIMessageTopLevelComponent[] }
+    return {
+      type: 'components' as const,
+      components: [container] as APIMessageTopLevelComponent[],
+    }
   })
 }
 

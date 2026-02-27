@@ -3,7 +3,12 @@
 // When enabled, bot only responds to messages that @mention it.
 // Messages in threads are not affected - they always work without mentions.
 
-import { ChatInputCommandInteraction, ChannelType, type TextChannel } from 'discord.js'
+import {
+  ChatInputCommandInteraction,
+  MessageFlags,
+  ChannelType,
+  type TextChannel,
+} from 'discord.js'
 import { getChannelMentionMode, setChannelMentionMode } from '../database.js'
 import { getKimakiMetadata } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -28,7 +33,7 @@ export async function handleToggleMentionModeCommand({
   if (!channel || channel.type !== ChannelType.GuildText) {
     await command.reply({
       content: 'This command can only be used in text channels (not threads).',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -39,7 +44,7 @@ export async function handleToggleMentionModeCommand({
   if (metadata.channelAppId && metadata.channelAppId !== appId) {
     await command.reply({
       content: 'This channel is configured for a different bot.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -48,7 +53,7 @@ export async function handleToggleMentionModeCommand({
     await command.reply({
       content:
         'This channel is not configured with a project directory.\nUse `/add-project` to set up this channel.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -67,6 +72,6 @@ export async function handleToggleMentionModeCommand({
     content: nextEnabled
       ? `Mention mode **enabled** for this channel.\nThe bot will only start new sessions when @mentioned.\nMessages in existing threads are not affected.`
       : `Mention mode **disabled** for this channel.\nThe bot will respond to all messages in **#${textChannel.name}**.`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   })
 }

@@ -13,7 +13,9 @@ model thread_sessions {
   created_at DateTime? @default(now())
 
   part_messages   part_messages[]
+  scheduled_tasks scheduled_tasks[]
   thread_worktree thread_worktrees?
+  ipc_requests    ipc_requests[]
 }
 
 model part_messages {
@@ -30,9 +32,10 @@ model bot_tokens {
   token      String
   created_at DateTime? @default(now())
 
-  api_keys     bot_api_keys?
-  channels     channel_directories[]
-  global_model global_models?
+  api_keys           bot_api_keys?
+  channels           channel_directories[]
+  forum_sync_configs forum_sync_configs[]
+  global_model       global_models?
 }
 
 model channel_directories {
@@ -48,11 +51,13 @@ model channel_directories {
   channel_worktree     channel_worktrees?
   channel_verbosity    channel_verbosity?
   channel_mention_mode channel_mention_mode?
+  scheduled_tasks      scheduled_tasks[]
 }
 
 model bot_api_keys {
   app_id         String    @id
   gemini_api_key String?
+  openai_api_key String?
   xai_api_key    String?
   created_at     DateTime? @default(now())
 
@@ -75,6 +80,7 @@ model thread_worktrees {
 model channel_models {
   channel_id String    @id
   model_id   String
+  variant    String?
   created_at DateTime? @default(now())
   updated_at DateTime? @default(now()) @updatedAt
 
@@ -84,6 +90,7 @@ model channel_models {
 model session_models {
   session_id String    @id
   model_id   String
+  variant    String?
   created_at DateTime? @default(now())
 }
 
@@ -131,8 +138,109 @@ model channel_mention_mode {
 model global_models {
   app_id     String    @id
   model_id   String
+  variant    String?
   created_at DateTime? @default(now())
   updated_at DateTime? @default(now()) @updatedAt
 
   bot bot_tokens @relation(fields: [app_id], references: [app_id])
+}
+
+enum task_status {
+  planned
+  running
+  completed
+  cancelled
+  failed
+}
+
+enum task_schedule_kind {
+  at
+  cron
+}
+
+model scheduled_tasks {
+  id                 Int                @id @default(autoincrement())
+  status             task_status        @default(planned)
+  schedule_kind      task_schedule_kind
+  run_at             DateTime?
+  cron_expr          String?
+  timezone           String?
+  next_run_at        DateTime
+  running_started_at DateTime?
+  last_run_at        DateTime?
+  last_error         String?
+  attempts           Int                @default(0)
+  payload_json       String
+  prompt_preview     String
+  channel_id         String?
+  thread_id          String?
+  session_id         String?
+  project_directory  String?
+  created_at         DateTime?          @default(now())
+  updated_at         DateTime?          @default(now()) @updatedAt
+
+  channel               channel_directories?    @relation(fields: [channel_id], references: [channel_id], onDelete: SetNull, onUpdate: Cascade)
+  thread                thread_sessions?        @relation(fields: [thread_id], references: [thread_id], onDelete: SetNull, onUpdate: Cascade)
+  session_start_sources session_start_sources[]
+
+  @@index([status, next_run_at])
+  @@index([channel_id, status])
+  @@index([thread_id, status])
+}
+
+model session_start_sources {
+  session_id         String             @id
+  schedule_kind      task_schedule_kind
+  scheduled_task_id  Int?
+  created_at         DateTime?          @default(now())
+  updated_at         DateTime?          @default(now()) @updatedAt
+
+  scheduled_task scheduled_tasks? @relation(fields: [scheduled_task_id], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([scheduled_task_id])
+}
+
+model forum_sync_configs {
+  id               Int       @id @default(autoincrement())
+  app_id           String
+  forum_channel_id String
+  output_dir       String
+  direction        String    @default("bidirectional")
+  created_at       DateTime? @default(now())
+  updated_at       DateTime? @default(now()) @updatedAt
+
+  bot bot_tokens @relation(fields: [app_id], references: [app_id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([app_id, forum_channel_id])
+}
+
+enum ipc_request_type {
+  file_upload
+  action_buttons
+}
+
+enum ipc_request_status {
+  pending
+  processing
+  completed
+  cancelled
+}
+
+// IPC bridge between the opencode plugin process and the Discord bot process.
+// Replaces the old HTTP lock server for file-upload and action-buttons requests.
+// Plugin inserts a pending row, bot polls and dispatches, then writes the response.
+model ipc_requests {
+  id         String             @id @default(uuid())
+  type       ipc_request_type
+  session_id String
+  thread_id  String
+  payload    String             // JSON-encoded request data
+  response   String?            // JSON-encoded response, null while pending
+  status     ipc_request_status @default(pending)
+  created_at DateTime           @default(now())
+  updated_at DateTime           @default(now()) @updatedAt
+
+  thread thread_sessions @relation(fields: [thread_id], references: [thread_id])
+
+  @@index([status, created_at])
 }

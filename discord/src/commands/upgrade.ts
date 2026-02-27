@@ -10,7 +10,9 @@ import { spawn } from 'node:child_process'
 
 const logger = createLogger(LogPrefix.CLI)
 
-export async function handleUpgradeAndRestartCommand({ command }: CommandContext): Promise<void> {
+export async function handleUpgradeAndRestartCommand({
+  command,
+}: CommandContext): Promise<void> {
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   logger.log('[UPGRADE] /upgrade-and-restart triggered')
@@ -30,6 +32,10 @@ export async function handleUpgradeAndRestartCommand({ command }: CommandContext
       content: `Upgraded kimaki **v${currentVersion}** -> **v${newVersion}**. Restarting bot...`,
     })
 
+    // Spawning bare `kimaki` works even if the user originally ran via npx/bunx:
+    // `npm i -g kimaki@latest` creates a global bin link, and npx resolves
+    // local -> global -> cache -> registry, so it prefers the global install.
+    // bunx shares the same global cache, so it also picks up the new version.
     const child = spawn('kimaki', process.argv.slice(2), {
       shell: true,
       stdio: 'ignore',

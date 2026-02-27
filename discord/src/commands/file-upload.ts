@@ -1,13 +1,10 @@
 // File upload tool handler - Shows Discord modal with FileUploadBuilder.
-// When the AI uses the kimaki_file_upload tool, the plugin POSTs to the bot's
-// lock server HTTP endpoint. The bot shows a button in the thread, user clicks
-// it to open a modal with a native file picker. Uploaded files are downloaded
-// to the project directory and paths returned to the AI.
-//
-// Architecture: The plugin tool (running in OpenCode's process) communicates
-// with the Discord bot via HTTP. The bot holds the HTTP response open until
-// the user completes the upload or the request is cancelled. This bridges the
-// gap between the plugin process and Discord's interaction-based UI.
+// When the AI uses the kimaki_file_upload tool, the plugin inserts a row into
+// the ipc_requests DB table. The bot polls this table, picks up the request,
+// and shows a button in the thread. User clicks it to open a modal with a
+// native file picker. Uploaded files are downloaded to the project directory.
+// The bot writes file paths back to ipc_requests.response, and the plugin
+// polls until the response appears.
 
 import {
   ButtonBuilder,
@@ -20,11 +17,13 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createLogger, LogPrefix } from '../logger.js'
+import { notifyError } from '../sentry.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 
 const logger = createLogger(LogPrefix.FILE_UPLOAD)
@@ -55,7 +54,10 @@ type PendingFileUploadContext = {
   timer: ReturnType<typeof setTimeout>
 }
 
-export const pendingFileUploadContexts = new Map<string, PendingFileUploadContext>()
+export const pendingFileUploadContexts = new Map<
+  string,
+  PendingFileUploadContext
+>()
 
 /**
  * Sanitize an attachment filename to prevent path traversal.
@@ -80,7 +82,10 @@ function sanitizeFilename(name: string): string {
  * Safely resolve a pending context exactly once. Prevents double-resolve from
  * cancel/submit races by checking the `resolved` flag.
  */
-function resolveContext(context: PendingFileUploadContext, filePaths: string[]): boolean {
+function resolveContext(
+  context: PendingFileUploadContext,
+  filePaths: string[],
+): boolean {
   if (context.resolved) {
     return false
   }
@@ -115,7 +120,9 @@ export function showFileUploadButton({
     const timer = setTimeout(() => {
       const ctx = pendingFileUploadContexts.get(contextHash)
       if (ctx && !ctx.resolved) {
-        logger.log(`File upload timed out for session ${sessionId}, hash=${contextHash}`)
+        logger.log(
+          `File upload timed out for session ${sessionId}, hash=${contextHash}`,
+        )
         resolveContext(ctx, [])
         // Remove button from message
         if (ctx.messageId) {
@@ -123,7 +130,7 @@ export function showFileUploadButton({
             .fetch(ctx.messageId)
             .then((msg) => {
               return msg.edit({
-                content: `**File Upload Requested**\n${prompt}\n_Timed out_`,
+                content: `**File Upload Requested**\n${prompt.slice(0, 1900)}\n_Timed out_`,
                 components: [],
               })
             })
@@ -152,17 +159,21 @@ export function showFileUploadButton({
       .setLabel('Upload Files')
       .setStyle(ButtonStyle.Primary)
 
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(uploadButton)
+    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      uploadButton,
+    )
 
     thread
       .send({
-        content: `**File Upload Requested**\n${prompt}`,
+        content: `**File Upload Requested**\n${prompt.slice(0, 1900)}`,
         components: [actionRow],
         flags: NOTIFY_MESSAGE_FLAGS,
       })
       .then((msg) => {
         context.messageId = msg.id
-        logger.log(`Showed file upload button for session ${sessionId}, hash=${contextHash}`)
+        logger.log(
+          `Showed file upload button for session ${sessionId}, hash=${contextHash}`,
+        )
       })
       .catch((err) => {
         clearTimeout(timer)
@@ -175,7 +186,9 @@ export function showFileUploadButton({
 /**
  * Handle the file upload button click - opens a modal with FileUploadBuilder.
  */
-export async function handleFileUploadButton(interaction: ButtonInteraction): Promise<void> {
+export async function handleFileUploadButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
   if (!customId.startsWith('file_upload_btn:')) {
     return
@@ -187,7 +200,7 @@ export async function handleFileUploadButton(interaction: ButtonInteraction): Pr
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -227,16 +240,19 @@ export async function handleFileUploadModalSubmit(
   if (!context || context.resolved) {
     await interaction.reply({
       content: 'This file upload request has expired.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
 
   try {
-    await interaction.deferReply({ ephemeral: true })
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
     // File upload data is nested in the LabelModalData -> FileUploadModalData
-    const fileField = interaction.fields.getField('uploaded_files', ComponentType.FileUpload)
+    const fileField = interaction.fields.getField(
+      'uploaded_files',
+      ComponentType.FileUpload,
+    )
     const attachments = fileField.attachments
     if (!attachments || attachments.size === 0) {
       await interaction.editReply({ content: 'No files were uploaded.' })
@@ -260,7 +276,9 @@ export async function handleFileUploadModalSubmit(
       try {
         const response = await fetch(attachment.url)
         if (!response.ok) {
-          errors.push(`Failed to download ${attachment.name}: HTTP ${response.status}`)
+          errors.push(
+            `Failed to download ${attachment.name}: HTTP ${response.status}`,
+          )
           continue
         }
         const buffer = Buffer.from(await response.arrayBuffer())
@@ -312,6 +330,7 @@ export async function handleFileUploadModalSubmit(
     // Ensure context is always resolved even on unexpected errors
     // so the plugin tool doesn't hang indefinitely
     logger.error('Error in file upload modal submit:', err)
+    void notifyError(err, 'File upload modal submit error')
     resolveContext(context, [])
   }
 }
@@ -319,7 +338,10 @@ export async function handleFileUploadModalSubmit(
 /**
  * Best-effort update of the original button message (remove button, append status).
  */
-function updateButtonMessage(context: PendingFileUploadContext, status: string): void {
+function updateButtonMessage(
+  context: PendingFileUploadContext,
+  status: string,
+): void {
   if (!context.messageId) {
     return
   }
@@ -327,7 +349,7 @@ function updateButtonMessage(context: PendingFileUploadContext, status: string):
     .fetch(context.messageId)
     .then((msg) => {
       return msg.edit({
-        content: `**File Upload Requested**\n${context.prompt}\n${status}`,
+        content: `**File Upload Requested**\n${context.prompt.slice(0, 1900)}\n${status}`,
         components: [],
       })
     })
@@ -337,7 +359,9 @@ function updateButtonMessage(context: PendingFileUploadContext, status: string):
 /**
  * Cancel ALL pending file uploads for a thread (e.g. when user sends a new message).
  */
-export async function cancelPendingFileUpload(threadId: string): Promise<boolean> {
+export async function cancelPendingFileUpload(
+  threadId: string,
+): Promise<boolean> {
   const toCancel: PendingFileUploadContext[] = []
   for (const [, ctx] of pendingFileUploadContexts) {
     if (ctx.thread.id === threadId) {

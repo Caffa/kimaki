@@ -8,8 +8,20 @@
 // since they are short-lived and don't need crash recovery.
 //
 // When __KIMAKI_CHILD is set, we're the child process -- just run cli.js directly.
+//
+// V8 heap snapshot flags:
+// Injects --heapsnapshot-near-heap-limit=3 and --diagnostic-dir so V8 writes
+// heap snapshots internally as it approaches the heap limit. This catches OOM
+// situations where SIGKILL (exit 137) would kill the process before our
+// heap-monitor.ts polling can react. The polling monitor is kept as an early
+// warning system at 85% usage; the V8 flag is the last-resort safety net.
 
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 
 // First arg after node + script is either a subcommand or a flag.
 // If it doesn't start with '-', it's a subcommand (e.g. "send", "tunnel", "project").
@@ -31,10 +43,21 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
   let shutdownRequested = false
 
   function start() {
-    child = spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
-      stdio: 'inherit',
-      env: { ...process.env, __KIMAKI_CHILD: '1' },
-    })
+    if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
+      fs.mkdirSync(HEAP_SNAPSHOT_DIR, { recursive: true })
+    }
+    const heapArgs = [
+      `--heapsnapshot-near-heap-limit=3`,
+      `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
+    ]
+    child = spawn(
+      process.argv[0]!,
+      [...heapArgs, ...process.execArgv, ...process.argv.slice(1)],
+      {
+        stdio: 'inherit',
+        env: { ...process.env, __KIMAKI_CHILD: '1' },
+      },
+    )
 
     child.on('exit', (code, signal) => {
       if (code === 0 || code === EXIT_NO_RESTART || shutdownRequested) {
@@ -44,7 +67,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || !hasAutoRestart) {
 
       const now = Date.now()
       restartTimestamps.push(now)
-      while (restartTimestamps.length > 0 && restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS) {
+      while (
+        restartTimestamps.length > 0 &&
+        restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS
+      ) {
         restartTimestamps.shift()
       }
 

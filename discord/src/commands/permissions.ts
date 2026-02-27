@@ -11,13 +11,19 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
-import { getOpencodeClientV2 } from '../opencode.js'
+import { getOpencodeClient } from '../opencode.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
-function wildcardMatch({ value, pattern }: { value: string; pattern: string }): boolean {
+function wildcardMatch({
+  value,
+  pattern,
+}: {
+  value: string
+  pattern: string
+}): boolean {
   let escapedPattern = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*/g, '.*')
@@ -66,7 +72,10 @@ type PendingPermissionContext = {
 }
 
 // Store pending permission contexts by hash
-export const pendingPermissionContexts = new Map<string, PendingPermissionContext>()
+export const pendingPermissionContexts = new Map<
+  string,
+  PendingPermissionContext
+>()
 
 /**
  * Show permission buttons for a permission request.
@@ -124,12 +133,13 @@ export async function showPermissionButtons({
   )
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
+  const fullContent =
+    `⚠️ **Permission Required**\n` +
+    subtaskLine +
+    `**Type:** \`${permission.permission}\`\n` +
+    (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
   const permissionMessage = await thread.send({
-    content:
-      `⚠️ **Permission Required**\n` +
-      subtaskLine +
-      `**Type:** \`${permission.permission}\`\n` +
-      (patternStr ? `**Pattern:** \`${patternStr}\`` : ''),
+    content: fullContent.slice(0, 1900),
     components: [actionRow],
     flags: NOTIFY_MESSAGE_FLAGS,
   })
@@ -142,7 +152,9 @@ export async function showPermissionButtons({
 /**
  * Handle button click for permission.
  */
-export async function handlePermissionButton(interaction: ButtonInteraction): Promise<void> {
+export async function handlePermissionButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
   const customId = interaction.customId
 
   // Extract action and hash from customId (e.g., "permission_once:abc123")
@@ -151,7 +163,10 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
     return
   }
 
-  const response = actionPart.replace('permission_', '') as 'once' | 'always' | 'reject'
+  const response = actionPart.replace('permission_', '') as
+    | 'once'
+    | 'always'
+    | 'reject'
 
   const context = pendingPermissionContexts.get(contextHash)
 
@@ -163,14 +178,17 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
   await interaction.deferUpdate()
 
   try {
-    const clientV2 = getOpencodeClientV2(context.directory)
-    if (!clientV2) {
+    const permClient = getOpencodeClient(context.directory)
+    if (!permClient) {
       throw new Error('OpenCode server not found for directory')
     }
-    const requestIds = context.requestIds.length > 0 ? context.requestIds : [context.permission.id]
+    const requestIds =
+      context.requestIds.length > 0
+        ? context.requestIds
+        : [context.permission.id]
     await Promise.all(
       requestIds.map((requestId) => {
-        return clientV2.permission.reply({
+        return permClient.permission.reply({
           requestID: requestId,
           directory: context.permissionDirectory,
           reply: response,
@@ -192,7 +210,9 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
       }
     })()
 
-    const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+    const patternStr = compactPermissionPatterns(
+      context.permission.patterns,
+    ).join(', ')
     await interaction.editReply({
       content:
         `⚠️ **Permission Required**\n` +
@@ -202,7 +222,9 @@ export async function handlePermissionButton(interaction: ButtonInteraction): Pr
       components: [], // Remove the buttons
     })
 
-    logger.log(`Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`)
+    logger.log(
+      `Permission ${context.permission.id} ${response} (${requestIds.length} request(s))`,
+    )
   } catch (error) {
     logger.error('Error handling permission:', error)
     await interaction.editReply({

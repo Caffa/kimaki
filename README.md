@@ -75,6 +75,7 @@ npx -y kimaki@latest --data-dir ~/personal-bot
 ```
 
 Each instance has its own:
+
 - **Database** - Bot credentials, channel mappings, session history
 - **Projects directory** - Where `/create-new-project` creates new folders
 - **Lock port** - Derived from the data directory path, so instances don't conflict
@@ -131,9 +132,14 @@ Create a role named **"no-kimaki"** (case-insensitive) to block specific users f
 This implements the "four-eyes principle" - it adds friction to prevent accidental usage. Even if you're a server owner, you must remove this role to interact with the bot.
 
 **Use cases:**
+
 - Prevent accidental bot triggers by owners who share servers
 - Temporarily disable access for specific users
 - Break-glass scenario: removing the role is a deliberate action
+
+### Allowing Other Bots (Multi-Agent Orchestration)
+
+By default, messages from other bots are ignored. To allow another bot to trigger Kimaki sessions, assign it the **"Kimaki"** role. Kimaki creates this role automatically on startup, or you can create it manually. Bots without the role are silently ignored to prevent loops.
 
 ## Features
 
@@ -169,23 +175,24 @@ Just send a message in any channel linked to a project. Kimaki handles the rest.
 
 ### Slash Commands
 
-| Command | Description |
-|---------|-------------|
-| `/session <prompt>` | Start a new session with an initial prompt |
-| `/resume <session>` | Resume a previous session (with autocomplete) |
-| `/abort` | Stop the current running session |
-| `/add-project <project>` | Create channels for an existing OpenCode project |
-| `/create-new-project <name>` | Create a new project folder and start a session |
-| `/new-worktree <name>` | Create a git worktree and start a session (⬦ prefix) |
-| `/merge-worktree` | Merge worktree branch into default branch |
-| `/model` | Change the AI model for this channel or session |
-| `/agent` | Change the agent for this channel or session |
-| `/share` | Generate a public URL to share the current session |
-| `/fork` | Fork the session from a previous message |
-| `/queue <message>` | Queue a message to send after current response finishes |
-| `/clear-queue` | Clear all queued messages in this thread |
-| `/undo` | Undo the last assistant message (revert file changes) |
-| `/redo` | Redo the last undone message |
+| Command                      | Description                                             |
+| ---------------------------- | ------------------------------------------------------- |
+| `/session <prompt>`          | Start a new session with an initial prompt              |
+| `/resume <session>`          | Resume a previous session (with autocomplete)           |
+| `/abort`                     | Stop the current running session                        |
+| `/add-project <project>`     | Create channels for an existing OpenCode project        |
+| `/create-new-project <name>` | Create a new project folder and start a session         |
+| `/new-worktree <name>`       | Create a git worktree and start a session (⬦ prefix)    |
+| `/merge-worktree`            | Merge worktree branch into default branch               |
+| `/model`                     | Change the AI model for this channel or session         |
+| `/agent`                     | Change the agent for this channel or session            |
+| `/share`                     | Generate a public URL to share the current session      |
+| `/fork`                      | Fork the session from a previous message                |
+| `/queue <message>`           | Queue a message to send after current response finishes |
+| `/clear-queue`               | Clear all queued messages in this thread                |
+| `/undo`                      | Undo the last assistant message (revert file changes)   |
+| `/redo`                      | Redo the last undone message                            |
+| `/upgrade-and-restart`       | Upgrade kimaki to latest and restart the bot            |
 
 ### CLI Commands
 
@@ -223,6 +230,12 @@ Create Discord channels for a project directory without starting a session. Usef
 # Add current directory as a project
 npx -y kimaki project add
 
+# Upgrade kimaki and restart the running bot process
+npx -y kimaki upgrade
+
+# Upgrade only (skip bot restart)
+npx -y kimaki upgrade --skip-restart
+
 # Add a specific directory
 npx -y kimaki project add /path/to/project
 
@@ -235,11 +248,11 @@ KIMAKI_BOT_TOKEN=xxx npx -y kimaki project add --app-id 987654321
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `[directory]` | Project directory path (defaults to current directory) |
+| Option                  | Description                                                         |
+| ----------------------- | ------------------------------------------------------------------- |
+| `[directory]`           | Project directory path (defaults to current directory)              |
 | `-g, --guild <guildId>` | Discord guild/server ID (auto-detects if bot is in only one server) |
-| `-a, --app-id <appId>` | Bot application ID (reads from database if available) |
+| `-a, --app-id <appId>`  | Bot application ID (reads from database if available)               |
 
 ## Programmatically Start Sessions
 
@@ -247,8 +260,8 @@ You can start Kimaki sessions from CI pipelines, cron jobs, or any automation. T
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
+| Variable           | Required    | Description       |
+| ------------------ | ----------- | ----------------- |
 | `KIMAKI_BOT_TOKEN` | Yes (in CI) | Discord bot token |
 
 ### CLI Options
@@ -295,6 +308,7 @@ jobs:
 ```
 
 **Setup:**
+
 1. Add `KIMAKI_BOT_TOKEN` to your repository secrets (Settings → Secrets → Actions)
 2. Replace `1234567890123456789` with your Discord channel ID (right-click channel → Copy Channel ID)
 3. Make sure the Kimaki bot is running on your machine
@@ -308,6 +322,43 @@ jobs:
 
 Use `--notify-only` for notifications that don't need immediate AI response (e.g., subscription events). Reply to the thread later to start a session with the notification as context.
 
+## Scheduled Tasks
+
+Add `--send-at` to any `kimaki send` command to schedule it for later. Supports one-time ISO dates (must be UTC ending with `Z`) and recurring cron expressions (runs in your local timezone):
+
+```bash
+# One-time: run at a specific UTC time
+kimaki send --channel <channel-id> --prompt "Review open PRs" \
+  --send-at "2026-03-01T09:00:00Z"
+
+# Recurring: every Monday at 9am local time
+kimaki send --channel <channel-id> \
+  --prompt "Run weekly test suite and summarize failures" \
+  --send-at "0 9 * * 1"
+
+# Schedule a reminder into an existing thread
+kimaki send --session <session-id> \
+  --prompt "Reminder: <@user-id> check back on this thread" \
+  --send-at "2026-03-01T15:00:00Z" --notify-only
+```
+
+All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The only exception is `--wait`, which is incompatible since the task runs in the future.
+
+Manage scheduled tasks with `kimaki task list` and `kimaki task delete <id>`.
+
+## Memory
+
+Kimaki supports persistent memory across sessions via a `MEMORY.md` file in your project root. No flags needed — if the file exists, the AI reads it at session start.
+
+```markdown
+# MEMORY.md
+
+Using JWT tokens with 15min expiry. Refresh tokens in httpOnly cookies.
+User prefers kebab-case filenames and errore-style error handling.
+```
+
+The AI can update this file to store learnings, decisions, preferences, and context worth preserving. After long idle gaps (10+ min), the AI is reminded to save important context before starting new work.
+
 ## How It Works
 
 **SQLite Database** - Kimaki stores state in `<data-dir>/discord-sessions.db` (default: `~/.kimaki/discord-sessions.db`). This maps Discord threads to OpenCode sessions, channels to directories, and stores your bot credentials. Use `--data-dir` to change the location.
@@ -315,6 +366,7 @@ Use `--notify-only` for notifications that don't need immediate AI response (e.g
 **OpenCode Servers** - When you message a channel, Kimaki spawns (or reuses) an OpenCode server for that project directory. The server handles the actual AI coding session.
 
 **Channel Metadata** - Each channel's topic contains XML metadata linking it to a directory and bot:
+
 ```xml
 <kimaki><directory>/path/to/project</directory><app>bot_id</app></kimaki>
 ```
@@ -371,11 +423,13 @@ Set the AI model in your project's `opencode.json`:
 Format: `provider/model-name`
 
 **Examples:**
+
 - `anthropic/claude-sonnet-4-20250514` - Claude Sonnet 4
 - `anthropic/claude-opus-4-20250514` - Claude Opus 4
 - `openai/gpt-4o` - GPT-4o
 - `google/gemini-2.5-pro` - Gemini 2.5 Pro
 
 Or use these Discord commands to change settings per channel/session:
+
 - `/model` - Select a different AI model
 - `/agent` - Select a different agent (if you have multiple agents configured in your project)

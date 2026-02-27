@@ -2,6 +2,15 @@ after every change always run tsc inside discord to validate your changes. try t
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
+## opencode SDK
+
+always import from `@opencode-ai/sdk/v2`, never from `@opencode-ai/sdk` (v1). the v2 SDK uses flat parameters instead of nested `path`/`query`/`body` objects. for example:
+
+- `session.get({ sessionID: id })` not `session.get({ path: { id } })`
+- `session.messages({ sessionID: id, directory })` not `session.messages({ path: { id }, query: { directory } })`
+- `session.create({ title, directory })` not `session.create({ body: { title }, query: { directory } })`
+- `provider.list({ directory })` not `provider.list({ query: { directory } })`
+
 # restarting the discord bot
 
 ONLY restart the discord bot if the user explicitly asks for it.
@@ -16,7 +25,6 @@ The bot will wait 1000ms and then restart itself with the same arguments.
 ## sqlite
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
-
 
 you should prefer never deleting or adding new fields. we rely in a schema.sql generated inside src to initialize an update the database schema for users.
 
@@ -35,6 +43,7 @@ cd discord && pnpm generate
 this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
 
 when adding new tables:
+
 1. add the model to `discord/schema.prisma`
 2. run `pnpm generate` inside discord folder
 3. add getter/setter functions in `database.ts` if needed
@@ -43,21 +52,35 @@ database.ts has some functions that abstract complex prisma queries or inserts. 
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## libsql in-memory gotcha
+
+when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
 
 it is a package for using errors as values in ts.
 
+this whole codebase uses errore.org conventions. ALWAYS read the errore skill before editing any code.
+
 ## opencode
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode
 
 ## discord bot messages
- 
+
 try to not use emojis in messages
 
 when creating system messages like replies to commands never add new line spaces between paragraphs or lines. put one line next to the one before.
+
+## discord typing indicator
+
+discord typing indicators expire quickly (about 7 seconds), so keep a periodic `sendTyping()` interval active during long-running responses and tool calls.
+
+do not remove the typing interval to fix stuck typing; instead fix lifecycle bugs by clearing both the active interval and any scheduled restart timeout when a session ends, aborts, or pauses for permission/question prompts.
+
+when adding delayed typing restarts (for example after `step-finish`), always guard them with session closed/aborted checks so they cannot restart typing after cleanup.
 
 ## AGENTS.md
 
@@ -66,6 +89,7 @@ AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will 
 ## resolving project directories in commands
 
 use `resolveWorkingDirectory({ channel })` from `discord-utils.ts` to get directory paths in slash commands. it returns:
+
 - `projectDirectory`: base project dir, used for `initializeOpencodeForDirectory` (server is keyed by this)
 - `workingDirectory`: worktree dir if thread has an active worktree, otherwise same as `projectDirectory`. use this for `cwd` in shell commands and for SDK `directory` params
 - `channelAppId`: optional app ID from channel metadata
@@ -79,6 +103,7 @@ discord message components (buttons, select menus, modals) enforce a strict `cus
 never embed long strings in `custom_id` (absolute paths, base64 of paths, serialized json, session transcripts, etc) or the builder will throw errors like `Invalid string length`.
 
 instead:
+
 - store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
@@ -100,10 +125,15 @@ open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memo
 there is a 5 minute cooldown between automatic snapshots to avoid disk spam.
 
 signal summary:
+
 - `SIGUSR1`: write heap snapshot to disk
 - `SIGUSR2`: graceful restart (existing)
 
 the implementation is in `discord/src/heap-monitor.ts`.
+
+## goke cli
+
+this project uses goke (not cac) for CLI parsing. goke auto-infers option types from `.option()` calls. never add manual type annotations to `.action()` callback options. just use `.action(async (options) => { ... })` and let goke infer the types.
 
 ## logging
 
@@ -113,3 +143,41 @@ for the log prefixes always use short names
 
 kimaki will also output logs to the file discord/kimaki.log
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
+
+## opencode plugin and env vars
+
+the opencode plugin (`discord/src/opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
+
+to pass bot-process state to the plugin, use `KIMAKI_*` env vars set in `opencode.ts` when spawning the server process. current env vars:
+
+- `KIMAKI_DATA_DIR`: data directory path
+- `KIMAKI_BOT_TOKEN`: discord bot token
+- `KIMAKI_LOCK_PORT`: lock server port for bot communication
+
+when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
+
+## skills folder
+
+skills is a symlink to discord/skills. this is a folder of skills for kimaki. loaded by all kimaki users. some skills are synced from github repos. see discord/scripts/sync-skills.ts. so never manually update them. instead if need to updaste them start kimaki threads on those project, found via kimaki cli.
+
+## discord-digital-twin e2e style
+
+when writing discord e2e tests, prefer adding reusable automation methods to `DigitalDiscord` instead of creating per-test helper functions in kimaki.
+
+aim for a playwright-like style in tests:
+
+- actor methods for actions: `discord.user(userId).sendMessage(...)`, `runSlashCommand(...)`, `clickButton(...)`, etc
+- separate wait methods for assertions: `discord.waitForThread(...)`, `discord.waitForBotReply(...)`, `discord.waitForInteractionAck(...)`
+
+if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*` so future tests can reuse it.
+
+## e2e testing learnings
+
+see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
+
+- e2e tests use `CachedOpencodeProviderProxy` which caches LLM responses. first run = cache miss (real provider speed), second run = cache hit. `streamChunkDelayMs` only affects cache hits. **always run a failing e2e test at least twice** before investigating — the first run populates cache, second run exercises cached path.
+- never use fake api keys (like `dummy`) for e2e runs when real provider env vars exist. use real `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` from env.
+- prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
+- keep test timeouts long: 360s per test, 120s for polling, 60s for beforeAll. LLM calls + opencode server startup + cache misses are slow. never use short timeouts in e2e.
+- bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
+- set `KIMAKI_VITEST=1` to suppress clack terminal log noise during test runs.

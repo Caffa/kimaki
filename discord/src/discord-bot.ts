@@ -15,8 +15,12 @@ import {
   getThreadSession,
   setThreadSession,
   getPrisma,
+  cancelAllPendingIpcRequests,
 } from './database.js'
-import { initializeOpencodeForDirectory, getOpencodeServers } from './opencode.js'
+import {
+  initializeOpencodeForDirectory,
+  getOpencodeServers,
+} from './opencode.js'
 import { formatWorktreeName } from './commands/worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
 import { createWorktreeWithSubmodules } from './worktree-utils.js'
@@ -34,7 +38,11 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import yaml from 'js-yaml'
-import { getFileAttachments, getTextAttachments, resolveMentions } from './message-formatting.js'
+import {
+  getFileAttachments,
+  getTextAttachments,
+  resolveMentions,
+} from './message-formatting.js'
 import {
   ensureKimakiCategory,
   ensureKimakiAudioCategory,
@@ -49,13 +57,27 @@ import {
   registerVoiceStateHandler,
 } from './voice-handler.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { handleOpencodeSession } from './session-handler.js'
+import {
+  handleOpencodeSession,
+  signalThreadInterrupt,
+  type SessionStartSourceContext,
+} from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
+import { stopHranaServer } from './hrana-server.js'
+import { notifyError } from './sentry.js'
 
-export { initDatabase, closeDatabase, getChannelDirectory, getPrisma } from './database.js'
+export {
+  initDatabase,
+  closeDatabase,
+  getChannelDirectory,
+  getPrisma,
+} from './database.js'
 export { initializeOpencodeForDirectory } from './opencode.js'
-export { escapeBackticksInCodeBlocks, splitMarkdownForDiscord } from './discord-utils.js'
+export {
+  escapeBackticksInCodeBlocks,
+  splitMarkdownForDiscord,
+} from './discord-utils.js'
 export { getOpencodeSystemMessage } from './system-message.js'
 export {
   ensureKimakiCategory,
@@ -80,15 +102,23 @@ import fs from 'node:fs'
 import * as errore from 'errore'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
+import { startTaskRunner } from './task-runner.js'
 import { setGlobalDispatcher, Agent } from 'undici'
 
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
-setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 500 }))
+setGlobalDispatcher(
+  new Agent({ headersTimeout: 0, bodyTimeout: 0, connections: 500 }),
+)
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const voiceLogger = createLogger(LogPrefix.VOICE)
+
+// Per-thread serial queue so messages (voice + text) in the same thread are
+// processed one at a time in arrival order. Without this, a slow voice
+// transcription can finish after a fast text message and abort its session.
+const threadMessageQueue = new Map<string, Promise<void>>()
 
 function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   footer,
@@ -109,6 +139,28 @@ function parseEmbedFooterMarker<T extends Record<string, unknown>>({
   }
 }
 
+function parseSessionStartSourceFromMarker(
+  marker: ThreadStartMarker | undefined,
+): SessionStartSourceContext | undefined {
+  if (!marker?.scheduledKind) {
+    return undefined
+  }
+  if (marker.scheduledKind !== 'at' && marker.scheduledKind !== 'cron') {
+    return undefined
+  }
+  if (
+    typeof marker.scheduledTaskId !== 'number' ||
+    !Number.isInteger(marker.scheduledTaskId) ||
+    marker.scheduledTaskId < 1
+  ) {
+    return { scheduleKind: marker.scheduledKind }
+  }
+  return {
+    scheduleKind: marker.scheduledKind,
+    scheduledTaskId: marker.scheduledTaskId,
+  }
+}
+
 type StartOptions = {
   token: string
   appId?: string
@@ -124,7 +176,12 @@ export async function createDiscordClient() {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates,
     ],
-    partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
+    partials: [
+      Partials.Channel,
+      Partials.Message,
+      Partials.User,
+      Partials.ThreadMember,
+    ],
   })
 }
 
@@ -158,30 +215,44 @@ export async function startDiscordBot({
       discordLogger.log(`Bot Application ID (provided): ${currentAppId}`)
     }
 
-    for (const guild of c.guilds.cache.values()) {
-      discordLogger.log(`${guild.name} (${guild.id})`)
-
-      const channels = await getChannelsWithDescriptions(guild)
-      const kimakiChannels = channels.filter(
-        (ch) => ch.kimakiDirectory && (!ch.kimakiApp || ch.kimakiApp === currentAppId),
-      )
-
-      if (kimakiChannels.length > 0) {
-        discordLogger.log(`  Found ${kimakiChannels.length} channel(s) for this bot:`)
-        for (const channel of kimakiChannels) {
-          discordLogger.log(`  - #${channel.name}: ${channel.kimakiDirectory}`)
-        }
-      } else {
-        discordLogger.log(`  No channels for this bot`)
-      }
-    }
-
     voiceLogger.log(
       `[READY] Bot is ready and will only respond to channels with app ID: ${currentAppId}`,
     )
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+
+    // Channel logging is informational only; do it in background so startup stays responsive.
+    void (async () => {
+      for (const guild of c.guilds.cache.values()) {
+        discordLogger.log(`${guild.name} (${guild.id})`)
+
+        const channels = await getChannelsWithDescriptions(guild)
+        const kimakiChannels = channels.filter(
+          (ch) =>
+            ch.kimakiDirectory &&
+            (!ch.kimakiApp || ch.kimakiApp === currentAppId),
+        )
+
+        if (kimakiChannels.length > 0) {
+          discordLogger.log(
+            `  Found ${kimakiChannels.length} channel(s) for this bot:`,
+          )
+          for (const channel of kimakiChannels) {
+            discordLogger.log(
+              `  - #${channel.name}: ${channel.kimakiDirectory}`,
+            )
+          }
+          continue
+        }
+
+        discordLogger.log('  No channels for this bot')
+      }
+    })().catch((error) => {
+      discordLogger.warn(
+        `Background guild channel scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
   }
 
   // If client is already ready (was logged in before being passed to us),
@@ -194,14 +265,44 @@ export async function startDiscordBot({
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     try {
-      const isSelfBotMessage = Boolean(discordClient.user && message.author?.id === discordClient.user.id)
+      const isSelfBotMessage = Boolean(
+        discordClient.user && message.author?.id === discordClient.user.id,
+      )
       const promptMarker = parseEmbedFooterMarker<ThreadStartMarker>({
         footer: message.embeds[0]?.footer?.text,
       })
-      const isCliInjectedPrompt = Boolean(isSelfBotMessage && promptMarker?.cliThreadPrompt)
+      const isCliInjectedPrompt = Boolean(
+        isSelfBotMessage && promptMarker?.cliThreadPrompt,
+      )
+      const sessionStartSource = isCliInjectedPrompt
+        ? parseSessionStartSourceFromMarker(promptMarker)
+        : undefined
+      const cliInjectedUsername = isCliInjectedPrompt
+        ? promptMarker?.username || 'kimaki-cli'
+        : undefined
+      const cliInjectedUserId = isCliInjectedPrompt
+        ? promptMarker?.userId
+        : undefined
+      const cliInjectedAgent = isCliInjectedPrompt
+        ? promptMarker?.agent
+        : undefined
+      const cliInjectedModel = isCliInjectedPrompt
+        ? promptMarker?.model
+        : undefined
 
-      if (message.author?.bot && !isCliInjectedPrompt) {
+      // Always ignore our own messages (unless CLI-injected prompt above).
+      // Without this, assigning the Kimaki role to the bot itself would loop.
+      if (isSelfBotMessage && !isCliInjectedPrompt) {
         return
+      }
+
+      // Allow bot messages through if the bot has the "Kimaki" role assigned.
+      // This enables multi-agent orchestration where other bots (e.g. an
+      // orchestrator) can @mention Kimaki and trigger sessions like a human.
+      if (message.author?.bot) {
+        if (!hasKimakiBotPermission(message.member)) {
+          return
+        }
       }
 
       // Ignore messages that start with a mention of another user (not the bot).
@@ -221,7 +322,10 @@ export async function startDiscordBot({
           catch: (e) => e as Error,
         })
         if (fetched instanceof Error) {
-          discordLogger.log(`Failed to fetch partial message ${message.id}:`, fetched.message)
+          discordLogger.log(
+            `Failed to fetch partial message ${message.id}:`,
+            fetched.message,
+          )
           return
         }
       }
@@ -234,7 +338,8 @@ export async function startDiscordBot({
         const textChannel = channel as TextChannel
         const mentionModeEnabled = await getChannelMentionMode(textChannel.id)
         if (mentionModeEnabled) {
-          const botMentioned = discordClient.user && message.mentions.has(discordClient.user.id)
+          const botMentioned =
+            discordClient.user && message.mentions.has(discordClient.user.id)
           const isShellCommand = message.content?.startsWith('!')
           if (!botMentioned && !isShellCommand) {
             voiceLogger.log(`[IGNORED] Mention mode enabled, bot not mentioned`)
@@ -295,7 +400,7 @@ export async function startDiscordBot({
           }
           if (worktreeInfo.status === 'error') {
             await message.reply({
-              content: `❌ Worktree creation failed: ${worktreeInfo.error_message}`,
+              content: `❌ Worktree creation failed: ${(worktreeInfo.error_message || '').slice(0, 1900)}`,
               flags: SILENT_MESSAGE_FLAGS,
             })
             return
@@ -304,7 +409,9 @@ export async function startDiscordBot({
           // The worktree directory is passed via query.directory in prompt/command calls
           if (worktreeInfo.project_directory) {
             projectDirectory = worktreeInfo.project_directory
-            discordLogger.log(`Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`)
+            discordLogger.log(
+              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
+            )
           }
         }
 
@@ -318,7 +425,7 @@ export async function startDiscordBot({
         if (projectDirectory && !fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
-            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
@@ -329,137 +436,214 @@ export async function startDiscordBot({
         if (message.content?.startsWith('!') && projectDirectory) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
-            const shellDir = worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-              ? worktreeInfo.worktree_directory
-              : projectDirectory
-            const loadingReply = await message.reply({ content: `Running \`${shellCmd}\`...` })
-            const result = await runShellCommand({ command: shellCmd, directory: shellDir })
+            const shellDir =
+              worktreeInfo?.status === 'ready' &&
+              worktreeInfo.worktree_directory
+                ? worktreeInfo.worktree_directory
+                : projectDirectory
+            const loadingReply = await message.reply({
+              content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
+            })
+            const result = await runShellCommand({
+              command: shellCmd,
+              directory: shellDir,
+            })
             await loadingReply.edit({ content: result })
             return
           }
         }
 
-        const sessionId = await getThreadSession(thread.id)
+        // Chain onto per-thread queue so messages (voice transcription + text)
+        // are processed in Discord arrival order, not completion order.
+        const prev = threadMessageQueue.get(thread.id)
+        if (prev) {
+          // Another message is being processed — abort it immediately so this
+          // queued message can start as soon as possible.
+          const sdkDirectory =
+            worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+              ? worktreeInfo.worktree_directory
+              : projectDirectory
+          signalThreadInterrupt({
+            threadId: thread.id,
+            serverDirectory: projectDirectory,
+            sdkDirectory,
+          })
+        }
+        const task = (prev || Promise.resolve()).then(
+          () => { return processThreadMessage() },
+          () => { return processThreadMessage() },
+        )
+        threadMessageQueue.set(thread.id, task)
+        void task.finally(() => {
+          if (threadMessageQueue.get(thread.id) === task) {
+            threadMessageQueue.delete(thread.id)
+          }
+        })
+        await task
+        return
 
-        // No existing session - start a new one (e.g., replying to a notification thread)
-        if (!sessionId) {
-          discordLogger.log(`No session for thread ${thread.id}, starting new session`)
+        async function processThreadMessage() {
+          const sessionId = await getThreadSession(thread.id)
 
-          if (!projectDirectory) {
-            discordLogger.log(`Cannot start session: no project directory for thread ${thread.id}`)
+          // No existing session - start a new one (e.g., replying to a notification thread)
+          if (!sessionId) {
+            discordLogger.log(
+              `No session for thread ${thread.id}, starting new session`,
+            )
+
+            if (!projectDirectory) {
+              discordLogger.log(
+                `Cannot start session: no project directory for thread ${thread.id}`,
+              )
+              return
+            }
+
+            let prompt = resolveMentions(message)
+            const transcription = await processVoiceAttachment({
+              message,
+              thread,
+              projectDirectory,
+              appId: currentAppId,
+            })
+            if (transcription) {
+              prompt = `Voice message transcription from Discord user:\n\n${transcription}`
+            }
+
+            const starterMessage = await thread
+              .fetchStarterMessage()
+              .catch((error) => {
+                discordLogger.warn(
+                  `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
+                  error instanceof Error ? error.message : String(error),
+                )
+                return null
+              })
+            if (starterMessage && starterMessage.content !== message.content) {
+              const starterTextAttachments = await getTextAttachments(starterMessage)
+              const starterContent = resolveMentions(starterMessage)
+              const starterText = starterTextAttachments
+                ? `${starterContent}\n\n${starterTextAttachments}`
+                : starterContent
+              if (starterText) {
+                prompt = `Context from thread:\n${starterText}\n\nUser request:\n${prompt}`
+              }
+            }
+
+            await handleOpencodeSession({
+              prompt,
+              thread,
+              projectDirectory,
+              channelId: parent?.id || '',
+              username:
+                cliInjectedUsername ||
+                message.member?.displayName ||
+                message.author.displayName,
+              userId: cliInjectedUserId || message.author.id,
+              appId: currentAppId,
+              sessionStartSource,
+              agent: cliInjectedAgent,
+              model: cliInjectedModel,
+            })
             return
           }
 
-          // Include starter message as context for the session
-          let prompt = resolveMentions(message)
-          const starterMessage = await thread.fetchStarterMessage().catch((error) => {
-            discordLogger.warn(
-              `[SESSION] Failed to fetch starter message for thread ${thread.id}:`,
-              error instanceof Error ? error.message : String(error),
-            )
-            return null
-          })
-          if (starterMessage?.content && starterMessage.content !== message.content) {
-            prompt = `Context from thread:\n${resolveMentions(starterMessage)}\n\nUser request:\n${prompt}`
+          voiceLogger.log(
+            `[SESSION] Found session ${sessionId} for thread ${thread.id}`,
+          )
+
+          let messageContent = resolveMentions(message)
+          if (isCliInjectedPrompt) {
+            messageContent = message.content || ''
+          }
+          let currentSessionContext: string | undefined
+          let lastSessionContext: string | undefined
+
+          if (projectDirectory) {
+            try {
+              const getClient = await initializeOpencodeForDirectory(
+                projectDirectory,
+                { channelId: parent?.id },
+              )
+              if (getClient instanceof Error) {
+                voiceLogger.error(
+                  `[SESSION] Failed to initialize OpenCode client:`,
+                  getClient.message,
+                )
+                throw new Error(getClient.message)
+              }
+              const client = getClient()
+
+              // get current session context (without system prompt, it would be duplicated)
+              if (sessionId) {
+                const result = await getCompactSessionContext({
+                  client,
+                  sessionId: sessionId,
+                  includeSystemPrompt: false,
+                  maxMessages: 15,
+                })
+                if (errore.isOk(result)) {
+                  currentSessionContext = result
+                }
+              }
+
+              // get last session context (with system prompt for project context)
+              const lastSessionResult = await getLastSessionId({
+                client,
+                excludeSessionId: sessionId,
+              })
+              const lastSessionId = errore.unwrapOr(lastSessionResult, null)
+              if (lastSessionId) {
+                const result = await getCompactSessionContext({
+                  client,
+                  sessionId: lastSessionId,
+                  includeSystemPrompt: true,
+                  maxMessages: 10,
+                })
+                if (errore.isOk(result)) {
+                  lastSessionContext = result
+                }
+              }
+            } catch (e) {
+              voiceLogger.error(`Could not get session context:`, e)
+              void notifyError(e, 'Failed to get session context')
+            }
           }
 
-          await handleOpencodeSession({
-            prompt,
+          const transcription = await processVoiceAttachment({
+            message,
             thread,
             projectDirectory,
-            channelId: parent?.id || '',
-            username: message.member?.displayName || message.author.displayName,
-            userId: message.author.id,
             appId: currentAppId,
+            currentSessionContext,
+            lastSessionContext,
           })
-          return
-        }
-
-        voiceLogger.log(`[SESSION] Found session ${sessionId} for thread ${thread.id}`)
-
-        let messageContent = resolveMentions(message)
-        if (isCliInjectedPrompt) {
-          messageContent = message.content || ''
-        }
-
-        let currentSessionContext: string | undefined
-        let lastSessionContext: string | undefined
-
-        if (projectDirectory) {
-          try {
-            const getClient = await initializeOpencodeForDirectory(projectDirectory)
-            if (getClient instanceof Error) {
-              voiceLogger.error(`[SESSION] Failed to initialize OpenCode client:`, getClient.message)
-              throw new Error(getClient.message)
-            }
-            const client = getClient()
-
-            // get current session context (without system prompt, it would be duplicated)
-            if (sessionId) {
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: sessionId,
-                includeSystemPrompt: false,
-                maxMessages: 15,
-              })
-              if (errore.isOk(result)) {
-                currentSessionContext = result
-              }
-            }
-
-            // get last session context (with system prompt for project context)
-            const lastSessionResult = await getLastSessionId({
-              client,
-              excludeSessionId: sessionId,
-            })
-            const lastSessionId = errore.unwrapOr(lastSessionResult, null)
-            if (lastSessionId) {
-              const result = await getCompactSessionContext({
-                client,
-                sessionId: lastSessionId,
-                includeSystemPrompt: true,
-                maxMessages: 10,
-              })
-              if (errore.isOk(result)) {
-                lastSessionContext = result
-              }
-            }
-          } catch (e) {
-            voiceLogger.error(`Could not get session context:`, e)
+          if (transcription) {
+            messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
           }
-        }
 
-        const transcription = await processVoiceAttachment({
-          message,
-          thread,
-          projectDirectory,
-          appId: currentAppId,
-          currentSessionContext,
-          lastSessionContext,
-        })
-        if (transcription) {
-          messageContent = transcription
+          const fileAttachments = await getFileAttachments(message)
+          const textAttachmentsContent = await getTextAttachments(message)
+          const promptWithAttachments = textAttachmentsContent
+            ? `${messageContent}\n\n${textAttachmentsContent}`
+            : messageContent
+          await handleOpencodeSession({
+            prompt: promptWithAttachments,
+            thread,
+            projectDirectory,
+            originalMessage: message,
+            images: fileAttachments,
+            channelId: parent?.id,
+            username:
+              cliInjectedUsername ||
+              message.member?.displayName ||
+              message.author.displayName,
+            userId: isCliInjectedPrompt ? cliInjectedUserId : message.author.id,
+            appId: currentAppId,
+            sessionStartSource,
+            agent: cliInjectedAgent,
+            model: cliInjectedModel,
+          })
         }
-
-        const fileAttachments = await getFileAttachments(message)
-        const textAttachmentsContent = await getTextAttachments(message)
-        const promptWithAttachments = textAttachmentsContent
-          ? `${messageContent}\n\n${textAttachmentsContent}`
-          : messageContent
-        await handleOpencodeSession({
-          prompt: promptWithAttachments,
-          thread,
-          projectDirectory,
-          originalMessage: message,
-          images: fileAttachments,
-          channelId: parent?.id,
-          username: isCliInjectedPrompt
-            ? 'kimaki-cli'
-            : message.member?.displayName || message.author.displayName,
-          userId: isCliInjectedPrompt ? undefined : message.author.id,
-          appId: currentAppId,
-        })
-        return
       }
 
       if (channel.type === ChannelType.GuildText) {
@@ -471,7 +655,9 @@ export async function startDiscordBot({
         const channelConfig = await getChannelDirectory(textChannel.id)
 
         if (!channelConfig) {
-          voiceLogger.log(`[IGNORED] Channel #${textChannel.name} has no project directory configured`)
+          voiceLogger.log(
+            `[IGNORED] Channel #${textChannel.name} has no project directory configured`,
+          )
           return
         }
 
@@ -488,7 +674,9 @@ export async function startDiscordBot({
         // Note: Mention mode is checked early in the handler (before permission check)
         // to avoid sending permission errors to users who just didn't @mention the bot.
 
-        discordLogger.log(`DIRECTORY: Found kimaki.directory: ${projectDirectory}`)
+        discordLogger.log(
+          `DIRECTORY: Found kimaki.directory: ${projectDirectory}`,
+        )
         if (channelAppId) {
           discordLogger.log(`APP: Channel app ID: ${channelAppId}`)
         }
@@ -496,7 +684,7 @@ export async function startDiscordBot({
         if (!fs.existsSync(projectDirectory)) {
           discordLogger.error(`Directory does not exist: ${projectDirectory}`)
           await message.reply({
-            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+            content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
             flags: SILENT_MESSAGE_FLAGS,
           })
           return
@@ -506,21 +694,31 @@ export async function startDiscordBot({
         if (message.content?.startsWith('!')) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
-            const loadingReply = await message.reply({ content: `Running \`${shellCmd}\`...` })
-            const result = await runShellCommand({ command: shellCmd, directory: projectDirectory })
+            const loadingReply = await message.reply({
+              content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
+            })
+            const result = await runShellCommand({
+              command: shellCmd,
+              directory: projectDirectory,
+            })
             await loadingReply.edit({ content: result })
             return
           }
         }
 
-        const hasVoice = message.attachments.some((a) => a.contentType?.startsWith('audio/'))
+        const hasVoice = message.attachments.some((a) =>
+          a.contentType?.startsWith('audio/'),
+        )
 
         const baseThreadName = hasVoice
           ? 'Voice Message'
-          : stripMentions(message.content || '').replace(/\s+/g, ' ').trim() || 'kimaki thread'
+          : stripMentions(message.content || '')
+              .replace(/\s+/g, ' ')
+              .trim() || 'kimaki thread'
 
         // Check if worktrees should be enabled (CLI flag OR channel setting)
-        const shouldUseWorktrees = useWorktrees || await getChannelWorktreesEnabled(textChannel.id)
+        const shouldUseWorktrees =
+          useWorktrees || (await getChannelWorktreesEnabled(textChannel.id))
 
         // Add worktree prefix if worktrees are enabled
         const threadName = shouldUseWorktrees
@@ -561,22 +759,34 @@ export async function startDiscordBot({
           if (worktreeResult instanceof Error) {
             const errMsg = worktreeResult.message
             discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
-            await setWorktreeError({ threadId: thread.id, errorMessage: errMsg })
+            await setWorktreeError({
+              threadId: thread.id,
+              errorMessage: errMsg,
+            })
             await thread.send({
               content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
               flags: SILENT_MESSAGE_FLAGS,
             })
           } else {
-            await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
+            await setWorktreeReady({
+              threadId: thread.id,
+              worktreeDirectory: worktreeResult.directory,
+            })
             sessionDirectory = worktreeResult.directory
-            discordLogger.log(`[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`)
+            discordLogger.log(
+              `[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`,
+            )
             // React with tree emoji to mark as worktree thread
-            await reactToThread({ rest: discordClient.rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
+            await reactToThread({
+              rest: discordClient.rest,
+              threadId: thread.id,
+              channelId: thread.parentId || undefined,
+              emoji: '🌳',
+            })
           }
         }
 
         let messageContent = resolveMentions(message)
-
         const transcription = await processVoiceAttachment({
           message,
           thread,
@@ -585,7 +795,7 @@ export async function startDiscordBot({
           appId: currentAppId,
         })
         if (transcription) {
-          messageContent = transcription
+          messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
         }
 
         const fileAttachments = await getFileAttachments(message)
@@ -609,9 +819,15 @@ export async function startDiscordBot({
       }
     } catch (error) {
       voiceLogger.error('Discord handler error:', error)
+      void notifyError(error, 'MessageCreate handler error')
       try {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        await message.reply({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
+        const errMsg = (
+          error instanceof Error ? error.message : String(error)
+        ).slice(0, 1900)
+        await message.reply({
+          content: `Error: ${errMsg}`,
+          flags: SILENT_MESSAGE_FLAGS,
+        })
       } catch (sendError) {
         voiceLogger.error(
           'Discord handler error (fallback):',
@@ -636,15 +852,19 @@ export async function startDiscordBot({
       }
 
       // Get the starter message to check for auto-start marker
-      const starterMessage = await thread.fetchStarterMessage().catch((error) => {
-        discordLogger.warn(
-          `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
-          error instanceof Error ? error.message : String(error),
-        )
-        return null
-      })
+      const starterMessage = await thread
+        .fetchStarterMessage()
+        .catch((error) => {
+          discordLogger.warn(
+            `[THREAD_CREATE] Failed to fetch starter message for thread ${thread.id}:`,
+            error instanceof Error ? error.message : String(error),
+          )
+          return null
+        })
       if (!starterMessage) {
-        discordLogger.log(`[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`)
+        discordLogger.log(
+          `[THREAD_CREATE] Could not fetch starter message for thread ${thread.id}`,
+        )
         return
       }
 
@@ -654,7 +874,9 @@ export async function startDiscordBot({
         return
       }
 
-      const marker = parseEmbedFooterMarker<ThreadStartMarker>({ footer: embedFooter })
+      const marker = parseEmbedFooterMarker<ThreadStartMarker>({
+        footer: embedFooter,
+      })
       if (!marker) {
         return
       }
@@ -663,9 +885,15 @@ export async function startDiscordBot({
         return // Not an auto-start thread
       }
 
-      discordLogger.log(`[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`)
+      discordLogger.log(
+        `[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`,
+      )
 
-      const prompt = resolveMentions(starterMessage).trim()
+      const textAttachmentsContent = await getTextAttachments(starterMessage)
+      const messageText = resolveMentions(starterMessage).trim()
+      const prompt = textAttachmentsContent
+        ? `${messageText}\n\n${textAttachmentsContent}`
+        : messageText
       if (!prompt) {
         discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
         return
@@ -675,7 +903,9 @@ export async function startDiscordBot({
       const channelConfig = await getChannelDirectory(parent.id)
 
       if (!channelConfig) {
-        discordLogger.log(`[BOT_SESSION] No project directory configured for parent channel`)
+        discordLogger.log(
+          `[BOT_SESSION] No project directory configured for parent channel`,
+        )
         return
       }
 
@@ -688,9 +918,11 @@ export async function startDiscordBot({
       }
 
       if (!fs.existsSync(projectDirectory)) {
-        discordLogger.error(`[BOT_SESSION] Directory does not exist: ${projectDirectory}`)
+        discordLogger.error(
+          `[BOT_SESSION] Directory does not exist: ${projectDirectory}`,
+        )
         await thread.send({
-          content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory)}`,
+          content: `✗ Directory does not exist: ${JSON.stringify(projectDirectory).slice(0, 1900)}`,
           flags: SILENT_MESSAGE_FLAGS,
         })
         return
@@ -704,12 +936,14 @@ export async function startDiscordBot({
 
         discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
 
-        const worktreeStatusMessage = await thread.send({
-          content: `🌳 Creating worktree: ${marker.worktree}\n⏳ Setting up (this can take a bit)...`,
-          flags: SILENT_MESSAGE_FLAGS,
-        }).catch(() => {
-          return null
-        })
+        const worktreeStatusMessage = await thread
+          .send({
+            content: `🌳 Creating worktree: ${marker.worktree}\n⏳ Setting up (this can take a bit)...`,
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          .catch(() => {
+            return null
+          })
 
         await createPendingWorktree({
           threadId: thread.id,
@@ -723,35 +957,54 @@ export async function startDiscordBot({
         })
 
         if (errore.isError(worktreeResult)) {
-          discordLogger.error(`[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`)
-          await setWorktreeError({ threadId: thread.id, errorMessage: worktreeResult.message })
+          discordLogger.error(
+            `[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`,
+          )
+          await setWorktreeError({
+            threadId: thread.id,
+            errorMessage: worktreeResult.message,
+          })
           await (worktreeStatusMessage?.edit({
             content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
             flags: SILENT_MESSAGE_FLAGS,
-          }) || thread.send({
-            content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-            flags: SILENT_MESSAGE_FLAGS,
-          }))
+          }) ||
+            thread.send({
+              content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
+              flags: SILENT_MESSAGE_FLAGS,
+            }))
           return projectDirectory
         }
 
-        await setWorktreeReady({ threadId: thread.id, worktreeDirectory: worktreeResult.directory })
-        discordLogger.log(`[BOT_SESSION] Worktree created: ${worktreeResult.directory}`)
+        await setWorktreeReady({
+          threadId: thread.id,
+          worktreeDirectory: worktreeResult.directory,
+        })
+        discordLogger.log(
+          `[BOT_SESSION] Worktree created: ${worktreeResult.directory}`,
+        )
         // React with tree emoji to mark as worktree thread
-        await reactToThread({ rest: discordClient.rest, threadId: thread.id, channelId: thread.parentId || undefined, emoji: '🌳' })
+        await reactToThread({
+          rest: discordClient.rest,
+          threadId: thread.id,
+          channelId: thread.parentId || undefined,
+          emoji: '🌳',
+        })
         await (worktreeStatusMessage?.edit({
           content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
           flags: SILENT_MESSAGE_FLAGS,
-        }) || thread.send({
-          content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-          flags: SILENT_MESSAGE_FLAGS,
-        }))
+        }) ||
+          thread.send({
+            content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
+            flags: SILENT_MESSAGE_FLAGS,
+          }))
         return worktreeResult.directory
       })()
 
       discordLogger.log(
         `[BOT_SESSION] Starting session for thread ${thread.id} with prompt: "${prompt.slice(0, 50)}..."`,
       )
+
+      const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
       await handleOpencodeSession({
         prompt,
@@ -763,12 +1016,22 @@ export async function startDiscordBot({
         userId: marker.userId,
         agent: marker.agent,
         model: marker.model,
+        sessionStartSource: botThreadStartSource,
       })
     } catch (error) {
-      voiceLogger.error('[BOT_SESSION] Error handling bot-initiated thread:', error)
+      voiceLogger.error(
+        '[BOT_SESSION] Error handling bot-initiated thread:',
+        error,
+      )
+      void notifyError(error, 'ThreadCreate handler error')
       try {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        await thread.send({ content: `Error: ${errMsg}`, flags: SILENT_MESSAGE_FLAGS })
+        const errMsg = (
+          error instanceof Error ? error.message : String(error)
+        ).slice(0, 1900)
+        await thread.send({
+          content: `Error: ${errMsg}`,
+          flags: SILENT_MESSAGE_FLAGS,
+        })
       } catch (sendError) {
         voiceLogger.error(
           '[BOT_SESSION] Failed to send error message:',
@@ -781,6 +1044,7 @@ export async function startDiscordBot({
   await discordClient.login(token)
 
   startHeapMonitor()
+  const stopTaskRunner = startTaskRunner({ token })
 
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
@@ -792,9 +1056,21 @@ export async function startDiscordBot({
     ;(global as any).shuttingDown = true
 
     try {
+      await stopTaskRunner()
+
+      // Cancel pending IPC requests so plugin tools don't hang
+      await cancelAllPendingIpcRequests().catch((e) => {
+        discordLogger.warn(
+          'Failed to cancel pending IPC requests:',
+          (e as Error).message,
+        )
+      })
+
       const cleanupPromises: Promise<void>[] = []
       for (const [guildId] of voiceConnections) {
-        voiceLogger.log(`[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`)
+        voiceLogger.log(
+          `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
+        )
         cleanupPromises.push(cleanupVoiceConnection(guildId))
       }
 
@@ -808,14 +1084,19 @@ export async function startDiscordBot({
 
       for (const [dir, server] of getOpencodeServers()) {
         if (!server.process.killed) {
-          voiceLogger.log(`[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`)
+          voiceLogger.log(
+            `[SHUTDOWN] Stopping OpenCode server on port ${server.port} for ${dir}`,
+          )
           server.process.kill('SIGTERM')
         }
       }
       getOpencodeServers().clear()
 
       discordLogger.log('Closing database...')
-      closeDatabase()
+      await closeDatabase()
+
+      discordLogger.log('Stopping hrana server...')
+      await stopHranaServer()
 
       discordLogger.log('Destroying Discord client...')
       discordClient.destroy()
@@ -855,7 +1136,10 @@ export async function startDiscordBot({
     try {
       writeHeapSnapshot()
     } catch (e) {
-      discordLogger.error('Failed to write heap snapshot:', e instanceof Error ? e.message : String(e))
+      discordLogger.error(
+        'Failed to write heap snapshot:',
+        e instanceof Error ? e.message : String(e),
+      )
     }
   })
 
@@ -867,7 +1151,9 @@ export async function startDiscordBot({
       voiceLogger.error('[SIGUSR2] Error during shutdown:', error)
     }
     const { spawn } = await import('node:child_process')
-    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js
+    // Strip __KIMAKI_CHILD so the new process goes through the respawn wrapper in bin.js.
+    // V8 heap flags are already in process.execArgv from the initial spawn, and bin.ts
+    // will re-inject them if missing, so no need to add them here.
     const env = { ...process.env }
     delete env.__KIMAKI_CHILD
     spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
@@ -879,11 +1165,37 @@ export async function startDiscordBot({
     process.exit(0)
   })
 
+  process.on('uncaughtException', (error) => {
+    discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
+    notifyError(error, 'Uncaught exception in bot process')
+    void handleShutdown('uncaughtException', { skipExit: true }).catch(
+      (shutdownError) => {
+        discordLogger.error(
+          '[uncaughtException] shutdown failed:',
+          formatErrorWithStack(shutdownError),
+        )
+      },
+    )
+    setTimeout(() => {
+      process.exit(1)
+    }, 250).unref()
+  })
+
   process.on('unhandledRejection', (reason, promise) => {
     if ((global as any).shuttingDown) {
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
       return
     }
-    discordLogger.error('Unhandled rejection:', formatErrorWithStack(reason), 'at promise:', promise)
+    discordLogger.error(
+      'Unhandled rejection:',
+      formatErrorWithStack(reason),
+      'at promise:',
+      promise,
+    )
+    const error =
+      reason instanceof Error
+        ? reason
+        : new Error(formatErrorWithStack(reason))
+    void notifyError(error, 'Unhandled rejection in bot process')
   })
 }

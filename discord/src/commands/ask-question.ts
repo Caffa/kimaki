@@ -7,10 +7,11 @@ import {
   StringSelectMenuInteraction,
   ActionRowBuilder,
   type ThreadChannel,
+  MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
-import { getOpencodeClientV2 } from '../opencode.js'
+import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
@@ -95,7 +96,8 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
-    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
+    const placeholder =
+      options.find((x) => x.label)?.label || 'Select an option'
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`ask_question:${contextHash}:${i}`)
       .setPlaceholder(placeholder)
@@ -107,16 +109,19 @@ export async function showAskUserQuestionDropdowns({
       selectMenu.setMaxValues(options.length)
     }
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
     await thread.send({
-      content: `**${q.header}**\n${q.question}`,
+      content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
       components: [actionRow],
       flags: NOTIFY_MESSAGE_FLAGS,
     })
   }
 
-  logger.log(`Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`)
+  logger.log(
+    `Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`,
+  )
 }
 
 /**
@@ -138,7 +143,7 @@ export async function handleAskQuestionSelectMenu(
   if (!contextHash) {
     await interaction.reply({
       content: 'Invalid selection.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -148,7 +153,7 @@ export async function handleAskQuestionSelectMenu(
   if (!context) {
     await interaction.reply({
       content: 'This question has expired. Please ask the AI again.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     })
     return
   }
@@ -197,10 +202,12 @@ export async function handleAskQuestionSelectMenu(
  * Submit all collected answers back to the OpenCode session.
  * Uses the question.reply API to provide answers to the waiting tool.
  */
-async function submitQuestionAnswers(context: PendingQuestionContext): Promise<void> {
+async function submitQuestionAnswers(
+  context: PendingQuestionContext,
+): Promise<void> {
   try {
-    const clientV2 = getOpencodeClientV2(context.directory)
-    if (!clientV2) {
+    const client = getOpencodeClient(context.directory)
+    if (!client) {
       throw new Error('OpenCode server not found for directory')
     }
 
@@ -209,8 +216,9 @@ async function submitQuestionAnswers(context: PendingQuestionContext): Promise<v
       return context.answers[i] || []
     })
 
-    await clientV2.question.reply({
+    await client.question.reply({
       requestID: context.requestId,
+      directory: context.directory,
       answers,
     })
 
@@ -247,7 +255,11 @@ export function parseAskUserQuestionTool(part: {
 
   const input = part.state?.input as AskUserQuestionInput | undefined
 
-  if (!input?.questions || !Array.isArray(input.questions) || input.questions.length === 0) {
+  if (
+    !input?.questions ||
+    !Array.isArray(input.questions) ||
+    input.questions.length === 0
+  ) {
     return null
   }
 
@@ -270,7 +282,10 @@ export function parseAskUserQuestionTool(part: {
  * Cancel a pending question for a thread (e.g., when user sends a new message).
  * Sends the user's message as the answer to OpenCode so the model sees their actual response.
  */
-export async function cancelPendingQuestion(threadId: string, userMessage?: string): Promise<boolean> {
+export async function cancelPendingQuestion(
+  threadId: string,
+  userMessage?: string,
+): Promise<boolean> {
   // Find pending question for this thread
   let contextHash: string | undefined
   let context: PendingQuestionContext | undefined
@@ -287,8 +302,8 @@ export async function cancelPendingQuestion(threadId: string, userMessage?: stri
   }
 
   try {
-    const clientV2 = getOpencodeClientV2(context.directory)
-    if (!clientV2) {
+    const client = getOpencodeClient(context.directory)
+    if (!client) {
       throw new Error('OpenCode server not found for directory')
     }
 
@@ -298,8 +313,9 @@ export async function cancelPendingQuestion(threadId: string, userMessage?: stri
       return context.answers[i] || [customAnswer]
     })
 
-    await clientV2.question.reply({
+    await client.question.reply({
       requestID: context.requestId,
+      directory: context.directory,
       answers,
     })
 

@@ -3,7 +3,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
-import { findChannelsByDirectory, getAllTextChannelDirectories } from '../database.js'
+import {
+  findChannelsByDirectory,
+  getAllTextChannelDirectories,
+} from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -12,7 +15,10 @@ import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.ADD_PROJECT)
 
-export async function handleAddProjectCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleAddProjectCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply({ ephemeral: false })
 
   const projectId = command.options.getString('project', true)
@@ -63,12 +69,13 @@ export async function handleAddProjectCommand({ command, appId }: CommandContext
       return
     }
 
-    const { textChannelId, voiceChannelId, channelName } = await createProjectChannels({
-      guild,
-      projectDirectory: directory,
-      appId,
-      botName: command.client.user?.username,
-    })
+    const { textChannelId, voiceChannelId, channelName } =
+      await createProjectChannels({
+        guild,
+        projectDirectory: directory,
+        appId,
+        botName: command.client.user?.username,
+      })
 
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(
