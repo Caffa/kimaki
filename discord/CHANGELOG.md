@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.70
+
+1. **Immediate interrupt handling** — sending a new message while the AI is working now aborts the running session at the next step boundary, so your follow-up is processed right away instead of waiting for the full response to finish
+2. **Memory simplified to `MEMORY.md`** — the `--memory` flag and Discord forum-based memory infrastructure are removed; the agent now reads and updates a `MEMORY.md` file in your project root automatically, with no flags or setup required
+3. **Agent descriptions in system prompt** — all configured agents and their descriptions are now injected into the session context so the AI can make smarter agent selection decisions
+4. **Slash command name fixes** — user-defined commands containing slashes, colons, or other special characters now register and route correctly in Discord
+5. **Voice transcription reliability** — voice messages are now processed in the correct order; the transcription model no longer accidentally answers user questions; stale transcriptions from previous sessions are no longer reused
+6. **Worktree creation fixes** — worktree creation no longer fails due to broken dependency install steps (`ni` and `--frozen-lockfile` removed)
+7. **Fork dropdown filtering** — the `/fork` message picker no longer shows internal synthetic messages, only real user and assistant turns
+8. **Large tool output truncation** — tool call outputs exceeding 30k characters are truncated to prevent context window overflow during session reads
+9. **Permission prompt suppression** — the agent no longer triggers permission prompts when accessing `MEMORY.md` and other config paths
+
 ## 0.4.69
 
 ### Patch Changes
