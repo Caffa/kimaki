@@ -76,6 +76,7 @@ import {
 } from './thinking-utils.js'
 import { execAsync } from './worktree-utils.js'
 import * as errore from 'errore'
+import * as sessionRunState from './session-handler/state.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const voiceLogger = createLogger(LogPrefix.VOICE)
@@ -1110,16 +1111,13 @@ export async function handleOpencodeSession({
   let typingRestartTimeout: NodeJS.Timeout | null = null
   let handlerClosed = false
   let hasSentParts = false
-  let promptResolved = false
-  let hasReceivedCurrentPromptEvent = false
-  let hasPendingMainSessionIdle = false
-  let promptDispatchStarted = false
-  let assistantMessageIdsBeforePrompt = new Set<string>()
+  const mainRunStore = sessionRunState.createMainRunStore()
 
   const finishMainSessionFromIdle = (): void => {
     if (abortController.signal.aborted) {
       return
     }
+    sessionRunState.markFinished({ store: mainRunStore })
     sessionLogger.log(
       `[SESSION IDLE] Session ${session.id} is idle, ending stream`,
     )
@@ -1419,12 +1417,10 @@ export async function handleOpencodeSession({
         return
       }
 
-      if (
-        promptDispatchStarted &&
-        !assistantMessageIdsBeforePrompt.has(msg.id)
-      ) {
-        hasReceivedCurrentPromptEvent = true
-      }
+      sessionRunState.markCurrentPromptEvidence({
+        store: mainRunStore,
+        messageId: msg.id,
+      })
 
       if (msg.tokens) {
         const newTokensTotal =
@@ -1693,12 +1689,10 @@ export async function handleOpencodeSession({
       }
 
       if (part.sessionID === session.id) {
-        if (
-          promptDispatchStarted &&
-          !assistantMessageIdsBeforePrompt.has(part.messageID)
-        ) {
-          hasReceivedCurrentPromptEvent = true
-        }
+        sessionRunState.markCurrentPromptEvidence({
+          store: mainRunStore,
+          messageId: part.messageID,
+        })
       }
 
       if (isSubtaskEvent && subtaskInfo) {
@@ -2026,15 +2020,17 @@ export async function handleOpencodeSession({
 
     const handleSessionIdle = (idleSessionId: string) => {
       if (idleSessionId === session.id) {
-        if (!promptResolved) {
-          hasPendingMainSessionIdle = true
+        const idleDecision = sessionRunState.handleMainSessionIdle({
+          store: mainRunStore,
+        })
+        if (idleDecision === 'deferred') {
           sessionLogger.log(
             `[SESSION IDLE] Deferring idle event for ${session.id} until prompt resolves`,
           )
           return
         }
 
-        if (!hasReceivedCurrentPromptEvent) {
+        if (idleDecision === 'ignore-no-evidence') {
           sessionLogger.log(
             `[SESSION IDLE] Ignoring idle event for ${session.id} (no current-prompt events yet)`,
           )
@@ -2106,6 +2102,12 @@ export async function handleOpencodeSession({
         abortController.signal.reason instanceof SessionAbortError
           ? abortController.signal.reason.reason
           : undefined
+      if (
+        abortController.signal.aborted &&
+        mainRunStore.getState().phase !== 'finished'
+      ) {
+        sessionRunState.markAborted({ store: mainRunStore })
+      }
       const shouldFlushFinalParts =
         !abortController.signal.aborted || abortReason === 'finished'
       if (shouldFlushFinalParts) {
@@ -2362,9 +2364,7 @@ export async function handleOpencodeSession({
     })()
 
     hasSentParts = false
-    hasReceivedCurrentPromptEvent = false
-    promptDispatchStarted = false
-    assistantMessageIdsBeforePrompt = new Set<string>()
+    sessionRunState.beginPromptCycle({ store: mainRunStore })
     const messagesBeforePromptResult = await errore.tryAsync(() => {
       return getClient().session.messages({
         sessionID: session.id,
@@ -2377,11 +2377,15 @@ export async function handleOpencodeSession({
       )
     } else {
       const messagesBeforePrompt = messagesBeforePromptResult.data || []
-      assistantMessageIdsBeforePrompt = new Set(
+      const baselineAssistantIds = new Set(
         messagesBeforePrompt
           .filter((message) => message.info.role === 'assistant')
           .map((message) => message.info.id),
       )
+      sessionRunState.setBaselineAssistantIds({
+        store: mainRunStore,
+        messageIds: baselineAssistantIds,
+      })
     }
 
     // variant is accepted by the server API but not yet in the v1 SDK types
@@ -2389,7 +2393,7 @@ export async function handleOpencodeSession({
       ? { variant: earlyThinkingValue }
       : {}
 
-    promptDispatchStarted = true
+    sessionRunState.markDispatching({ store: mainRunStore })
 
     const response = command
       ? await getClient().session.command(
@@ -2478,20 +2482,23 @@ export async function handleOpencodeSession({
       )
     }
 
-    promptResolved = true
-
-    if (hasPendingMainSessionIdle) {
-      hasPendingMainSessionIdle = false
-      if (!hasReceivedCurrentPromptEvent) {
-        sessionLogger.log(
-          `[SESSION IDLE] Ignoring deferred idle for ${session.id} because no current-prompt events were observed`,
-        )
-      } else {
-        sessionLogger.log(
-          `[SESSION IDLE] Processing deferred idle for ${session.id} after prompt resolved`,
-        )
-        finishMainSessionFromIdle()
-      }
+    const deferredIdleDecision =
+      sessionRunState.markPromptResolvedAndConsumeDeferredIdle({
+        store: mainRunStore,
+      })
+    if (deferredIdleDecision === 'ignore-no-evidence') {
+      sessionLogger.log(
+        `[SESSION IDLE] Ignoring deferred idle for ${session.id} because no current-prompt events were observed`,
+      )
+    } else if (deferredIdleDecision === 'ignore-before-evidence') {
+      sessionLogger.log(
+        `[SESSION IDLE] Ignoring deferred idle for ${session.id} because it arrived before current-prompt evidence`,
+      )
+    } else if (deferredIdleDecision === 'process') {
+      sessionLogger.log(
+        `[SESSION IDLE] Processing deferred idle for ${session.id} after prompt resolved`,
+      )
+      finishMainSessionFromIdle()
     }
 
     sessionLogger.log(`Successfully sent prompt, got response`)
@@ -2532,6 +2539,7 @@ export async function handleOpencodeSession({
   sessionLogger.log(
     `[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`,
   )
+  sessionRunState.markAborted({ store: mainRunStore })
   abortController.abort(new SessionAbortError({ reason: 'error' }))
 
   if (originalMessage) {
