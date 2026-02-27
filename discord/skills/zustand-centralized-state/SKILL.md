@@ -10,7 +10,7 @@ description: >
   building any stateful TypeScript application (servers, extensions, CLIs, relays)
   to keep state simple, testable, and easy to reason about. ALWAYS read this skill
   when a project uses zustand/vanilla for state management outside of React.
-version: 0.2.0
+version: 0.2.1
 ---
 
 # Centralized State Management
@@ -188,7 +188,44 @@ Rule of thumb:
 - Co-locate resources when one centralized store materially improves cleanup and
   ownership tracking
 
-### 6. Centralize side effects in subscribe
+### 6. Mutable resources are state too
+
+If a runtime resource has mutable lifecycle state, treat it as state and keep it in
+the centralized store alongside the data it controls.
+
+`AbortController` is the clearest example:
+- it has mutable lifecycle (`signal.aborted` flips from `false` to `true`)
+- that lifecycle controls behavior (whether work should continue)
+- ownership and cleanup matter (who creates, replaces, aborts, and clears it)
+
+In practice, an abort controller is often equivalent to a state bit with a handle.
+Keeping it in a local variable while related domain state lives in Zustand creates
+split-brain state and leak risk.
+
+```ts
+// BAD: split state (store + local mutable resource)
+let requestController: AbortController | undefined
+
+requestController = new AbortController()
+
+// GOOD: one source of truth
+type State = {
+  requestController: AbortController | undefined
+}
+
+store.setState((state) => {
+  return {
+    ...state,
+    requestController: new AbortController(),
+  }
+})
+```
+
+This keeps lifecycle ownership explicit: transitions decide when controller
+references appear/disappear; handlers/subscribe perform side effects like
+`controller.abort()` based on state transitions.
+
+### 7. Centralize side effects in subscribe
 
 Side effects (I/O, UI updates, cleanup, logging) go in a single `subscribe()`
 callback that reacts to state changes. Side effects are **derived from state**, not
@@ -261,6 +298,9 @@ derived from the current state shape (not from specific events).
 11. Resource co-location is acceptable: storing sockets/timers/callback maps in
     Zustand is fine when it prevents lifecycle drift. Keep side effects out of
     transitions.
+12. Treat mutable runtime resources as state (e.g. `AbortController`) -- if a
+    resource has lifecycle state that drives behavior, keep its reference in the
+    same centralized store as related domain state.
 
 ## When subscribe does NOT fit
 
