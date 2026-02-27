@@ -489,7 +489,19 @@ export function formatPart(part: Part, prefix?: string): string {
     }
 
     if (part.state.status === 'pending') {
-      return ''
+      if (part.tool !== 'bash') {
+        return ''
+      }
+      const command = (part.state.input?.command as string) || ''
+      const description = (part.state.input?.description as string) || ''
+      const isSingleLine = !command.includes('\n')
+      const toolTitle =
+        isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH
+          ? ` _${escapeInlineMarkdown(command)}_`
+          : description
+            ? ` _${escapeInlineMarkdown(description)}_`
+            : ''
+      return `┣ ${pfx}bash${toolTitle}`
     }
 
     const summaryText = getToolSummaryText(part)

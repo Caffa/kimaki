@@ -457,9 +457,17 @@ export async function startDiscordBot({
         // are processed in Discord arrival order, not completion order.
         const prev = threadMessageQueue.get(thread.id)
         if (prev) {
-          // Another message is being processed — signal it to abort at the next
-          // step-finish (or after 2s) so this message can start sooner.
-          signalThreadInterrupt(thread.id)
+          // Another message is being processed — abort it immediately so this
+          // queued message can start as soon as possible.
+          const sdkDirectory =
+            worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+              ? worktreeInfo.worktree_directory
+              : projectDirectory
+          signalThreadInterrupt({
+            threadId: thread.id,
+            serverDirectory: projectDirectory,
+            sdkDirectory,
+          })
         }
         const task = (prev || Promise.resolve()).then(
           () => { return processThreadMessage() },

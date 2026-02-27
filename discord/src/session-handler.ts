@@ -122,39 +122,55 @@ function formatSessionError(error?: {
   return `${name}: ${message}${suffix}`
 }
 
-// When a new message is queued behind a running session, the thread ID is added
-// here. The session handler aborts at the next step-finish (or after 2s fallback)
-// so the queued message can start sooner instead of waiting for the full response.
-const pendingThreadInterrupts = new Set<string>()
-
-const STEP_ABORT_TIMEOUT_MS = 2000
-
-export function signalThreadInterrupt(threadId: string): void {
-  pendingThreadInterrupts.add(threadId)
-  // Look up the running session's abort controller via existing state.
-  // Async because getThreadSession is a DB call, but fast (sqlite).
+export function signalThreadInterrupt({
+  threadId,
+  serverDirectory,
+  sdkDirectory,
+}: {
+  threadId: string
+  serverDirectory?: string
+  sdkDirectory?: string
+}): void {
   void (async () => {
     const sessionId = await getThreadSession(threadId)
     if (!sessionId) {
       return
     }
+
     const controller = abortControllers.get(sessionId)
     if (!controller || controller.signal.aborted) {
       return
     }
-    setTimeout(() => {
-      if (!pendingThreadInterrupts.has(threadId)) {
-        return
-      }
-      pendingThreadInterrupts.delete(threadId)
-      if (controller.signal.aborted) {
-        return
-      }
+
+    sessionLogger.log(
+      `[ABORT] reason=queued-message sessionId=${sessionId} threadId=${threadId} - new message queued, aborting running session immediately`,
+    )
+    controller.abort(new SessionAbortError({ reason: 'new-request' }))
+
+    if (!serverDirectory || !sdkDirectory) {
+      return
+    }
+
+    const client = getOpencodeClient(serverDirectory)
+    if (!client) {
       sessionLogger.log(
-        `[ABORT] reason=next-step-timeout threadId=${threadId} - no step-finish within ${STEP_ABORT_TIMEOUT_MS}ms, force-aborting`,
+        `[ABORT-API] reason=queued-message sessionId=${sessionId} - no OpenCode client found for directory ${serverDirectory}`,
       )
-      controller.abort(new SessionAbortError({ reason: 'next-step-timeout' }))
-    }, STEP_ABORT_TIMEOUT_MS)
+      return
+    }
+
+    const abortResult = await errore.tryAsync(() => {
+      return client.session.abort({
+        sessionID: sessionId,
+        directory: sdkDirectory,
+      })
+    })
+    if (abortResult instanceof Error) {
+      sessionLogger.log(
+        `[ABORT-API] reason=queued-message sessionId=${sessionId} - API abort failed (may already be done):`,
+        abortResult,
+      )
+    }
   })()
 }
 
@@ -1606,22 +1622,6 @@ export async function handleOpencodeSession({
           messageID: assistantMessageId || part.messageID,
           force: true,
         })
-        // If a new message is queued behind this session, abort here so it can
-        // start sooner instead of waiting for the full response to complete.
-        if (pendingThreadInterrupts.has(thread.id)) {
-          pendingThreadInterrupts.delete(thread.id)
-          sessionLogger.log(
-            `[ABORT] reason=next-step sessionId=${session.id} threadId=${thread.id} - step-finish with pending message in queue`,
-          )
-          abortController.abort(new SessionAbortError({ reason: 'next-step' }))
-          void errore.tryAsync(() => {
-            return getClient().session.abort({
-              sessionID: session.id,
-              directory: sdkDirectory,
-            })
-          })
-          return
-        }
         scheduleTypingRestart()
       }
     }
@@ -2086,7 +2086,6 @@ export async function handleOpencodeSession({
       throw e
     } finally {
       handlerClosed = true
-      pendingThreadInterrupts.delete(thread.id)
       const activeController = abortControllers.get(session.id)
       if (activeController === abortController) {
         abortControllers.delete(session.id)
@@ -2414,8 +2413,33 @@ export async function handleOpencodeSession({
         }
         return JSON.stringify(err)
       })()
+
+      const responseStatus = (() => {
+        const httpStatus = response.response?.status
+        if (typeof httpStatus === 'number') {
+          return String(httpStatus)
+        }
+
+        const err = response.error
+        if (!err || typeof err !== 'object' || !('data' in err)) {
+          return 'unknown'
+        }
+
+        const data = err.data
+        if (
+          !data ||
+          typeof data !== 'object' ||
+          !('statusCode' in data) ||
+          typeof data.statusCode !== 'number'
+        ) {
+          return 'unknown'
+        }
+
+        return String(data.statusCode)
+      })()
+
       throw new Error(
-        `OpenCode API error (${response.response.status}): ${errorMessage}`,
+        `OpenCode API error (${responseStatus}): ${errorMessage}`,
       )
     }
 

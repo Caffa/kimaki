@@ -120,6 +120,9 @@ importers:
       mime:
         specifier: ^4.1.0
         version: 4.1.0
+      opencode-deterministic-provider:
+        specifier: workspace:^
+        version: link:../opencode-deterministic-provider
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -268,6 +271,18 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.1.53
         version: 1.1.53
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.3.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.3.0)(jiti@2.6.1)(terser@5.46.0)(tsx@4.20.5)(yaml@2.8.2)
+
+  opencode-deterministic-provider:
+    devDependencies:
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
@@ -5863,7 +5878,7 @@ snapshots:
 
   ref@1.3.5:
     dependencies:
-      bindings: 1.2.1
+      bindings: 1.5.0
       debug: 2.6.9
       nan: 2.25.0
     transitivePeerDependencies:

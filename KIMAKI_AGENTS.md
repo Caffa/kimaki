@@ -176,6 +176,7 @@ if a kimaki test needs a new interaction primitive, first add it to `discord-dig
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
 - e2e tests use `CachedOpencodeProviderProxy` which caches LLM responses. first run = cache miss (real provider speed), second run = cache hit. `streamChunkDelayMs` only affects cache hits. **always run a failing e2e test at least twice** before investigating — the first run populates cache, second run exercises cached path.
+- never use fake api keys (like `dummy`) for e2e runs when real provider env vars exist. use real `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` from env.
 - prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
 - keep test timeouts long: 360s per test, 120s for polling, 60s for beforeAll. LLM calls + opencode server startup + cache misses are slow. never use short timeouts in e2e.
 - bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.

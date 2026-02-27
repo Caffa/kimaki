@@ -1,6 +1,6 @@
 // E2e tests for per-thread message queue ordering (threadMessageQueue).
 // Validates that messages in the same thread are processed sequentially
-// in Discord arrival order, and that the step-finish interrupt allows
+// in Discord arrival order, and that immediate interrupt allows
 // queued messages to start without waiting for the full prior response.
 //
 // The threadMessageQueue (Map<string, Promise<void>>) only serializes messages
@@ -10,32 +10,38 @@
 // reply, then sends follow-up messages into the thread to exercise the queue.
 //
 // Bot replies may be error messages (e.g. "opencode session error: Not Found")
-// rather than actual LLM content, depending on the provider/cache state. The
+// rather than actual LLM content, depending on provider/session state. The
 // tests verify ordering by message position, not content matching.
 
 import fs from 'node:fs'
 import path from 'node:path'
+import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
+import type { APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
-import { CachedOpencodeProviderProxy } from 'opencode-cached-provider'
-import { setDataDir } from './config.js'
+import {
+  buildDeterministicOpencodeConfig,
+  type DeterministicMatcher,
+} from 'opencode-deterministic-provider'
+import {
+  getDefaultVerbosity,
+  setDataDir,
+  setDefaultVerbosity,
+} from './config.js'
 import { startDiscordBot } from './discord-bot.js'
 import {
   setBotToken,
   initDatabase,
   closeDatabase,
   setChannelDirectory,
+  setChannelVerbosity,
+  getChannelVerbosity,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { getOpencodeServers } from './opencode.js'
 
-const geminiApiKey =
-  process.env['GEMINI_API_KEY'] ||
-  process.env['GOOGLE_GENERATIVE_AI_API_KEY'] ||
-  ''
-const geminiModel = process.env['GEMINI_FLASH_MODEL'] || 'gemini-2.5-flash'
-const e2eTest = geminiApiKey.length > 0 ? describe : describe.skip
+const e2eTest = describe
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'thread-queue-e2e')
@@ -43,10 +49,9 @@ function createRunDirectories() {
 
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
-  const providerCacheDbPath = path.join(root, 'provider-cache.db')
   fs.mkdirSync(projectDirectory, { recursive: true })
 
-  return { root, dataDir, projectDirectory, providerCacheDbPath }
+  return { root, dataDir, projectDirectory }
 }
 
 function chooseLockPort() {
@@ -84,6 +89,97 @@ async function cleanupOpencodeServers() {
   servers.clear()
 }
 
+function createDeterministicMatchers() {
+  const sleepMatcher: DeterministicMatcher = {
+    id: 'sleep-tool-call',
+    priority: 100,
+    when: {
+      rawPromptIncludes: 'sleep 500',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'sleep-start' },
+        { type: 'text-delta', id: 'sleep-start', delta: 'running sleep 500' },
+        { type: 'text-end', id: 'sleep-start' },
+        {
+          type: 'tool-call',
+          toolCallId: 'sleep-call-1',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'sleep 500',
+            description: 'Deterministic sleep for interrupt e2e',
+            hasSideEffect: true,
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+    },
+  }
+
+  const toolFollowupMatcher: DeterministicMatcher = {
+    id: 'tool-followup',
+    priority: 50,
+    when: {
+      lastMessageRole: 'tool',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'tool-followup' },
+        { type: 'text-delta', id: 'tool-followup', delta: 'tool done' },
+        { type: 'text-end', id: 'tool-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+    },
+  }
+
+  const userReplyMatcher: DeterministicMatcher = {
+    id: 'user-reply',
+    priority: 10,
+    when: {
+      lastMessageRole: 'user',
+      rawPromptIncludes: 'Reply with exactly:',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'default-reply' },
+        { type: 'text-delta', id: 'default-reply', delta: 'ok' },
+        { type: 'text-end', id: 'default-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+      partDelaysMs: [0, 700, 0, 0, 0],
+    },
+  }
+
+  return [sleepMatcher, toolFollowupMatcher, userReplyMatcher]
+}
+
 /** Poll getMessages until we see at least `count` bot messages. */
 async function waitForBotMessageCount({
   discord,
@@ -114,14 +210,104 @@ async function waitForBotMessageCount({
   )
 }
 
+async function waitForBotReplyAfterUserMessage({
+  discord,
+  threadId,
+  userMessageIncludes,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  userMessageIncludes: string
+  timeout: number
+}) {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    const userMessageIndex = messages.findIndex((message) => {
+      return (
+        message.author.id === TEST_USER_ID &&
+        message.content.includes(userMessageIncludes)
+      )
+    })
+    const botReplyIndex = messages.findIndex((message, index) => {
+      return index > userMessageIndex && message.author.id === discord.botUserId
+    })
+    if (userMessageIndex >= 0 && botReplyIndex >= 0) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500)
+    })
+  }
+  throw new Error(
+    `Timed out waiting for bot reply after user message containing "${userMessageIncludes}" in thread ${threadId}`,
+  )
+}
+
+async function waitForBotMessageContaining({
+  discord,
+  threadId,
+  text,
+  afterUserMessageIncludes,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  text: string
+  afterUserMessageIncludes?: string
+  timeout: number
+}) {
+  const start = Date.now()
+  let lastMessages: APIMessage[] = []
+  while (Date.now() - start < timeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    lastMessages = messages
+    const afterIndex = afterUserMessageIncludes
+      ? messages.findIndex((message) => {
+          return (
+            message.author.id === TEST_USER_ID &&
+            message.content.includes(afterUserMessageIncludes)
+          )
+        })
+      : -1
+    const match = messages.find((message, index) => {
+      if (afterUserMessageIncludes && afterIndex >= 0 && index <= afterIndex) {
+        return false
+      }
+      return (
+        message.author.id === discord.botUserId &&
+        message.content.includes(text)
+      )
+    })
+    if (match) {
+      return messages
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500)
+    })
+  }
+  const recent = lastMessages
+    .slice(-12)
+    .map((message) => {
+      const role = message.author.id === discord.botUserId ? 'bot' : 'user'
+      return `${role}: ${message.content.slice(0, 120)}`
+    })
+    .join('\n')
+  throw new Error(
+    `Timed out waiting for bot message containing "${text}" in thread ${threadId}. Recent messages:\n${recent}`,
+  )
+}
+
 const TEST_USER_ID = '200000000000000777'
 const TEXT_CHANNEL_ID = '200000000000000778'
 
 e2eTest('thread message queue ordering', () => {
   let directories: ReturnType<typeof createRunDirectories>
-  let proxy: CachedOpencodeProviderProxy
   let discord: DigitalDiscord
   let botClient: Client
+  let previousDefaultVerbosity: ReturnType<typeof getDefaultVerbosity> | null =
+    null
 
   beforeAll(async () => {
     directories = createRunDirectories()
@@ -129,13 +315,8 @@ e2eTest('thread message queue ordering', () => {
 
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
-
-    proxy = new CachedOpencodeProviderProxy({
-      cacheDbPath: directories.providerCacheDbPath,
-      targetBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      apiKey: geminiApiKey,
-      cacheMethods: ['POST'],
-    })
+    previousDefaultVerbosity = getDefaultVerbosity()
+    setDefaultVerbosity('tools-and-text')
 
     discord = new DigitalDiscord({
       guild: {
@@ -157,13 +338,29 @@ e2eTest('thread message queue ordering', () => {
       ],
     })
 
-    await Promise.all([proxy.start(), discord.start()])
+    await discord.start()
 
-    const opencodeConfig = proxy.buildOpencodeConfig({
-      providerName: 'cached-google',
-      providerNpm: '@ai-sdk/google',
-      model: geminiModel,
-      smallModel: geminiModel,
+    const providerNpm = url
+      .pathToFileURL(
+        path.resolve(
+          process.cwd(),
+          '..',
+          'opencode-deterministic-provider',
+          'src',
+          'index.ts',
+        ),
+      )
+      .toString()
+
+    const opencodeConfig = buildDeterministicOpencodeConfig({
+      providerName: 'deterministic-provider',
+      providerNpm,
+      model: 'deterministic-v2',
+      smallModel: 'deterministic-v2',
+      settings: {
+        strict: false,
+        matchers: createDeterministicMatchers(),
+      },
     })
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
@@ -185,6 +382,9 @@ e2eTest('thread message queue ordering', () => {
       channelType: 'text',
       appId: discord.botUserId,
     })
+    await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools-and-text')
+    const channelVerbosity = await getChannelVerbosity(TEXT_CHANNEL_ID)
+    expect(channelVerbosity).toBe('tools-and-text')
 
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
     await startDiscordBot({
@@ -207,9 +407,6 @@ e2eTest('thread message queue ordering', () => {
       stopHranaServer().catch(() => {
         return
       }),
-      proxy?.stop().catch(() => {
-        return
-      }),
       discord?.stop().catch(() => {
         return
       }),
@@ -217,6 +414,9 @@ e2eTest('thread message queue ordering', () => {
 
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
+    if (previousDefaultVerbosity) {
+      setDefaultVerbosity(previousDefaultVerbosity)
+    }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
@@ -393,22 +593,13 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
-    'step-finish interrupt aborts running session when new message queues',
+    'queued message aborts running session immediately',
     async () => {
-      // Tests the path at session-handler.ts:1611 where pendingThreadInterrupts.has(thread.id)
-      // is checked on step-finish. When a new message queues behind a running session,
-      // signalThreadInterrupt is called (discord-bot.ts:462). At the next step-finish event,
-      // the running session sees the pending interrupt and aborts with reason=next-step,
-      // letting the queued message start sooner.
+      // When a new message queues behind a running session,
+      // signalThreadInterrupt aborts the in-flight session immediately,
+      // then the queue processes the next message.
       //
-      // NOTE: streamChunkDelayMs only affects cache HITS. On the first run (empty cache)
-      // all requests are cache misses and stream at upstream Gemini speed. We send C
-      // quickly after B (200ms) so the interrupt fires while B is still being processed
-      // regardless of cache state. On subsequent runs, cached responses with the delay
-      // make B stream even slower, making the interrupt even more reliable.
-
       // 1. Fast setup: establish session
-      proxy.setStreamChunkDelayMs(0)
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: delta',
       })
@@ -431,9 +622,7 @@ e2eTest('thread message queue ordering', () => {
 
       // 2. Send B, then quickly send C to trigger the interrupt.
       //    200ms gap gives B time to enter the queue and start processing.
-      //    signalThreadInterrupt sets pendingThreadInterrupts + 2s timeout.
-      //    If B hits step-finish first → reason=next-step. Otherwise → reason=next-step-timeout.
-      proxy.setStreamChunkDelayMs(500)
+      //    signalThreadInterrupt aborts B immediately so C can run.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: echo',
       })
@@ -447,26 +636,12 @@ e2eTest('thread message queue ordering', () => {
       // 3. Poll until foxtrot's user message has a bot reply after it.
       //    waitForBotMessageCount alone isn't enough — error messages from the
       //    interrupted session can satisfy the count before foxtrot gets its reply.
-      proxy.setStreamChunkDelayMs(0)
-      const start = Date.now()
-      let after = await discord.thread(thread.id).getMessages()
-      while (Date.now() - start < 120_000) {
-        after = await discord.thread(thread.id).getMessages()
-        const foxtrotIdx = after.findIndex((m) => {
-          return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
-        })
-        const hasBotAfterFoxtrot =
-          foxtrotIdx >= 0 &&
-          after.some((m, i) => {
-            return i > foxtrotIdx && m.author.id === discord.botUserId
-          })
-        if (hasBotAfterFoxtrot) {
-          break
-        }
-        await new Promise((r) => {
-          setTimeout(r, 500)
-        })
-      }
+      const after = await waitForBotReplyAfterUserMessage({
+        discord,
+        threadId: thread.id,
+        userMessageIncludes: 'foxtrot',
+        timeout: 120_000,
+      })
 
       // 4. Both B and C got bot responses
       const afterBotMessages = after.filter((m) => {
@@ -493,15 +668,12 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
-    '2s force-abort timeout fires when no step-finish arrives',
+    'slow stream still gets interrupted when no step-finish arrives',
     async () => {
-      // Tests the setTimeout at session-handler.ts:145 that fires after
-      // STEP_ABORT_TIMEOUT_MS (2000ms). When streamChunkDelayMs is very high,
-      // the session stays mid-stream without emitting step-finish. The 2s timeout
-      // fires and force-aborts with reason=next-step-timeout.
+      // With immediate abort, a queued message interrupts even while the previous
+      // request is mid-stream and has not reached a step-finish event.
 
-      // 1. Fast setup: establish session + prime the cache
-      proxy.setStreamChunkDelayMs(0)
+      // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: golf',
       })
@@ -522,13 +694,12 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Very slow stream: 5s per chunk so no step-finish within the 2s timeout
-      proxy.setStreamChunkDelayMs(5000)
+      // 2. Start request B, then send C while B is still in progress.
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: hotel',
       })
 
-      // 3. Wait briefly for B to start, then send C to trigger the interrupt timeout
+      // 3. Wait briefly for B to start, then send C to trigger immediate abort
       await new Promise((r) => {
         setTimeout(r, 500)
       })
@@ -536,28 +707,14 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: india',
       })
 
-      // 4. The 2s timeout should force-abort B. C then gets processed.
+      // 4. B is aborted and C gets processed.
       //    Poll until india's user message has a bot reply after it.
-      proxy.setStreamChunkDelayMs(0)
-      const start2 = Date.now()
-      let after = await discord.thread(thread.id).getMessages()
-      while (Date.now() - start2 < 120_000) {
-        after = await discord.thread(thread.id).getMessages()
-        const indiaIdx = after.findIndex((m) => {
-          return m.author.id === TEST_USER_ID && m.content.includes('india')
-        })
-        const hasBotAfterIndia =
-          indiaIdx >= 0 &&
-          after.some((m, i) => {
-            return i > indiaIdx && m.author.id === discord.botUserId
-          })
-        if (hasBotAfterIndia) {
-          break
-        }
-        await new Promise((r) => {
-          setTimeout(r, 500)
-        })
-      }
+      const after = await waitForBotReplyAfterUserMessage({
+        discord,
+        threadId: thread.id,
+        userMessageIncludes: 'india',
+        timeout: 120_000,
+      })
 
       // C's user message appears before its bot response.
       // The interrupted hotel session may or may not produce a visible bot message
@@ -581,8 +738,7 @@ e2eTest('thread message queue ordering', () => {
       // Rapidly sends B, C, D — each interrupts the previous. Then after all
       // complete, sends E to prove the queue is clean and accepting new work.
 
-      // 1. Fast setup: establish session + prime the cache
-      proxy.setStreamChunkDelayMs(0)
+      // 1. Fast setup: establish session
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: juliet',
       })
@@ -603,10 +759,7 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       }).length
 
-      // 2. Moderate delay so each session stays active long enough to be interrupted
-      proxy.setStreamChunkDelayMs(500)
-
-      // Rapidly send B, C, D — each queues behind the previous and triggers interrupt
+      // 2. Rapidly send B, C, D — each queues behind the previous and triggers interrupt
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: kilo',
       })
@@ -623,38 +776,37 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: mike',
       })
 
-      // 3. Wait for all 3 follow-ups to get bot responses
-      const afterBurst = await waitForBotMessageCount({
+      // 3. Wait until the last burst message (mike) has a bot reply after it.
+      const afterBurst = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
-        count: beforeBotCount + 3,
+        userMessageIncludes: 'mike',
         timeout: 120_000,
       })
 
       const burstBotMessages = afterBurst.filter((m) => {
         return m.author.id === discord.botUserId
       })
-      expect(burstBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 3)
+      expect(burstBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
       // 4. Queue should be clean — send E and verify it also gets processed
-      proxy.setStreamChunkDelayMs(0)
       const burstBotCount = burstBotMessages.length
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: november',
       })
 
-      const afterE = await waitForBotMessageCount({
+      const afterE = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
-        count: burstBotCount + 1,
+        userMessageIncludes: 'november',
         timeout: 120_000,
       })
 
       const finalBotMessages = afterE.filter((m) => {
         return m.author.id === discord.botUserId
       })
-      expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount + 1)
+      expect(finalBotMessages.length).toBeGreaterThanOrEqual(burstBotCount)
 
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
@@ -674,11 +826,10 @@ e2eTest('thread message queue ordering', () => {
     async () => {
       // Tests that long-running tool calls get properly aborted when a new
       // message queues behind them. During tool execution no step-finish events
-      // arrive, so the 2s STEP_ABORT_TIMEOUT_MS fires (reason=next-step-timeout).
-      // The queue then processes the next message normally.
+      // arrive, but interrupt should still abort immediately so the queue can
+      // process the next message normally.
 
       // 1. Fast setup: establish session
-      proxy.setStreamChunkDelayMs(0)
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: oscar',
       })
@@ -701,14 +852,18 @@ e2eTest('thread message queue ordering', () => {
 
       // 2. Ask the model to run a long sleep command
       await th.user(TEST_USER_ID).sendMessage({
-        content: 'Run the command `sleep 400` in bash. Do not explain, just run it.',
+        content:
+          'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
       })
 
-      // 3. Brief wait so the bot picks up the sleep message and starts processing.
-      //    The interrupt fires either at step-finish (reason=next-step) or after
-      //    the 2s timeout (reason=next-step-timeout) — both abort the session.
-      await new Promise((r) => {
-        setTimeout(r, 1000)
+      // 3. Wait until we see the bash tool message for sleep, proving the tool
+      //    call actually started before the interrupt message is sent.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        text: 'sleep 500',
+        afterUserMessageIncludes: 'sleep 500',
+        timeout: 30_000,
       })
 
       // 4. Send interrupt message while sleep is still running
@@ -716,25 +871,31 @@ e2eTest('thread message queue ordering', () => {
         content: 'Reply with exactly: papa',
       })
 
-      // 5. The 2s force-abort timeout fires (no step-finish during tool execution),
-      //    kills the sleep session, and the queue processes "papa".
-      const after = await waitForBotMessageCount({
+      // 5. The interrupt aborts the sleep session, and the queue processes "papa".
+      const after = await waitForBotReplyAfterUserMessage({
         discord,
         threadId: thread.id,
-        count: beforeBotCount + 2,
+        userMessageIncludes: 'papa',
         timeout: 120_000,
       })
 
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
       })
-      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 2)
+      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
+
+      // Ensure sleep tool output appeared before the interrupt message.
+      const sleepToolIndex = after.findIndex((m) => {
+        return m.author.id === discord.botUserId && m.content.includes('sleep 500')
+      })
+      expect(sleepToolIndex).toBeGreaterThan(-1)
 
       // "papa" user message appears before the last bot response
       const userPapaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('papa')
       })
       expect(userPapaIndex).toBeGreaterThan(-1)
+      expect(sleepToolIndex).toBeLessThan(userPapaIndex)
       const lastBotIndex = after.findLastIndex((m) => {
         return m.author.id === discord.botUserId
       })
