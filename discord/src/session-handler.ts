@@ -1111,8 +1111,10 @@ export async function handleOpencodeSession({
   let handlerClosed = false
   let hasSentParts = false
   let promptResolved = false
-  let hasReceivedEvent = false
+  let hasReceivedCurrentPromptEvent = false
   let hasPendingMainSessionIdle = false
+  let promptDispatchStarted = false
+  let assistantMessageIdsBeforePrompt = new Set<string>()
 
   const finishMainSessionFromIdle = (): void => {
     if (abortController.signal.aborted) {
@@ -1413,10 +1415,15 @@ export async function handleOpencodeSession({
       if (msg.sessionID !== session.id) {
         return
       }
-      hasReceivedEvent = true
-
       if (msg.role !== 'assistant') {
         return
+      }
+
+      if (
+        promptDispatchStarted &&
+        !assistantMessageIdsBeforePrompt.has(msg.id)
+      ) {
+        hasReceivedCurrentPromptEvent = true
       }
 
       if (msg.tokens) {
@@ -1686,7 +1693,12 @@ export async function handleOpencodeSession({
       }
 
       if (part.sessionID === session.id) {
-        hasReceivedEvent = true
+        if (
+          promptDispatchStarted &&
+          !assistantMessageIdsBeforePrompt.has(part.messageID)
+        ) {
+          hasReceivedCurrentPromptEvent = true
+        }
       }
 
       if (isSubtaskEvent && subtaskInfo) {
@@ -2022,9 +2034,9 @@ export async function handleOpencodeSession({
           return
         }
 
-        if (!hasReceivedEvent) {
+        if (!hasReceivedCurrentPromptEvent) {
           sessionLogger.log(
-            `[SESSION IDLE] Ignoring idle event for ${session.id} (no main-session events yet)`,
+            `[SESSION IDLE] Ignoring idle event for ${session.id} (no current-prompt events yet)`,
           )
           return
         }
@@ -2350,11 +2362,34 @@ export async function handleOpencodeSession({
     })()
 
     hasSentParts = false
+    hasReceivedCurrentPromptEvent = false
+    promptDispatchStarted = false
+    assistantMessageIdsBeforePrompt = new Set<string>()
+    const messagesBeforePromptResult = await errore.tryAsync(() => {
+      return getClient().session.messages({
+        sessionID: session.id,
+        directory: sdkDirectory,
+      })
+    })
+    if (messagesBeforePromptResult instanceof Error) {
+      sessionLogger.log(
+        `[SESSION IDLE] Could not snapshot pre-prompt assistant message for ${session.id}: ${messagesBeforePromptResult.message}`,
+      )
+    } else {
+      const messagesBeforePrompt = messagesBeforePromptResult.data || []
+      assistantMessageIdsBeforePrompt = new Set(
+        messagesBeforePrompt
+          .filter((message) => message.info.role === 'assistant')
+          .map((message) => message.info.id),
+      )
+    }
 
     // variant is accepted by the server API but not yet in the v1 SDK types
     const variantField = earlyThinkingValue
       ? { variant: earlyThinkingValue }
       : {}
+
+    promptDispatchStarted = true
 
     const response = command
       ? await getClient().session.command(
@@ -2447,9 +2482,9 @@ export async function handleOpencodeSession({
 
     if (hasPendingMainSessionIdle) {
       hasPendingMainSessionIdle = false
-      if (!hasReceivedEvent) {
+      if (!hasReceivedCurrentPromptEvent) {
         sessionLogger.log(
-          `[SESSION IDLE] Ignoring deferred idle for ${session.id} because no main-session events were observed`,
+          `[SESSION IDLE] Ignoring deferred idle for ${session.id} because no current-prompt events were observed`,
         )
       } else {
         sessionLogger.log(

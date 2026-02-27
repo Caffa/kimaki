@@ -90,11 +90,40 @@ async function cleanupOpencodeServers() {
 }
 
 function createDeterministicMatchers() {
+  const raceFinalReplyMatcher: DeterministicMatcher = {
+    id: 'race-final-reply',
+    priority: 110,
+    when: {
+      rawPromptIncludes: 'Reply with exactly: race-final',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'race-final' },
+        { type: 'text-delta', id: 'race-final', delta: 'race-final' },
+        { type: 'text-end', id: 'race-final' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ],
+      // Delay first output to widen the window where a stale idle could end
+      // this new request before it emits any assistant text.
+      partDelaysMs: [0, 2500, 0, 0, 0],
+    },
+  }
+
   const sleepMatcher: DeterministicMatcher = {
     id: 'sleep-tool-call',
     priority: 100,
     when: {
-      rawPromptIncludes: 'sleep 500',
+      rawPromptIncludes:
+        'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`',
     },
     then: {
       parts: [
@@ -177,7 +206,12 @@ function createDeterministicMatchers() {
     },
   }
 
-  return [sleepMatcher, toolFollowupMatcher, userReplyMatcher]
+  return [
+    sleepMatcher,
+    raceFinalReplyMatcher,
+    toolFollowupMatcher,
+    userReplyMatcher,
+  ]
 }
 
 /** Poll getMessages until we see at least `count` bot messages. */
@@ -900,6 +934,63 @@ e2eTest('thread message queue ordering', () => {
         return m.author.id === discord.botUserId
       })
       expect(userPapaIndex).toBeLessThan(lastBotIndex)
+    },
+    360_000,
+  )
+
+  async function runInterruptRaceScenario(runIndex: number) {
+    // Reproduces the stale-idle timing window reported in production:
+    // 1) an active stream is interrupted by a new message,
+    // 2) late events from the interrupted stream arrive,
+    // 3) the new prompt must still produce assistant text.
+    const setupPrompt = `Reply with exactly: race-setup-${runIndex}`
+    const raceFinalPrompt = `Reply with exactly: race-final-${runIndex}`
+
+    await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: setupPrompt,
+    })
+
+    const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 60_000,
+      predicate: (t) => {
+        return t.name === setupPrompt
+      },
+    })
+
+    const th = discord.thread(thread.id)
+    const setupReply = await th.waitForBotReply({ timeout: 120_000 })
+    expect(setupReply.content.trim().length).toBeGreaterThan(0)
+
+    await th.user(TEST_USER_ID).sendMessage({
+      content:
+        'MANDATORY INSTRUCTION: call the bash tool immediately and run exactly this command: `sleep 500`. No explanation. No normal text. Do not skip the tool call.',
+    })
+
+    await waitForBotMessageContaining({
+      discord,
+      threadId: thread.id,
+      text: 'sleep 500',
+      afterUserMessageIncludes: 'sleep 500',
+      timeout: 30_000,
+    })
+
+    await th.user(TEST_USER_ID).sendMessage({
+      content: raceFinalPrompt,
+    })
+
+    await waitForBotMessageContaining({
+      discord,
+      threadId: thread.id,
+      text: 'race-final',
+      afterUserMessageIncludes: raceFinalPrompt,
+      timeout: 30_000,
+    })
+  }
+
+  test(
+    'interrupt race: queued message still gets assistant text after stale idle window',
+    async () => {
+      await runInterruptRaceScenario(1)
     },
     360_000,
   )
