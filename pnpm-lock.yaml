@@ -120,9 +120,6 @@ importers:
       mime:
         specifier: ^4.1.0
         version: 4.1.0
-      opencode-deterministic-provider:
-        specifier: workspace:^
-        version: link:../opencode-deterministic-provider
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -175,6 +172,9 @@ importers:
       opencode-cached-provider:
         specifier: workspace:^
         version: link:../opencode-cached-provider
+      opencode-deterministic-provider:
+        specifier: workspace:^
+        version: link:../opencode-deterministic-provider
       prisma:
         specifier: 7.3.0
         version: 7.3.0(@types/react@19.2.14)(better-sqlite3@12.3.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.2)
