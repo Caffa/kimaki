@@ -5,10 +5,28 @@
 
 import * as Sentry from '@sentry/node'
 import * as errore from 'errore'
+import { createRequire } from 'node:module'
 
 // DSN placeholder — replace with your Sentry project DSN.
 // Users can also set KIMAKI_SENTRY_DSN env var.
 const HARDCODED_DSN = 'https://3b87e21ac01cb9c66225719ea65111d2@o4510952031715328.ingest.us.sentry.io/4510952088469504'
+
+function readKimakiVersion(): string {
+  try {
+    const require = createRequire(import.meta.url)
+    const pkg = require('../package.json') as { version?: string }
+    const version = pkg.version
+    if (!version) {
+      return 'unknown'
+    }
+    return version
+  } catch {
+    return 'unknown'
+  }
+}
+
+const kimakiVersion = readKimakiVersion()
+const kimakiRelease = `kimaki@${kimakiVersion}`
 
 let initialized = false
 
@@ -28,6 +46,7 @@ export function initSentry({ dsn }: { dsn?: string } = {}): void {
 
   Sentry.init({
     dsn: resolvedDsn,
+    release: kimakiRelease,
     integrations: [],
     tracesSampleRate: 0,
     sendDefaultPii: false,
@@ -44,6 +63,8 @@ export function initSentry({ dsn }: { dsn?: string } = {}): void {
       return event
     },
   })
+
+  Sentry.setTag('kimaki_version', kimakiVersion)
 
   initialized = true
 }
@@ -62,7 +83,10 @@ export function notifyError(error: unknown, msg?: string): void {
       return
     }
 
-    Sentry.captureException(error, { extra: { msg } })
+    Sentry.captureException(error, {
+      tags: { kimaki_version: kimakiVersion },
+      extra: { msg, kimakiVersion },
+    })
     void Sentry.flush(1000).catch(() => {
       return
     })
