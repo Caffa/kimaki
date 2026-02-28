@@ -312,7 +312,7 @@ export async function setupVoiceHandling({
   let speakingSessionCount = 0
 
   receiver.speaking.on('start', (userId) => {
-    voiceLogger.log(`User ${userId} started speaking`)
+    voiceLogger.log('User started speaking')
 
     speakingSessionCount++
     const currentSessionCount = speakingSessionCount
@@ -329,8 +329,8 @@ export async function setupVoiceHandling({
     })
 
     decoder.on('error', (error) => {
-      voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
-      void notifyError(error, `Opus decoder error for user ${userId}`)
+      voiceLogger.error('Opus decoder error while processing voice input:', error)
+      void notifyError(error, 'Voice: opus decoder failure')
     })
 
     const downsampleTransform = new Transform({
@@ -376,35 +376,35 @@ export async function setupVoiceHandling({
       .on('end', () => {
         if (currentSessionCount === speakingSessionCount) {
           voiceLogger.log(
-            `User ${userId} stopped speaking (session ${currentSessionCount})`,
+            `User stopped speaking (session ${currentSessionCount})`,
           )
           voiceData.genAiWorker?.sendRealtimeInput({
             audioStreamEnd: true,
           })
         } else {
           voiceLogger.log(
-            `User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
+            `User stopped speaking (session ${currentSessionCount}), skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
           )
         }
       })
       .on('error', (error) => {
-        voiceLogger.error(`Pipeline error for user ${userId}:`, error)
-        void notifyError(error, `Voice pipeline error for user ${userId}`)
+        voiceLogger.error('Voice pipeline error while processing user audio:', error)
+        void notifyError(error, 'Voice: pipeline failure')
       })
 
     audioStream.on('error', (error) => {
-      voiceLogger.error(`Audio stream error for user ${userId}:`, error)
-      void notifyError(error, `Audio stream error for user ${userId}`)
+      voiceLogger.error('Audio stream error while receiving user audio:', error)
+      void notifyError(error, 'Voice: audio stream failure')
     })
 
     downsampleTransform.on('error', (error) => {
-      voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
-      void notifyError(error, `Downsample transform error for user ${userId}`)
+      voiceLogger.error('Downsample transform error while processing voice audio:', error)
+      void notifyError(error, 'Voice: downsample transform failure')
     })
 
     framer.on('error', (error) => {
-      voiceLogger.error(`Framer error for user ${userId}:`, error)
-      void notifyError(error, `Framer error for user ${userId}`)
+      voiceLogger.error('Framer error while processing voice audio:', error)
+      void notifyError(error, 'Voice: framer failure')
     })
   })
 }
@@ -587,7 +587,7 @@ export async function processVoiceAttachment({
   }
 
   voiceLogger.log(
-    `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
+    `Transcription successful (chars=${transcription.length})`,
   )
 
   if (isNewThread) {
@@ -643,7 +643,7 @@ export function registerVoiceStateHandler({
 
         if (oldState.channelId !== null && newState.channelId === null) {
           voiceLogger.log(
-            `Permitted user ${member.user.tag} left voice channel: ${oldState.channel?.name}`,
+            'Permitted user left voice channel',
           )
 
           const guildId = guild.id
@@ -665,7 +665,7 @@ export function registerVoiceStateHandler({
 
             if (!hasOtherPermittedUsers) {
               voiceLogger.log(
-                `No other permitted users in channel, bot leaving voice channel in guild: ${guild.name}`,
+                'No other permitted users in channel, bot leaving voice channel',
               )
 
               await cleanupVoiceConnection(guildId)
@@ -684,7 +684,7 @@ export function registerVoiceStateHandler({
           oldState.channelId !== newState.channelId
         ) {
           voiceLogger.log(
-            `Permitted user ${member.user.tag} moved from ${oldState.channel?.name} to ${newState.channel?.name}`,
+            'Permitted user moved between voice channels',
           )
 
           const guildId = guild.id
@@ -707,7 +707,7 @@ export function registerVoiceStateHandler({
 
               if (!hasOtherPermittedUsers) {
                 voiceLogger.log(
-                  `Following admin to new channel: ${newState.channel?.name}`,
+                  'Following permitted user to new channel',
                 )
                 const voiceChannel = newState.channel as VoiceChannel
                 if (voiceChannel) {
@@ -728,7 +728,7 @@ export function registerVoiceStateHandler({
 
         if (oldState.channelId === null && newState.channelId !== null) {
           voiceLogger.log(
-            `Permitted user ${member.user.tag} joined voice channel: ${newState.channel?.name}`,
+            'Permitted user joined voice channel',
           )
         }
 
@@ -827,19 +827,19 @@ export function registerVoiceStateHandler({
 
           connection.on('error', (error) => {
             voiceLogger.error(
-              `Connection error in guild ${newState.guild.name}:`,
+              'Voice connection error:',
               error,
             )
-            void notifyError(error, `Voice connection error in guild ${newState.guild.name}`)
+            void notifyError(error, 'Voice: connection error')
           })
         } catch (error) {
           voiceLogger.error(`Failed to join voice channel:`, error)
-          void notifyError(error, 'Failed to join voice channel')
+          void notifyError(error, 'Voice: failed to join channel')
           await cleanupVoiceConnection(newState.guild.id)
         }
       } catch (error) {
         voiceLogger.error('Error in voice state update handler:', error)
-        void notifyError(error, 'Voice state update handler error')
+        void notifyError(error, 'Voice: state update handler error')
       }
     },
   )

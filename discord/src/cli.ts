@@ -891,7 +891,7 @@ async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
     if (existingRole) {
       if (existingRole.position > 1) {
         await existingRole.setPosition(1)
-        cliLogger.info(`Moved "Kimaki" role to bottom in ${guild.name}`)
+        cliLogger.info('Moved "Kimaki" role to bottom in guild')
       }
       return
     }
@@ -902,7 +902,7 @@ async function reconcileKimakiRole({ guild }: { guild: Guild }): Promise<void> {
       reason:
         'Kimaki bot permission role - assign to users who can start sessions, send messages in threads, and use voice features',
     })
-    cliLogger.info(`Created "Kimaki" role in ${guild.name}`)
+    cliLogger.info('Created "Kimaki" role in guild')
   } catch (error) {
     cliLogger.warn(
       `Could not reconcile Kimaki role in ${guild.name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -2278,7 +2278,7 @@ cli
           if (!options.user) {
             return undefined
           }
-          cliLogger.log(`Searching for user "${options.user}" in guild...`)
+          cliLogger.log('Searching for user in guild...')
           const searchResults = (await rest.get(
             Routes.guildMembersSearch(channelData.guild_id),
             {
@@ -2304,7 +2304,7 @@ cli
           }
           const username =
             member.nick || member.user.global_name || member.user.username
-          cliLogger.log(`Found user: ${username} (${member.user.id})`)
+          cliLogger.log('Found matching user in guild')
           return { id: member.user.id, username }
         })()
 
@@ -2404,7 +2404,7 @@ cli
 
         // Add user to thread if specified
         if (resolvedUser) {
-          cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
+          cliLogger.log('Adding selected user to thread...')
           await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
         }
 
@@ -2673,7 +2673,7 @@ cli
         )
       }
 
-      cliLogger.log(`Creating channels in ${guild.name}...`)
+      cliLogger.log('Creating channels in guild...')
 
       const { textChannelId, voiceChannelId, channelName } =
         await createProjectChannels({

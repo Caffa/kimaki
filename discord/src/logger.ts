@@ -8,6 +8,7 @@ import path, { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import util from 'node:util'
 import pc from 'picocolors'
+import { sanitizeSensitiveText, sanitizeUnknownValue } from './privacy-sanitizer.js'
 
 // All known log prefixes - add new ones here to keep alignment consistent
 export const LogPrefix = {
@@ -79,21 +80,28 @@ if (isDev) {
 
 function formatArg(arg: unknown): string {
   if (typeof arg === 'string') {
-    return arg
+    return sanitizeSensitiveText(arg, { redactPaths: false })
   }
-  return util.inspect(arg, { colors: true, depth: 4 })
+  const safeArg = sanitizeUnknownValue(arg, { redactPaths: false })
+  return util.inspect(safeArg, { colors: true, depth: 4 })
 }
 
 export function formatErrorWithStack(error: unknown): string {
   if (error instanceof Error) {
-    return error.stack ?? `${error.name}: ${error.message}`
+    return sanitizeSensitiveText(
+      error.stack ?? `${error.name}: ${error.message}`,
+      { redactPaths: false },
+    )
   }
   if (typeof error === 'string') {
-    return error
+    return sanitizeSensitiveText(error, { redactPaths: false })
   }
 
   // Keep this stable and safe for unknown values (handles circular structures).
-  return util.inspect(error, { colors: false, depth: 4 })
+  const safeError = sanitizeUnknownValue(error, { redactPaths: false })
+  return sanitizeSensitiveText(util.inspect(safeError, { colors: false, depth: 4 }), {
+    redactPaths: false,
+  })
 }
 
 function writeToFile(level: string, prefix: string, args: unknown[]) {

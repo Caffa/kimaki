@@ -1737,14 +1737,12 @@ export async function handleOpencodeSession({
       }
       const errorMessage = formatSessionError(error)
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-      const errorPayload = (() => {
-        try {
-          return JSON.stringify(error)
-        } catch {
-          return '[unserializable error payload]'
-        }
-      })()
-      sessionLogger.error(`Session error payload:`, errorPayload)
+      const statusCode = error?.data?.statusCode
+      sessionLogger.error(
+        `Session error payload received${
+          typeof statusCode === 'number' ? ` (status=${statusCode})` : ''
+        }`,
+      )
       await sendThreadMessage(
         thread,
         `✗ opencode session error: ${errorMessage}`,
@@ -2231,7 +2229,7 @@ export async function handleOpencodeSession({
           }
 
           sessionLogger.log(
-            `[QUEUE] Processing queued message from ${nextMessage.username}`,
+            '[QUEUE] Processing queued message',
           )
 
           // Show that queued message is being sent
@@ -2534,7 +2532,9 @@ export async function handleOpencodeSession({
     return
   }
 
-  sessionLogger.error(`ERROR: Failed to send prompt:`, promptError)
+  sessionLogger.error(
+    `ERROR: Failed to send prompt: ${(promptError as Error).message}`,
+  )
   void notifyError(promptError, 'Failed to send prompt to OpenCode')
   sessionLogger.log(
     `[ABORT] reason=error sessionId=${session.id} threadId=${thread.id} - prompt failed with error: ${(promptError as Error).message}`,

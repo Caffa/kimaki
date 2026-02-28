@@ -49,10 +49,7 @@ export async function runShellCommand({
       [execError.stdout, execError.stderr].filter(Boolean).join('\n').trim(),
     )
     const exitCode = execError.code ?? 1
-    logger.error(
-      `[RUN-COMMAND] Command "${command}" exited with ${exitCode}:`,
-      error,
-    )
+    logger.error(`[RUN-COMMAND] Command exited with ${exitCode}`)
 
     const header = `\`${command}\` exited with ${exitCode}`
     return formatOutput(output || execError.message || 'Unknown error', header)

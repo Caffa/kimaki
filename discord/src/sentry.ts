@@ -6,6 +6,7 @@
 import * as Sentry from '@sentry/node'
 import * as errore from 'errore'
 import { createRequire } from 'node:module'
+import { sanitizeSensitiveText, sanitizeUnknownValue } from './privacy-sanitizer.js'
 
 // DSN placeholder — replace with your Sentry project DSN.
 // Users can also set KIMAKI_SENTRY_DSN env var.
@@ -60,6 +61,17 @@ export function initSentry({ dsn }: { dsn?: string } = {}): void {
       if (errore.isAbortError(hint.originalException)) {
         return null
       }
+
+      try {
+        const sanitizedEvent = sanitizeUnknownValue(event, {
+          redactPaths: false,
+        })
+        if (sanitizedEvent && typeof sanitizedEvent === 'object') {
+          return sanitizedEvent as typeof event
+        }
+      } catch {
+        return event
+      }
       return event
     },
   })
@@ -83,9 +95,27 @@ export function notifyError(error: unknown, msg?: string): void {
       return
     }
 
+    const safeMsg = (() => {
+      if (!msg) {
+        return undefined
+      }
+      try {
+        return sanitizeSensitiveText(msg, { redactPaths: false })
+      } catch {
+        return msg
+      }
+    })()
+    const safeError = (() => {
+      try {
+        return sanitizeUnknownValue(error, { redactPaths: false })
+      } catch {
+        return error
+      }
+    })()
+
     Sentry.captureException(error, {
       tags: { kimaki_version: kimakiVersion },
-      extra: { msg, kimakiVersion },
+      extra: { msg: safeMsg, kimakiVersion, error: safeError },
     })
     void Sentry.flush(1000).catch(() => {
       return
