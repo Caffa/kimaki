@@ -36,18 +36,6 @@ const CORE_SENSITIVE_REPLACEMENTS: Array<{
       /(\b(?:token|api[_-]?key|secret|password|authorization)\b\s*[:=]\s*)([^\s,;]+)/gi,
     replacement: '$1[REDACTED]',
   },
-  {
-    pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-    replacement: '[REDACTED_EMAIL]',
-  },
-  {
-    pattern: /<@!?\d{17,20}>/g,
-    replacement: '<@[REDACTED_ID]>',
-  },
-  {
-    pattern: /\b\d{17,20}\b/g,
-    replacement: '[REDACTED_ID]',
-  },
 ]
 
 const PATH_REPLACEMENTS: Array<{

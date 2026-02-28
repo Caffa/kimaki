@@ -428,7 +428,7 @@ export async function initializeOpencodeForDirectory(
           (result) => {
             if (result instanceof Error) {
               opencodeLogger.error(`Failed to restart opencode server:`, result)
-              void notifyError(result, 'OpenCode server restart failed')
+              void notifyError(result, `OpenCode server restart failed for ${directory}`)
             }
           },
         )

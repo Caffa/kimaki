@@ -1737,12 +1737,14 @@ export async function handleOpencodeSession({
       }
       const errorMessage = formatSessionError(error)
       sessionLogger.error(`Sending error to thread: ${errorMessage}`)
-      const statusCode = error?.data?.statusCode
-      sessionLogger.error(
-        `Session error payload received${
-          typeof statusCode === 'number' ? ` (status=${statusCode})` : ''
-        }`,
-      )
+      const errorPayload = (() => {
+        try {
+          return JSON.stringify(error)
+        } catch {
+          return '[unserializable error payload]'
+        }
+      })()
+      sessionLogger.error(`Session error payload:`, errorPayload)
       await sendThreadMessage(
         thread,
         `✗ opencode session error: ${errorMessage}`,
@@ -2229,7 +2231,7 @@ export async function handleOpencodeSession({
           }
 
           sessionLogger.log(
-            '[QUEUE] Processing queued message',
+            `[QUEUE] Processing queued message from ${nextMessage.username}`,
           )
 
           // Show that queued message is being sent

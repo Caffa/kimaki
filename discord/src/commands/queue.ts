@@ -131,7 +131,7 @@ export async function handleQueueCommand({
   })
 
   logger.log(
-    `[QUEUE] User queued message in thread ${channel.id}`,
+    `[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`,
   )
 }
 
@@ -180,7 +180,7 @@ export async function handleClearQueueCommand({
   })
 
   logger.log(
-    `[QUEUE] User cleared queue in thread ${channel.id}`,
+    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
   )
 }
 

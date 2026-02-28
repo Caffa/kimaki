@@ -198,7 +198,7 @@ export async function startDiscordBot({
   let currentAppId: string | undefined = appId
 
   const setupHandlers = async (c: Client<true>) => {
-    discordLogger.log('Discord bot logged in')
+    discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
     discordLogger.log(`Bot user ID: ${c.user.id}`)
 
@@ -225,7 +225,7 @@ export async function startDiscordBot({
     // Channel logging is informational only; do it in background so startup stays responsive.
     void (async () => {
       for (const guild of c.guilds.cache.values()) {
-        discordLogger.log(`Guild connected (${guild.id})`)
+        discordLogger.log(`${guild.name} (${guild.id})`)
 
         const channels = await getChannelsWithDescriptions(guild)
         const kimakiChannels = channels.filter(
@@ -239,7 +239,9 @@ export async function startDiscordBot({
             `  Found ${kimakiChannels.length} channel(s) for this bot:`,
           )
           for (const channel of kimakiChannels) {
-            discordLogger.log('  - project channel configured')
+            discordLogger.log(
+              `  - #${channel.name}: ${channel.kimakiDirectory}`,
+            )
           }
           continue
         }
@@ -372,7 +374,7 @@ export async function startDiscordBot({
 
       if (isThread) {
         const thread = channel as ThreadChannel
-        discordLogger.log(`Message in thread (${thread.id})`)
+        discordLogger.log(`Message in thread ${thread.name} (${thread.id})`)
 
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
@@ -406,11 +408,11 @@ export async function startDiscordBot({
           // Use original project directory for OpenCode server (session lives there)
           // The worktree directory is passed via query.directory in prompt/command calls
           if (worktreeInfo.project_directory) {
-              projectDirectory = worktreeInfo.project_directory
-              discordLogger.log(
-                `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
-              )
-            }
+            projectDirectory = worktreeInfo.project_directory
+            discordLogger.log(
+              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
+            )
+          }
         }
 
         if (channelAppId && channelAppId !== currentAppId) {
@@ -647,14 +649,14 @@ export async function startDiscordBot({
       if (channel.type === ChannelType.GuildText) {
         const textChannel = channel as TextChannel
         voiceLogger.log(
-          `[GUILD_TEXT] Message in text channel (${textChannel.id})`,
+          `[GUILD_TEXT] Message in text channel #${textChannel.name} (${textChannel.id})`,
         )
 
         const channelConfig = await getChannelDirectory(textChannel.id)
 
         if (!channelConfig) {
           voiceLogger.log(
-            '[IGNORED] Channel has no project directory configured',
+            `[IGNORED] Channel #${textChannel.name} has no project directory configured`,
           )
           return
         }
@@ -730,7 +732,7 @@ export async function startDiscordBot({
         // Add user to thread so it appears in their sidebar
         await thread.members.add(message.author.id)
 
-        discordLogger.log(`Created thread (${thread.id})`)
+        discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
         // Create worktree if worktrees are enabled (CLI flag OR channel setting)
         let sessionDirectory = projectDirectory
@@ -738,7 +740,7 @@ export async function startDiscordBot({
           const worktreeName = formatWorktreeName(
             hasVoice ? `voice-${Date.now()}` : threadName.slice(0, 50),
           )
-          discordLogger.log('[WORKTREE] Creating worktree')
+          discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
 
           // Store pending worktree immediately so bot knows about it
           await createPendingWorktree({
@@ -770,7 +772,7 @@ export async function startDiscordBot({
             })
             sessionDirectory = worktreeResult.directory
             discordLogger.log(
-              '[WORKTREE] Created successfully',
+              `[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`,
             )
             // React with tree emoji to mark as worktree thread
             await reactToThread({

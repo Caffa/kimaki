@@ -544,6 +544,6 @@ export function formatPart(part: Part, prefix?: string): string {
     return `${icon} ${pfx}${toolParts}`
   }
 
-  logger.warn(`Unknown part type: ${part.type}`)
+  logger.warn('Unknown part type:', part)
   return ''
 }
