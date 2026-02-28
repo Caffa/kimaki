@@ -22,6 +22,18 @@ To restart the discord bot process so it uses the new code, send a SIGUSR2 signa
 
 The bot will wait 1000ms and then restart itself with the same arguments.
 
+## running parallel kimaki processes
+
+if you need to run another kimaki process while one is already running (for example testing the npm-installed kimaki), ALWAYS set a different `KIMAKI_LOCK_PORT` for the extra process.
+
+otherwise the new process can take over the lock port, stop the main kimaki process, and kill active sessions.
+
+use a free port and a separate data dir, for example:
+
+```bash
+KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/.kimaki-test
+```
+
 ## sqlite
 
 this project uses sqlite to preserve state between runs. the database should never have breaking changes, new kimaki versions should keep working with old sqlite databases created by an older kimaki version. if this happens specifically ask the user how to proceed, asking if it is ok adding migration in startup so users with existing db can still use kimaki and will not break.
@@ -85,6 +97,14 @@ when adding delayed typing restarts (for example after `step-finish`), always gu
 ## AGENTS.md
 
 AGENTS.md is generated. only edit KIMAKI_AGENTS.md instead. pnpm agents.md will generate the file again.
+
+## discord object shapes
+
+never use typescript assertions/casts on discord interaction objects just to force a cached shape (for example `as GuildMember`). many discord values can arrive as either hydrated cached classes or raw api payload shapes depending on cache/event path.
+
+for member/role/permission checks, always handle both shapes explicitly with a union type and runtime narrowing (`instanceof GuildMember`, guarded `Array.isArray(member.roles)`, etc). if required context is missing for permission checks, fail closed instead of assuming access.
+
+this avoids bugs where code works for cached users but fails for uncached interaction payloads with errors like `member.roles.cache` being undefined.
 
 ## resolving project directories in commands
 
