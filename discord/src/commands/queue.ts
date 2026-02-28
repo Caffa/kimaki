@@ -14,6 +14,7 @@ import {
   addToQueue,
   getQueueLength,
   clearQueue,
+  queueOrSendMessage,
 } from '../session-handler.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
@@ -51,9 +52,15 @@ export async function handleQueueCommand({
     return
   }
 
-  const sessionId = await getThreadSession(channel.id)
+  const result = await queueOrSendMessage({
+    thread: channel as ThreadChannel,
+    prompt: message,
+    userId: command.user.id,
+    username: command.user.displayName,
+    appId,
+  })
 
-  if (!sessionId) {
+  if (result.action === 'no-session') {
     await command.reply({
       content:
         'No active session in this thread. Send a message directly instead.',
@@ -62,77 +69,26 @@ export async function handleQueueCommand({
     return
   }
 
-  // Check if there's an active request running
-  const existingController = abortControllers.get(sessionId)
-  const hasActiveRequest = Boolean(
-    existingController && !existingController.signal.aborted,
-  )
-  if (existingController && existingController.signal.aborted) {
-    abortControllers.delete(sessionId)
+  if (result.action === 'no-directory') {
+    await command.reply({
+      content: 'Could not determine project directory',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
   }
 
-  if (!hasActiveRequest) {
-    // No active request, send immediately
-    const resolved = await resolveWorkingDirectory({
-      channel: channel as ThreadChannel,
-    })
-
-    if (!resolved) {
-      await command.reply({
-        content: 'Could not determine project directory',
-        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-      })
-      return
-    }
-
+  if (result.action === 'sent') {
     await command.reply({
       content: `» **${command.user.displayName}:** ${message.slice(0, 100)}${message.length > 100 ? '...' : ''}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
-
-    logger.log(
-      `[QUEUE] No active request, sending immediately in thread ${channel.id}`,
-    )
-
-    handleOpencodeSession({
-      prompt: message,
-      thread: channel as ThreadChannel,
-      projectDirectory: resolved.projectDirectory,
-      channelId: (channel as ThreadChannel).parentId || channel.id,
-      appId,
-    }).catch(async (e) => {
-      logger.error(`[QUEUE] Failed to send message:`, e)
-      void notifyError(e, 'Queue: failed to send message')
-      const errorMsg = e instanceof Error ? e.message : String(e)
-      await sendThreadMessage(
-        channel as ThreadChannel,
-        `✗ Failed: ${errorMsg.slice(0, 200)}`,
-      )
-    })
-
     return
   }
 
-  // Add to queue
-  const queuePosition = addToQueue({
-    threadId: channel.id,
-    message: {
-      prompt: message,
-      userId: command.user.id,
-      username: command.user.displayName,
-      queuedAt: Date.now(),
-      appId,
-    },
-  })
-
   await command.reply({
-    content: `✅ Message queued (position: ${queuePosition}). Will be sent after current response.`,
+    content: `Message queued (position: ${result.position}). Will be sent after current response.`,
     flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
   })
-
-  logger.log(
-    `[QUEUE] User ${command.user.displayName} queued message in thread ${channel.id}`,
-  )
 }
 
 export async function handleClearQueueCommand({

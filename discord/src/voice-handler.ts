@@ -42,7 +42,7 @@ import {
   SILENT_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
-import { transcribeAudio } from './voice.js'
+import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { FetchError } from './errors.js'
 
 import { createLogger, LogPrefix } from './logger.js'
@@ -466,7 +466,7 @@ export async function processVoiceAttachment({
   appId,
   currentSessionContext,
   lastSessionContext,
-}: ProcessVoiceAttachmentArgs): Promise<string | null> {
+}: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => attachment.contentType?.startsWith('audio/'),
   )
@@ -586,12 +586,14 @@ export async function processVoiceAttachment({
     return null
   }
 
+  const { transcription: text, queueMessage } = transcription
+
   voiceLogger.log(
-    `Transcription successful: "${transcription.slice(0, 50)}${transcription.length > 50 ? '...' : ''}"`,
+    `Transcription successful: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"${queueMessage ? ' [QUEUE]' : ''}`,
   )
 
   if (isNewThread) {
-    const threadName = transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
+    const threadName = text.replace(/\s+/g, ' ').trim().slice(0, 80)
     if (threadName) {
       const renamed = await Promise.race([
         errore.tryAsync({
@@ -614,9 +616,10 @@ export async function processVoiceAttachment({
     }
   }
 
+  const queueLabel = queueMessage ? ' (queued)' : ''
   await sendThreadMessage(
     thread,
-    `📝 **Transcribed message:** ${escapeDiscordFormatting(transcription)}`,
+    `📝 **Transcribed message${queueLabel}:** ${escapeDiscordFormatting(text)}`,
   )
   return transcription
 }

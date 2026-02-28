@@ -142,18 +142,29 @@ const transcriptionTool: LanguageModelV3FunctionTool = {
         description:
           'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, use "[inaudible audio]".',
       },
+      queueMessage: {
+        type: 'boolean',
+        description:
+          'Set to true ONLY if the user explicitly says "queue this message", "queue this", or similar phrasing indicating they want this message queued instead of sent immediately. If not mentioned, omit or set to false.',
+      },
     },
     required: ['transcription'],
   },
 }
 
+export type TranscriptionResult = {
+  transcription: string
+  queueMessage: boolean
+}
+
 /**
- * Extract transcription string from doGenerate content array.
+ * Extract transcription result from doGenerate content array.
  * Looks for a tool-call named 'transcriptionResult', falls back to text content.
+ * Returns structured result with transcription text and queueMessage flag.
  */
 export function extractTranscription(
   content: Array<LanguageModelV3Content>,
-): TranscriptionLoopError | string {
+): TranscriptionLoopError | TranscriptionResult {
   const toolCall = content.find(
     (c): c is LanguageModelV3ToolCall =>
       c.type === 'tool-call' && c.toolName === 'transcriptionResult',
@@ -161,20 +172,21 @@ export function extractTranscription(
 
   if (toolCall) {
     // toolCall.input is a JSON string in LanguageModelV3
-    const args: Record<string, string> = (() => {
+    const args: Record<string, unknown> = (() => {
       if (typeof toolCall.input === 'string') {
-        return JSON.parse(toolCall.input) as Record<string, string>
+        return JSON.parse(toolCall.input) as Record<string, unknown>
       }
       return {}
     })()
-    const transcription = args.transcription?.trim() || ''
+    const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
+    const queueMessage = args.queueMessage === true
     voiceLogger.log(
-      `Transcription result received: "${transcription.slice(0, 100)}..."`,
+      `Transcription result received: "${transcription.slice(0, 100)}..."${queueMessage ? ' [QUEUE]' : ''}`,
     )
     if (!transcription) {
       return new EmptyTranscriptionError()
     }
-    return transcription
+    return { transcription, queueMessage }
   }
 
   // Fall back to text content if no tool call
@@ -183,7 +195,7 @@ export function extractTranscription(
     voiceLogger.log(
       `No tool call but got text: "${textPart.text.trim().slice(0, 100)}..."`,
     )
-    return textPart.text.trim()
+    return { transcription: textPart.text.trim(), queueMessage: false }
   }
 
   if (content.length === 0) {
@@ -207,7 +219,7 @@ async function runTranscriptionOnce({
   audioBase64: string
   mediaType: string
   temperature: number
-}): Promise<TranscriptionLoopError | string> {
+}): Promise<TranscriptionLoopError | TranscriptionResult> {
   const options: LanguageModelV3CallOptions = {
     prompt: [
       {
@@ -308,7 +320,7 @@ export async function transcribeAudio({
   mediaType?: string
   currentSessionContext?: string
   lastSessionContext?: string
-}): Promise<TranscribeAudioErrors | string> {
+}): Promise<TranscribeAudioErrors | TranscriptionResult> {
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
@@ -401,6 +413,13 @@ This is a software development environment. The speaker is giving instructions t
  - If audio is unclear, transcribe your best interpretation, even with strong accents. Always provide an approximation.
  - If audio seems silent/empty, call transcriptionResult with "[inaudible audio]"
  - The session context below is ONLY for understanding technical terms, file names, and function names. It may contain previous transcriptions — NEVER copy or reuse them. Always transcribe fresh from the current audio.
+
+ QUEUE DETECTION:
+ - If the user says "queue this message", "queue this", "add this to the queue", or similar phrasing indicating they want the message queued instead of sent immediately, set queueMessage to true.
+ - Remove the queue instruction from the transcription text itself — only include the actual message content.
+ - Example: "Queue this message. Fix the login bug in auth.ts" → transcription: "Fix the login bug in auth.ts", queueMessage: true
+ - If removing the queue phrase would leave empty content (user only said "queue this" with nothing else), keep the full spoken text as the transcription — never return an empty transcription.
+ - If no queue intent is detected, omit queueMessage or set it to false.
 
 Common corrections (apply without tool calls):
 - "reacked" → "React", "jason" → "JSON", "get hub" → "GitHub", "no JS" → "Node.js", "dacker" → "Docker"

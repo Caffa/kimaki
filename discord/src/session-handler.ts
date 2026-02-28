@@ -40,6 +40,7 @@ import {
 } from './opencode.js'
 import {
   sendThreadMessage,
+  resolveWorkingDirectory,
   NOTIFY_MESSAGE_FLAGS,
   SILENT_MESSAGE_FLAGS,
 } from './discord-utils.js'
@@ -291,6 +292,103 @@ export function getQueueLength(threadId: string): number {
 
 export function clearQueue(threadId: string): void {
   messageQueue.delete(threadId)
+}
+
+export type QueueOrSendResult =
+  | { action: 'sent' }
+  | { action: 'queued'; position: number }
+  | { action: 'no-session' }
+  | { action: 'no-directory' }
+
+/**
+ * Queue a message if there's an active in-progress request, otherwise send immediately.
+ * Abstracts the "check active request → send or queue" pattern used by /queue command
+ * and voice transcription queue detection.
+ *
+ * Checks active request BEFORE resolving directory so that queueing works even if
+ * directory resolution would fail — the queued message only needs a directory later
+ * when it's actually sent (the drain logic in handleOpencodeSession already has it).
+ *
+ * If there is no existing session or no project directory (on immediate-send path),
+ * returns an error-like result so the caller can handle it.
+ */
+export async function queueOrSendMessage({
+  thread,
+  prompt,
+  userId,
+  username,
+  appId,
+  images,
+}: {
+  thread: ThreadChannel
+  prompt: string
+  userId: string
+  username: string
+  appId?: string
+  images?: DiscordFileAttachment[]
+}): Promise<QueueOrSendResult> {
+  const sessionId = await getThreadSession(thread.id)
+  if (!sessionId) {
+    return { action: 'no-session' }
+  }
+
+  // Check active request FIRST — queueing doesn't need directory resolution
+  const existingController = abortControllers.get(sessionId)
+  const hasActiveRequest = Boolean(
+    existingController && !existingController.signal.aborted,
+  )
+  if (existingController && existingController.signal.aborted) {
+    abortControllers.delete(sessionId)
+  }
+
+  if (hasActiveRequest) {
+    // Active request — add to queue (no directory needed, drain logic has it)
+    const position = addToQueue({
+      threadId: thread.id,
+      message: {
+        prompt,
+        userId,
+        username,
+        queuedAt: Date.now(),
+        images,
+        appId,
+      },
+    })
+
+    sessionLogger.log(
+      `[QUEUE] User ${username} queued message in thread ${thread.id} (position: ${position})`,
+    )
+
+    return { action: 'queued', position }
+  }
+
+  // No active request — send immediately (need directory for this path)
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
+    return { action: 'no-directory' }
+  }
+
+  sessionLogger.log(
+    `[QUEUE] No active request, sending immediately in thread ${thread.id}`,
+  )
+
+  handleOpencodeSession({
+    prompt,
+    thread,
+    projectDirectory: resolved.projectDirectory,
+    channelId: thread.parentId || thread.id,
+    images,
+    username,
+    userId,
+    appId,
+  }).catch(async (e) => {
+    sessionLogger.error(`[QUEUE] Failed to send message:`, e)
+    void notifyError(e, 'Queue: failed to send message')
+    const errorMsg = e instanceof Error ? e.message : String(e)
+    await sendThreadMessage(thread, `✗ Failed: ${errorMsg.slice(0, 200)}`)
+  })
+
+  return { action: 'sent' }
 }
 
 /**

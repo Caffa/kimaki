@@ -17,7 +17,45 @@ describe('extractTranscription', () => {
         input: JSON.stringify({ transcription: 'hello world' }),
       },
     ])
-    expect(result).toMatchInlineSnapshot(`"hello world"`)
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "queueMessage": false,
+        "transcription": "hello world",
+      }
+    `)
+  })
+
+  test('extracts queueMessage: true from tool call', () => {
+    const result = extractTranscription([
+      {
+        type: 'tool-call',
+        toolCallId: 'call_1',
+        toolName: 'transcriptionResult',
+        input: JSON.stringify({
+          transcription: 'Fix the login bug in auth.ts',
+          queueMessage: true,
+        }),
+      },
+    ])
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "queueMessage": true,
+        "transcription": "Fix the login bug in auth.ts",
+      }
+    `)
+  })
+
+  test('queueMessage defaults to false when omitted', () => {
+    const result = extractTranscription([
+      {
+        type: 'tool-call',
+        toolCallId: 'call_1',
+        toolName: 'transcriptionResult',
+        input: JSON.stringify({ transcription: 'regular message' }),
+      },
+    ])
+    expect(result).not.toBeInstanceOf(Error)
+    expect((result as { queueMessage: boolean }).queueMessage).toBe(false)
   })
 
   test('falls back to text when no tool call', () => {
@@ -27,7 +65,12 @@ describe('extractTranscription', () => {
         text: 'fallback text response',
       },
     ])
-    expect(result).toMatchInlineSnapshot(`"fallback text response"`)
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "queueMessage": false,
+        "transcription": "fallback text response",
+      }
+    `)
   })
 
   test('returns NoResponseContentError for empty content', () => {
@@ -94,8 +137,9 @@ describe('transcribeAudio with real API', () => {
       provider: 'gemini',
     })
 
-    expect(result).toBeTypeOf('string')
-    expect((result as string).length).toBeGreaterThan(0)
+    expect(result).not.toBeInstanceOf(Error)
+    const { transcription } = result as { transcription: string }
+    expect(transcription.length).toBeGreaterThan(0)
     console.log('Gemini transcription:', result)
   })
 
@@ -118,8 +162,9 @@ describe('transcribeAudio with real API', () => {
       provider: 'openai',
     })
 
-    expect(result).toBeTypeOf('string')
-    expect((result as string).length).toBeGreaterThan(0)
+    expect(result).not.toBeInstanceOf(Error)
+    const { transcription } = result as { transcription: string }
+    expect(transcription.length).toBeGreaterThan(0)
     console.log('OpenAI transcription:', result)
   })
 
@@ -144,8 +189,9 @@ describe('transcribeAudio with real API', () => {
       mediaType: 'audio/ogg',
     })
 
-    expect(result).toBeTypeOf('string')
-    expect((result as string).length).toBeGreaterThan(0)
+    expect(result).not.toBeInstanceOf(Error)
+    const { transcription } = result as { transcription: string }
+    expect(transcription.length).toBeGreaterThan(0)
     console.log('OpenAI OGG transcription:', result)
   })
 })

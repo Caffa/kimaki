@@ -27,6 +27,7 @@ import { createWorktreeWithSubmodules } from './worktree-utils.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
+  sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
   reactToThread,
   stripMentions,
@@ -60,6 +61,7 @@ import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import {
   handleOpencodeSession,
   signalThreadInterrupt,
+  queueOrSendMessage,
   type SessionStartSourceContext,
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
@@ -499,14 +501,14 @@ export async function startDiscordBot({
             }
 
             let prompt = resolveMentions(message)
-            const transcription = await processVoiceAttachment({
+            const voiceResult = await processVoiceAttachment({
               message,
               thread,
               projectDirectory,
               appId: currentAppId,
             })
-            if (transcription) {
-              prompt = `Voice message transcription from Discord user:\n\n${transcription}`
+            if (voiceResult) {
+              prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
             }
 
             const starterMessage = await thread
@@ -609,7 +611,7 @@ export async function startDiscordBot({
             }
           }
 
-          const transcription = await processVoiceAttachment({
+          const voiceResult = await processVoiceAttachment({
             message,
             thread,
             projectDirectory,
@@ -617,8 +619,43 @@ export async function startDiscordBot({
             currentSessionContext,
             lastSessionContext,
           })
-          if (transcription) {
-            messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
+          if (voiceResult) {
+            messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+          }
+
+          // If the transcription model detected "queue this message" intent,
+          // use queueOrSendMessage instead of sending immediately.
+          if (voiceResult?.queueMessage) {
+            const fileAttachments = await getFileAttachments(message)
+            const textAttachmentsContent = await getTextAttachments(message)
+            const promptWithAttachments = textAttachmentsContent
+              ? `${messageContent}\n\n${textAttachmentsContent}`
+              : messageContent
+            const username =
+              cliInjectedUsername ||
+              message.member?.displayName ||
+              message.author.displayName
+            const result = await queueOrSendMessage({
+              thread,
+              prompt: promptWithAttachments,
+              userId: isCliInjectedPrompt
+                ? cliInjectedUserId || message.author.id
+                : message.author.id,
+              username,
+              appId: currentAppId,
+              images: fileAttachments,
+            })
+            if (result.action === 'queued') {
+              await sendThreadMessage(
+                thread,
+                `Message queued (position: ${result.position}). Will be sent after current response.`,
+              )
+              return
+            }
+            if (result.action === 'sent') {
+              return
+            }
+            // no-session / no-directory: fall through to normal handleOpencodeSession flow
           }
 
           const fileAttachments = await getFileAttachments(message)
@@ -785,15 +822,15 @@ export async function startDiscordBot({
         }
 
         let messageContent = resolveMentions(message)
-        const transcription = await processVoiceAttachment({
+        const voiceResult = await processVoiceAttachment({
           message,
           thread,
           projectDirectory: sessionDirectory,
           isNewThread: true,
           appId: currentAppId,
         })
-        if (transcription) {
-          messageContent = `Voice message transcription from Discord user:\n\n${transcription}`
+        if (voiceResult) {
+          messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
         }
 
         const fileAttachments = await getFileAttachments(message)
