@@ -3,6 +3,7 @@
 
 import { afterAll, describe, expect, test } from 'vitest'
 import { getPrisma, closePrisma } from './db.js'
+import { createPendingWorktree } from './database.js'
 
 afterAll(async () => {
   await closePrisma()
@@ -27,5 +28,33 @@ describe('getPrisma', () => {
     await prisma.thread_sessions.delete({
       where: { thread_id: 'test-thread-123' },
     })
+  })
+
+  test('createPendingWorktree creates parent and child rows', async () => {
+    const prisma = await getPrisma()
+    const threadId = `test-worktree-${Date.now()}`
+
+    await createPendingWorktree({
+      threadId,
+      worktreeName: 'regression-worktree',
+      projectDirectory: '/tmp/regression-project',
+    })
+
+    const session = await prisma.thread_sessions.findUnique({
+      where: { thread_id: threadId },
+    })
+    expect(session).toBeTruthy()
+    expect(session?.session_id).toBe('')
+
+    const worktree = await prisma.thread_worktrees.findUnique({
+      where: { thread_id: threadId },
+    })
+    expect(worktree).toBeTruthy()
+    expect(worktree?.worktree_name).toBe('regression-worktree')
+    expect(worktree?.project_directory).toBe('/tmp/regression-project')
+    expect(worktree?.status).toBe('pending')
+
+    await prisma.thread_worktrees.delete({ where: { thread_id: threadId } })
+    await prisma.thread_sessions.delete({ where: { thread_id: threadId } })
   })
 })
