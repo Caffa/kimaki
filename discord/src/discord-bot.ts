@@ -462,6 +462,8 @@ export async function startDiscordBot({
           return a.contentType?.startsWith('audio/')
         })
 
+        const prev = threadMessageQueue.get(thread.id)
+
         // Snapshot active request state NOW, before prev task finishes.
         // Voice messages skip the eager interrupt so the session stays alive during
         // transcription. But processThreadMessage is serialized behind prev, so by
@@ -469,9 +471,15 @@ export async function startDiscordBot({
         // This snapshot lets queueOrSendMessage know there WAS an active request
         // when the voice message arrived, so it should queue even if the controller
         // is no longer active.
+        // Conservative: if prev exists, something is actively being processed, so
+        // we treat it as having an active request (avoids race where the async
+        // getThreadSession call lets the prev task finish first).
         const hadActiveRequestOnArrival: boolean = await (async () => {
           if (!hasVoiceAttachment) {
             return false
+          }
+          if (prev) {
+            return true
           }
           const sid = await getThreadSession(thread.id)
           if (!sid) {
@@ -480,8 +488,6 @@ export async function startDiscordBot({
           const controller = abortControllers.get(sid)
           return Boolean(controller && !controller.signal.aborted)
         })()
-
-        const prev = threadMessageQueue.get(thread.id)
         if (prev && !hasVoiceAttachment) {
           // Another message is being processed — abort it immediately so this
           // queued message can start as soon as possible.
@@ -537,6 +543,11 @@ export async function startDiscordBot({
             })
             if (voiceResult) {
               prompt = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+            }
+
+            // If voice transcription failed and there's no text content, bail out
+            if (hasVoiceAttachment && !voiceResult && !prompt.trim()) {
+              return
             }
 
             const starterMessage = await thread
@@ -882,6 +893,11 @@ export async function startDiscordBot({
         })
         if (voiceResult) {
           messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
+        }
+
+        // If voice transcription failed and there's no text content, bail out
+        if (hasVoice && !voiceResult && !messageContent.trim()) {
+          return
         }
 
         const fileAttachments = await getFileAttachments(message)

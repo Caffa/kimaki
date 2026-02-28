@@ -616,10 +616,9 @@ export async function processVoiceAttachment({
     }
   }
 
-  const queueLabel = queueMessage ? ' (queued)' : ''
   await sendThreadMessage(
     thread,
-    `📝 **Transcribed message${queueLabel}:** ${escapeDiscordFormatting(text)}`,
+    `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
   )
   return transcription
 }
