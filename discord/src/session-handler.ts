@@ -319,6 +319,7 @@ export async function queueOrSendMessage({
   username,
   appId,
   images,
+  forceQueue,
 }: {
   thread: ThreadChannel
   prompt: string
@@ -326,6 +327,11 @@ export async function queueOrSendMessage({
   username: string
   appId?: string
   images?: DiscordFileAttachment[]
+  /** When true, queue the message even if no active request is detected right now.
+   *  Used by voice transcription: the active request state is snapshotted at message
+   *  arrival time (before the prev task finishes), because by the time transcription
+   *  completes and this function runs, the previous session may have already finished. */
+  forceQueue?: boolean
 }): Promise<QueueOrSendResult> {
   const sessionId = await getThreadSession(thread.id)
   if (!sessionId) {
@@ -341,7 +347,7 @@ export async function queueOrSendMessage({
     abortControllers.delete(sessionId)
   }
 
-  if (hasActiveRequest) {
+  if (hasActiveRequest || forceQueue) {
     // Active request — add to queue (no directory needed, drain logic has it)
     const position = addToQueue({
       threadId: thread.id,

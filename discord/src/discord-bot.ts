@@ -62,6 +62,7 @@ import {
   handleOpencodeSession,
   signalThreadInterrupt,
   queueOrSendMessage,
+  abortControllers,
   type SessionStartSourceContext,
 } from './session-handler.js'
 import { runShellCommand } from './commands/run-command.js'
@@ -460,6 +461,26 @@ export async function startDiscordBot({
         const hasVoiceAttachment = message.attachments.some((a) => {
           return a.contentType?.startsWith('audio/')
         })
+
+        // Snapshot active request state NOW, before prev task finishes.
+        // Voice messages skip the eager interrupt so the session stays alive during
+        // transcription. But processThreadMessage is serialized behind prev, so by
+        // the time it runs the prev task may have finished and the controller is gone.
+        // This snapshot lets queueOrSendMessage know there WAS an active request
+        // when the voice message arrived, so it should queue even if the controller
+        // is no longer active.
+        const hadActiveRequestOnArrival: boolean = await (async () => {
+          if (!hasVoiceAttachment) {
+            return false
+          }
+          const sid = await getThreadSession(thread.id)
+          if (!sid) {
+            return false
+          }
+          const controller = abortControllers.get(sid)
+          return Boolean(controller && !controller.signal.aborted)
+        })()
+
         const prev = threadMessageQueue.get(thread.id)
         if (prev && !hasVoiceAttachment) {
           // Another message is being processed — abort it immediately so this
@@ -630,6 +651,12 @@ export async function startDiscordBot({
             messageContent = `Voice message transcription from Discord user:\n\n${voiceResult.transcription}`
           }
 
+          // If voice transcription failed (returned null) and there's no text content,
+          // bail out — don't fire deferred interrupt or send an empty prompt.
+          if (hasVoiceAttachment && !voiceResult && !messageContent.trim()) {
+            return
+          }
+
           // If the transcription model detected "queue this message" intent,
           // use queueOrSendMessage instead of sending immediately.
           if (voiceResult?.queueMessage) {
@@ -651,6 +678,7 @@ export async function startDiscordBot({
               username,
               appId: currentAppId,
               images: fileAttachments,
+              forceQueue: hadActiveRequestOnArrival,
             })
             if (result.action === 'queued') {
               await sendThreadMessage(
