@@ -457,10 +457,17 @@ export async function startDiscordBot({
 
         // Chain onto per-thread queue so messages (voice transcription + text)
         // are processed in Discord arrival order, not completion order.
+        const hasVoiceAttachment = message.attachments.some((a) => {
+          return a.contentType?.startsWith('audio/')
+        })
         const prev = threadMessageQueue.get(thread.id)
-        if (prev) {
+        if (prev && !hasVoiceAttachment) {
           // Another message is being processed — abort it immediately so this
           // queued message can start as soon as possible.
+          // Voice messages are excluded: they need transcription first to detect
+          // "queue this message" intent. Interrupting before transcription would
+          // abort the running session, making queueOrSendMessage see no active
+          // request and send immediately instead of queueing.
           const sdkDirectory =
             worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
               ? worktreeInfo.worktree_directory
@@ -648,7 +655,7 @@ export async function startDiscordBot({
             if (result.action === 'queued') {
               await sendThreadMessage(
                 thread,
-                `Message queued (position: ${result.position}). Will be sent after current response.`,
+                `Queued (position: ${result.position}). Will be sent after current response.`,
               )
               return
             }
@@ -656,6 +663,22 @@ export async function startDiscordBot({
               return
             }
             // no-session / no-directory: fall through to normal handleOpencodeSession flow
+          }
+
+          // For voice messages without queue intent, we deferred the interrupt
+          // until after transcription (to preserve active-request state for queue
+          // detection). Now that we know it's not a queue message, signal the
+          // interrupt so the running session aborts before the new prompt is sent.
+          if (hasVoiceAttachment && !voiceResult?.queueMessage) {
+            const sdkDirectory =
+              worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+                ? worktreeInfo.worktree_directory
+                : projectDirectory
+            signalThreadInterrupt({
+              threadId: thread.id,
+              serverDirectory: projectDirectory,
+              sdkDirectory,
+            })
           }
 
           const fileAttachments = await getFileAttachments(message)
