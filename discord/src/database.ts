@@ -739,27 +739,29 @@ export async function createPendingWorktree({
   projectDirectory: string
 }): Promise<void> {
   const prisma = await getPrisma()
-  await prisma.thread_sessions.upsert({
-    where: { thread_id: threadId },
-    create: { thread_id: threadId, session_id: '' },
-    update: {},
-  })
-  await prisma.thread_worktrees.upsert({
-    where: { thread_id: threadId },
-    create: {
-      thread_id: threadId,
-      worktree_name: worktreeName,
-      project_directory: projectDirectory,
-      status: 'pending',
-    },
-    update: {
-      worktree_name: worktreeName,
-      project_directory: projectDirectory,
-      status: 'pending',
-      worktree_directory: null,
-      error_message: null,
-    },
-  })
+  await prisma.$transaction([
+    prisma.thread_sessions.upsert({
+      where: { thread_id: threadId },
+      create: { thread_id: threadId, session_id: '' },
+      update: {},
+    }),
+    prisma.thread_worktrees.upsert({
+      where: { thread_id: threadId },
+      create: {
+        thread_id: threadId,
+        worktree_name: worktreeName,
+        project_directory: projectDirectory,
+        status: 'pending',
+      },
+      update: {
+        worktree_name: worktreeName,
+        project_directory: projectDirectory,
+        status: 'pending',
+        worktree_directory: null,
+        error_message: null,
+      },
+    }),
+  ])
 }
 
 /**

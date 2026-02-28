@@ -1,5 +1,6 @@
+import { PermissionsBitField } from 'discord.js'
 import { describe, expect, test } from 'vitest'
-import { splitMarkdownForDiscord } from './discord-utils.js'
+import { hasKimakiBotPermission, splitMarkdownForDiscord } from './discord-utils.js'
 
 describe('splitMarkdownForDiscord', () => {
   test('never returns chunks over the max length with code fences', () => {
@@ -75,5 +76,57 @@ describe('splitMarkdownForDiscord', () => {
       ",
       ]
     `)
+  })
+})
+
+describe('hasKimakiBotPermission', () => {
+  test('allows API interaction member when kimaki role exists', () => {
+    const kimakiRoleId = '111'
+    const guild = {
+      ownerId: 'owner-id',
+      roles: {
+        cache: new Map([
+          [kimakiRoleId, { id: kimakiRoleId, name: 'Kimaki' }],
+        ]),
+      },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: '0',
+      roles: [kimakiRoleId],
+    } as any
+
+    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+  })
+
+  test('allows API interaction member with ManageGuild permission', () => {
+    const guild = {
+      ownerId: 'owner-id',
+      roles: { cache: new Map() },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: PermissionsBitField.Flags.ManageGuild.toString(),
+      roles: [],
+    } as any
+
+    expect(hasKimakiBotPermission(member, guild)).toBe(true)
+  })
+
+  test('denies API interaction member with no role, owner, or admin rights', () => {
+    const guild = {
+      ownerId: 'owner-id',
+      roles: { cache: new Map() },
+    } as any
+
+    const member = {
+      user: { id: 'member-id' },
+      permissions: '0',
+      roles: [],
+    } as any
+
+    expect(hasKimakiBotPermission(member, guild)).toBe(false)
   })
 })

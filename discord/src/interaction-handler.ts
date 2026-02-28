@@ -6,7 +6,6 @@ import {
   Events,
   MessageFlags,
   type Client,
-  type GuildMember,
   type Interaction,
 } from 'discord.js'
 import {
@@ -142,9 +141,7 @@ export function registerInteractionHandler({
             `[COMMAND] Processing: ${interaction.commandName}`,
           )
 
-          if (
-            !hasKimakiBotPermission(interaction.member as GuildMember | null)
-          ) {
+          if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
               content: `You don't have permission to use this command.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
               flags: MessageFlags.Ephemeral,
@@ -311,9 +308,7 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isButton()) {
-          if (
-            !hasKimakiBotPermission(interaction.member as GuildMember | null)
-          ) {
+          if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
               content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
               flags: MessageFlags.Ephemeral,
@@ -350,9 +345,7 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isStringSelectMenu()) {
-          if (
-            !hasKimakiBotPermission(interaction.member as GuildMember | null)
-          ) {
+          if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
               content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
               flags: MessageFlags.Ephemeral,
@@ -410,9 +403,7 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isModalSubmit()) {
-          if (
-            !hasKimakiBotPermission(interaction.member as GuildMember | null)
-          ) {
+          if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
               content: `You don't have permission to use this.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
               flags: MessageFlags.Ephemeral,

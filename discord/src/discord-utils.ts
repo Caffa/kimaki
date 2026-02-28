@@ -3,10 +3,12 @@
 // thread message sending, and channel metadata extraction from topic tags.
 
 import {
+  type APIInteractionGuildMember,
   ChannelType,
+  GuildMember,
   MessageFlags,
   PermissionsBitField,
-  type GuildMember,
+  type Guild,
   type Message,
   type TextChannel,
   type ThreadChannel,
@@ -32,32 +34,53 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
  * - Server owner, Administrator, Manage Server, or "Kimaki" role (case-insensitive).
  * Returns false if member is null or has the "no-kimaki" role (overrides all).
  */
-export function hasKimakiBotPermission(member: GuildMember | null): boolean {
+export function hasKimakiBotPermission(
+  member: GuildMember | APIInteractionGuildMember | null,
+  guild?: Guild | null,
+): boolean {
   if (!member) {
     return false
   }
-  // interaction.member can be an APIInteractionGuildMember (plain object)
-  // instead of a hydrated GuildMember class instance, so roles.cache may not exist
-  if (!member.roles?.cache) {
-    return false
-  }
-  const hasNoKimakiRole = member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
-  )
+  const hasNoKimakiRole = hasRoleByName(member, 'no-kimaki', guild)
   if (hasNoKimakiRole) {
     return false
   }
-  const isOwner = member.id === member.guild.ownerId
-  const isAdmin = member.permissions.has(
-    PermissionsBitField.Flags.Administrator,
-  )
-  const canManageServer = member.permissions.has(
-    PermissionsBitField.Flags.ManageGuild,
-  )
-  const hasKimakiRole = member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'kimaki',
-  )
+  const memberPermissions =
+    member instanceof GuildMember
+      ? member.permissions
+      : new PermissionsBitField(BigInt(member.permissions))
+  const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
+  const memberId = member instanceof GuildMember ? member.id : member.user.id
+  const isOwner = ownerId ? memberId === ownerId : false
+  const isAdmin = memberPermissions.has(PermissionsBitField.Flags.Administrator)
+  const canManageServer = memberPermissions.has(PermissionsBitField.Flags.ManageGuild)
+  const hasKimakiRole = hasRoleByName(member, 'kimaki', guild)
   return isOwner || isAdmin || canManageServer || hasKimakiRole
+}
+
+function hasRoleByName(
+  member: GuildMember | APIInteractionGuildMember,
+  roleName: string,
+  guild?: Guild | null,
+): boolean {
+  const target = roleName.toLowerCase()
+
+  if (member instanceof GuildMember) {
+    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
+  }
+
+  if (!guild) {
+    return false
+  }
+
+  const roleIds = Array.isArray(member.roles) ? member.roles : []
+  for (const roleId of roleIds) {
+    const role = guild.roles.cache.get(roleId)
+    if (role?.name.toLowerCase() === target) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
