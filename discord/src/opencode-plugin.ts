@@ -36,7 +36,7 @@ import * as errore from 'errore'
 import { getPrisma, createIpcRequest, getIpcRequestById } from './database.js'
 import { setDataDir } from './config.js'
 import { archiveThread, reactToThread } from './discord-utils.js'
-import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, LogPrefix, setLogFilePath } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 import { execAsync } from './worktree-utils.js'
 
@@ -159,6 +159,8 @@ const kimakiPlugin: Plugin = async ({ directory }) => {
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) {
     setDataDir(dataDir)
+    // Append to the same log file the bot process created (no truncation)
+    setLogFilePath(dataDir)
   }
   if (!botToken) {
     // No token available, skip Discord tools

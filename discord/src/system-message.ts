@@ -2,7 +2,7 @@
 // Creates the system message injected into every OpenCode session,
 // including Discord-specific formatting rules, diff commands, and permissions info.
 
-import { getCritiqueEnabled } from './config.js'
+import { getCritiqueEnabled, getDataDir } from './config.js'
 
 function getCritiqueInstructions(sessionId: string) {
   return `
@@ -254,6 +254,10 @@ Use built-in upgrade commands when the user explicitly asks to update kimaki:
 - CLI command: \`kimaki upgrade --skip-restart\` upgrades without restarting
 
 Do not restart the bot unless the user explicitly asks for it.
+
+## debugging kimaki issues
+
+If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
 ## uploading files to discord
 

@@ -4,8 +4,7 @@
 
 import { log as clackLog } from '@clack/prompts'
 import fs from 'node:fs'
-import path, { dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import util from 'node:util'
 import pc from 'picocolors'
 import { sanitizeSensitiveText, sanitizeUnknownValue } from './privacy-sanitizer.js'
@@ -60,14 +59,17 @@ const MAX_PREFIX_LENGTH = Math.max(
   ...Object.values(LogPrefix).map((p) => p.length),
 )
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
-const isDev = !__dirname.includes('node_modules')
+// Log file path is set by initLogFile() after the data directory is known.
+// Before initLogFile() is called, file logging is skipped.
+let logFilePath: string | null = null
 
-const logFilePath = path.join(__dirname, '..', 'kimaki.log')
-
-// reset log file on startup in dev mode
-if (isDev) {
+/**
+ * Initialize file logging. Call this after setDataDir() so the log file
+ * is written to `<dataDir>/kimaki.log`. The log file is truncated on
+ * every bot startup so it contains only the current run's logs.
+ */
+export function initLogFile(dataDir: string): void {
+  logFilePath = path.join(dataDir, 'kimaki.log')
   const logDir = path.dirname(logFilePath)
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true })
@@ -76,6 +78,19 @@ if (isDev) {
     logFilePath,
     `--- kimaki log started at ${new Date().toISOString()} ---\n`,
   )
+}
+
+/**
+ * Set the log file path without truncating. Use this in child processes
+ * (like the opencode plugin) that should append to the same log file
+ * the bot process already created with initLogFile().
+ */
+export function setLogFilePath(dataDir: string): void {
+  logFilePath = path.join(dataDir, 'kimaki.log')
+}
+
+export function getLogFilePath(): string | null {
+  return logFilePath
 }
 
 function formatArg(arg: unknown): string {
@@ -105,7 +120,7 @@ export function formatErrorWithStack(error: unknown): string {
 }
 
 function writeToFile(level: string, prefix: string, args: unknown[]) {
-  if (!isDev) {
+  if (!logFilePath) {
     return
   }
   const timestamp = new Date().toISOString()

@@ -161,7 +161,8 @@ always try to use logger instead of console. so logs in the cli look uniform and
 
 for the log prefixes always use short names
 
-kimaki will also output logs to the file discord/kimaki.log
+kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). the log file is reset on every bot startup, so it only contains logs from the current run. file logging works in all environments (dev and production).
+
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
 ## opencode plugin and env vars

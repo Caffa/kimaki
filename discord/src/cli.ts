@@ -74,7 +74,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import * as errore from 'errore'
 
-import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
+import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
 import { initSentry, notifyError } from './sentry.js'
 import {
   archiveThread,
@@ -1652,6 +1652,9 @@ cli
           setDataDir(options.dataDir)
           cliLogger.log(`Using data directory: ${getDataDir()}`)
         }
+
+        // Initialize file logging to <dataDir>/kimaki.log
+        initLogFile(getDataDir())
 
         if (options.verbosity) {
           const validLevels = [
