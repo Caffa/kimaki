@@ -7,7 +7,6 @@ import type { ToolContext } from '@opencode-ai/plugin/tool'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { Lexer } from 'marked'
 import dedent from 'string-dedent'
 import { z } from 'zod'
 
@@ -51,34 +50,10 @@ function isEmoji(str: string): boolean {
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
-/**
- * Condense MEMORY.md into a line-numbered table of contents.
- * Parses markdown AST with marked's Lexer, emits each heading prefixed by
- * its source line number, and collapses non-heading content to `...`.
- * The agent can then use Read with offset/limit to read specific sections.
- */
-export function condenseMemoryMd(content: string): string {
-  const tokens = new Lexer().lex(content)
-  const lines: string[] = []
-  let charOffset = 0
-  let lastWasEllipsis = false
-
-  for (const token of tokens) {
-    // Compute 1-based line number from character offset
-    const lineNumber = content.slice(0, charOffset).split('\n').length
-    if (token.type === 'heading') {
-      const prefix = '#'.repeat(token.depth)
-      lines.push(`${lineNumber}: ${prefix} ${token.text}`)
-      lastWasEllipsis = false
-    } else if (!lastWasEllipsis) {
-      lines.push('...')
-      lastWasEllipsis = true
-    }
-    charOffset += token.raw.length
-  }
-
-  return lines.join('\n')
-}
+// condenseMemoryMd lives in condense-memory.ts — must NOT be exported from
+// this file because OpenCode's plugin loader calls every exported function
+// as a plugin initializer, which would crash marked's Lexer with non-string input.
+import { condenseMemoryMd } from './condense-memory.js'
 
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5

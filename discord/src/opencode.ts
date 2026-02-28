@@ -298,9 +298,14 @@ export async function initializeOpencodeForDirectory(
   const botTokenFromDb = await getBotToken()
   const kimakiBotToken = process.env.KIMAKI_BOT_TOKEN || botTokenFromDb?.token
 
+  const serveArgs = ['serve', '--port', port.toString()]
+  if (getVerboseOpencodeServer()) {
+    serveArgs.push('--print-logs', '--log-level', 'DEBUG')
+  }
+
   const serverProcess = spawn(
     opencodeCommand,
-    ['serve', '--port', port.toString()],
+    serveArgs,
     {
       stdio: 'pipe',
       detached: false,
@@ -458,6 +463,14 @@ export async function initializeOpencodeForDirectory(
   }
   serverReady = true
   opencodeLogger.log(`Server ready on port ${port}`)
+
+  // When verbose mode is enabled, also dump startup logs so plugin loading
+  // errors and other startup output are visible in kimaki.log.
+  if (getVerboseOpencodeServer()) {
+    for (const line of logBuffer) {
+      opencodeLogger.log(`[${shortDir}:${port}:startup] ${line}`)
+    }
+  }
 
   const baseUrl = `http://127.0.0.1:${port}`
   const fetchWithTimeout = (request: Request) =>

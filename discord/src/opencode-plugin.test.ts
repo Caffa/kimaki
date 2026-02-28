@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'vitest'
-import { condenseMemoryMd } from './opencode-plugin.js'
+import { condenseMemoryMd } from './condense-memory.js'
 
 describe('condenseMemoryMd', () => {
   test('multiple headings with body content', () => {
