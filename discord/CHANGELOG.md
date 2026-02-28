@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.72
+
+1. **Fixed plugin tools silently missing** — `kimaki_action_buttons`, `kimaki_file_upload`, `kimaki_mark_thread`, and other plugin tools were silently missing on some OpenCode versions due to a crash in the plugin loader; the root cause (an extra exported function confusing the loader) is now fixed
+2. **Voice "queue this message" intent** — say "queue this message" (or similar) in a voice note while the AI is working and the message is queued instead of interrupting the current session
+3. **Voice reliability fixes** — three race conditions fixed: active-session state is now snapshotted at message arrival so voice messages queue correctly even if the previous task finishes during transcription; transcription failures no longer send empty prompts; the "queued" label is only shown after the actual queuing decision
+4. **Log file now at `~/.kimaki/kimaki.log`** — logs are written in all environments (was only written in dev mode before); the AI model is also told where to find the file for self-diagnosis
+5. **Secrets scrubbed from logs and error reports** — API keys, Bearer tokens, and other credentials are now redacted from log output and Sentry payloads; non-sensitive identifiers like Discord IDs and channel names are preserved for debugging
+6. **Fixed Discord permission checks for uncached members** — member role/permission lookups now handle both cached class instances and raw API payload shapes, fixing permission errors for users whose data wasn't in the bot's cache (thanks @ajoslin in #57)
+7. **Fixed atomic worktree database writes** — worktree state is now written atomically to prevent rare race conditions (thanks @ajoslin in #58)
+8. **New built-in skills: `simplify`, `batch`, `security-review`** — three skills extracted from Claude Code CLI are now available to the AI agent in every Kimaki session
+
 ## 0.4.71
 
 1. **Fixed package.json dependency classification** — `opencode-deterministic-provider` moved from `dependencies` to `devDependencies` so it no longer appears as a runtime dependency in the published package
