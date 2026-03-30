@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Yes, proceed with the merge plan.",
+    "shownAt": "2026-03-30T13:30:29.520Z",
+    "turnId": "2a542b74",
+    "sourceLeafId": "2a542b74",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

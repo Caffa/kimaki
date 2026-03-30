@@ -27,3 +27,7 @@ do a git commit
 ## 2026-03-29T09:31:13.713Z
 
 Do npm link for my local kimaki
+
+## 2026-03-30T13:35:48.388Z
+
+You should commit the local changes first.

@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run the build",
+    "shownAt": "2026-03-30T13:34:48.364Z",
+    "turnId": "41c32e45",
+    "sourceLeafId": "41c32e45",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "60379b2c",
+      "suggestedPrompt": "Yes, go ahead and disable the auto-upgrade.",
+      "actualUserPrompt": "Disable the auto-upgrade",
+      "classification": "changed_course",
+      "similarity": 0.6082089552238805,
+      "timestamp": "2026-03-30T13:27:00.301Z"
+    },
+    {
+      "turnId": "3a41662b",
+      "suggestedPrompt": "Yes to both",
+      "actualUserPrompt": "/upgrade-and-restart should do a restart. Rename it to 'restart' and have it do a rebuild of this project, along with a restart of the server.",
+      "classification": "changed_course",
+      "similarity": 0.09035947712418302,
+      "timestamp": "2026-03-30T13:30:05.913Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Yes, go ahead and disable the auto-upgrade.",
+    "shownAt": "2026-03-30T13:26:25.892Z",
+    "turnId": "60379b2c",
+    "sourceLeafId": "60379b2c",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

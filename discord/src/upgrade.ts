@@ -2,13 +2,11 @@
 // Detects the package manager used to install kimaki, checks npm for newer versions,
 // and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
+//
+// DISABLED - Using local kimaki variant
 
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
-import { createLogger, LogPrefix } from './logger.js'
-import { execAsync } from './worktrees.js'
-
-const logger = createLogger(LogPrefix.CLI)
 
 type Pm = 'bun' | 'pnpm' | 'npm'
 
@@ -90,6 +88,7 @@ export async function getLatestNpmVersion(): Promise<string | null> {
 }
 
 // Returns the new version string if upgraded, null if already up to date.
+// DISABLED - using local kimaki variant.
 export async function upgrade(): Promise<string | null> {
   const current = getCurrentVersion()
   const latest = await getLatestNpmVersion()
@@ -100,28 +99,12 @@ export async function upgrade(): Promise<string | null> {
     return null
   }
 
-  const pm = detectPm()
-  logger.log(`Upgrading kimaki from v${current} to v${latest} using ${pm}...`)
-  await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
-
-  return latest
+  // Disabled - using local kimaki variant
+  throw new Error(`Upgrade disabled (local variant). Latest on npm: v${latest}, you have: v${current}`)
 }
 
 // Fire-and-forget background upgrade check on bot startup.
-// Only upgrades if a newer version is available. Errors are silently ignored.
+// DISABLED - using local kimaki variant.
 export async function backgroundUpgradeKimaki(): Promise<void> {
-  try {
-    const current = getCurrentVersion()
-    const latest = await getLatestNpmVersion()
-    if (!latest || current === latest) {
-      return
-    }
-
-    const pm = detectPm()
-    logger.debug(`Background kimaki upgrade started: v${current} -> v${latest}`)
-    await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
-    logger.debug(`Background kimaki upgrade completed: v${latest}`)
-  } catch {
-    // silently ignored, non-critical
-  }
+  // Disabled - using local kimaki variant
 }

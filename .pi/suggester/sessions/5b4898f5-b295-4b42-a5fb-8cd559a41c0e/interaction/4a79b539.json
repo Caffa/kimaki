@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run kimaki and show me the banner",
+    "shownAt": "2026-03-30T05:48:56.366Z",
+    "turnId": "4a79b539",
+    "sourceLeafId": "4a79b539",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 2
+}

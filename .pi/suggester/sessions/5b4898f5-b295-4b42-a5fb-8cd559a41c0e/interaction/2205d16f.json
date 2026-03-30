@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "commit this fix",
+    "shownAt": "2026-03-30T05:47:06.638Z",
+    "turnId": "2205d16f",
+    "sourceLeafId": "2205d16f",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}
