@@ -104,6 +104,7 @@ import { spawn, execSync, type ExecSyncOptions } from 'node:child_process'
 
 import {
   setDataDir,
+  setProjectsDir,
   getDataDir,
   getProjectsDir,
 } from './config.js'
@@ -1868,6 +1869,10 @@ cli
     '--data-dir <path>',
     'Data directory for config and database (default: ~/.kimaki)',
   )
+  .option(
+    '--projects-dir <path>',
+    'Directory where new projects are created (default: <data-dir>/projects)',
+  )
   .option('--install-url', 'Print the bot install URL and exit')
   .option(
     '--use-worktrees',
@@ -1911,6 +1916,7 @@ cli
       restartOnboarding?: boolean
       addChannels?: boolean
       dataDir?: string
+      projectsDir?: string
       installUrl?: boolean
       useWorktrees?: boolean
       enableVoiceChannels?: boolean
@@ -1940,6 +1946,11 @@ cli
         if (options.dataDir) {
           setDataDir(options.dataDir)
           cliLogger.log(`Using data directory: ${getDataDir()}`)
+        }
+
+        if (options.projectsDir) {
+          setProjectsDir(options.projectsDir)
+          cliLogger.log(`Using projects directory: ${getProjectsDir()}`)
         }
 
         // Initialize file logging to <dataDir>/kimaki.log
@@ -3714,12 +3725,14 @@ cli
   )
   .option('-h, --host [host]', 'Local host (default: localhost)')
   .option('-s, --server [url]', 'Tunnel server URL')
+  .option('-k, --kill', 'Kill any existing process on the port before starting')
   .action(
     async (options: {
       port?: string
       tunnelId?: string
       host?: string
       server?: string
+      kill?: boolean
     }) => {
       const { runTunnel, parseCommandFromArgv, CLI_NAME } = await import(
         'traforo/run-tunnel'
@@ -3747,6 +3760,7 @@ cli
         baseDomain: 'kimaki.xyz',
         serverUrl: options.server,
         command: command.length > 0 ? command : undefined,
+        kill: options.kill,
       })
     },
   )
@@ -3754,7 +3768,7 @@ cli
 cli
   .command(
     'screenshare',
-    'Share your screen via VNC tunnel. Auto-stops after 1 hour. Runs until Ctrl+C. Use tmux to run in background.',
+    'Share your screen via VNC tunnel. Auto-stops after 30 minutes. Runs until Ctrl+C. Use tmux to run in background.',
   )
   .action(async () => {
     const { startScreenshare } = await import(

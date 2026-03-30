@@ -21,7 +21,7 @@ import {
   resolveTextChannel,
   sendThreadMessage,
 } from '../discord-utils.js'
-import { collectLastAssistantParts } from '../message-formatting.js'
+import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -200,7 +200,7 @@ export async function handleForkSelectMenu(
     return
   }
 
-  await interaction.deferReply({ ephemeral: false })
+  await interaction.deferReply()
 
   const threadChannel = interaction.channel
   if (!threadChannel) {
@@ -265,10 +265,12 @@ export async function handleForkSelectMenu(
       reason: `Forked from session ${sessionId}`,
     })
 
+    // Claim the forked session immediately so external polling does not race
+    // and create a duplicate Sync thread before the rest of this setup runs.
+    await setThreadSession(thread.id, forkedSession.id)
+
     // Add user to thread so it appears in their sidebar
     await thread.members.add(interaction.user.id)
-
-    await setThreadSession(thread.id, forkedSession.id)
 
     sessionLogger.log(
       `Created forked session ${forkedSession.id} in thread ${thread.id}`,
@@ -285,16 +287,15 @@ export async function handleForkSelectMenu(
     })
 
     if (messagesResponse.data) {
-      const { partIds, content } = collectLastAssistantParts({
+      const { chunks } = collectSessionChunks({
         messages: messagesResponse.data,
+        limit: 30,
       })
-
-      if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
-
-        // Store part-message mappings atomically
+      const batched = batchChunksForDiscord(chunks)
+      for (const batch of batched) {
+        const discordMessage = await sendThreadMessage(thread, batch.content)
         await setPartMessagesBatch(
-          partIds.map((partId) => ({
+          batch.partIds.map((partId) => ({
             partId,
             messageId: discordMessage.id,
             threadId: thread.id,

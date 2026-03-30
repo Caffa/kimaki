@@ -24,3 +24,6 @@ app.log
 generated
 .zig-cache
 zig-out
+website/.wrangler/
+.wrangler
+betterstack

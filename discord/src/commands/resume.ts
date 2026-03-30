@@ -20,7 +20,7 @@ import {
   resolveProjectDirectoryFromAutocomplete,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { collectLastAssistantParts } from '../message-formatting.js'
+import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -29,7 +29,7 @@ const logger = createLogger(LogPrefix.RESUME)
 export async function handleResumeCommand({
   command,
 }: CommandContext): Promise<void> {
-  await command.deferReply({ ephemeral: false })
+  await command.deferReply()
 
   const sessionId = command.options.getString('session', true)
   const channel = command.channel
@@ -95,10 +95,12 @@ export async function handleResumeCommand({
       reason: `Resuming session ${sessionId}`,
     })
 
+    // Claim the resumed session immediately so external polling does not race
+    // and create a duplicate Sync thread before the rest of this setup runs.
+    await setThreadSession(thread.id, sessionId)
+
     // Add user to thread so it appears in their sidebar
     await thread.members.add(command.user.id)
-
-    await setThreadSession(thread.id, sessionId)
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 
@@ -122,8 +124,9 @@ export async function handleResumeCommand({
     )
 
     try {
-      const { partIds, content, skippedCount } = collectLastAssistantParts({
+      const { chunks, skippedCount } = collectSessionChunks({
         messages,
+        limit: 30,
       })
 
       if (skippedCount > 0) {
@@ -133,12 +136,11 @@ export async function handleResumeCommand({
         )
       }
 
-      if (content.trim()) {
-        const discordMessage = await sendThreadMessage(thread, content)
-
-        // Store part-message mappings atomically
+      const batched = batchChunksForDiscord(chunks)
+      for (const batch of batched) {
+        const discordMessage = await sendThreadMessage(thread, batch.content)
         await setPartMessagesBatch(
-          partIds.map((partId) => ({
+          batch.partIds.map((partId) => ({
             partId,
             messageId: discordMessage.id,
             threadId: thread.id,

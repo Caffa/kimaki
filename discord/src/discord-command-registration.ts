@@ -249,13 +249,7 @@ export async function registerCommands({
       })
       .setDMPermission(false)
       .toJSON(),
-    new SlashCommandBuilder()
-      .setName('toggle-mention-mode')
-      .setDescription(
-        truncateCommandDescription('Toggle mention-only mode (bot only responds when @mentioned)'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
+
     new SlashCommandBuilder()
       .setName('add-project')
       .setDescription(
@@ -315,11 +309,7 @@ export async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
-    new SlashCommandBuilder()
-      .setName('stop')
-      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
-      .setDMPermission(false)
-      .toJSON(),
+
     new SlashCommandBuilder()
       .setName('share')
       .setDescription(truncateCommandDescription('Share the current session as a public URL'))
@@ -333,6 +323,18 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('fork')
       .setDescription(truncateCommandDescription('Fork the session from a past user message'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('btw')
+      .setDescription(truncateCommandDescription('Ask something without polluting or blocking the current session'))
+      .addStringOption((option) => {
+        option
+          .setName('prompt')
+          .setDescription(truncateCommandDescription('The message to send in the forked session'))
+          .setRequired(true)
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -456,13 +458,7 @@ export async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
-    new SlashCommandBuilder()
-      .setName('memory-snapshot')
-      .setDescription(
-        truncateCommandDescription('Write a V8 heap snapshot to disk for memory debugging'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
+
     new SlashCommandBuilder()
       .setName('restart')
       .setDescription(
@@ -484,7 +480,7 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare')
-      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 1 hour)'))
+      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 30 minutes)'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -494,10 +490,50 @@ export async function registerCommands({
       .toJSON(),
   ]
 
-  // Add user-defined commands with source-based suffixes (-cmd / -skill)
+  // Dynamic commands are registered in priority order: agents → user commands → skills → MCP prompts.
+  // This ordering matters because we slice to MAX_DISCORD_COMMANDS (100) at the end,
+  // so lower-priority dynamic commands get trimmed first if the total exceeds the limit.
+
+  // 1. Agent-specific quick commands like /plan-agent, /build-agent
+  // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
+  const primaryAgents = agents.filter(
+    (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
+  )
+  for (const agent of primaryAgents) {
+    const sanitizedName = sanitizeAgentName(agent.name)
+    // Skip if sanitized name is empty or would create invalid command name
+    // Discord command names must start with a lowercase letter or number
+    if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
+      continue
+    }
+    // Truncate base name before appending suffix so the -agent suffix is never
+    // lost to Discord's 32-char command name limit.
+    const agentSuffix = '-agent'
+    const agentBaseName = sanitizedName.slice(0, 32 - agentSuffix.length)
+    const commandName = `${agentBaseName}${agentSuffix}`
+    const description = buildQuickAgentCommandDescription({
+      agentName: agent.name,
+      description: agent.description,
+    })
+
+    commands.push(
+      new SlashCommandBuilder()
+        .setName(commandName)
+        .setDescription(truncateCommandDescription(description))
+        .setDMPermission(false)
+        .toJSON(),
+    )
+  }
+
+  // 2. User-defined commands, skills, and MCP prompts (ordered by priority)
   // Also populate registeredUserCommands in the store for /queue-command autocomplete
   const newRegisteredCommands: RegisteredUserCommand[] = []
-  for (const cmd of userCommands) {
+  // Sort: regular commands first, then skills, then MCP prompts
+  const sourceOrder: Record<string, number> = { config: 0, skill: 1, mcp: 2 }
+  const sortedUserCommands = [...userCommands].sort((a, b) => {
+    return (sourceOrder[a.source || ''] ?? 0) - (sourceOrder[b.source || ''] ?? 0)
+  })
+  for (const cmd of sortedUserCommands) {
     if (SKIP_USER_COMMANDS.includes(cmd.name)) {
       continue
     }
@@ -549,35 +585,14 @@ export async function registerCommands({
   }
   store.setState({ registeredUserCommands: newRegisteredCommands })
 
-  // Add agent-specific quick commands like /plan-agent, /build-agent
-  // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
-  const primaryAgents = agents.filter(
-    (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
-  )
-  for (const agent of primaryAgents) {
-    const sanitizedName = sanitizeAgentName(agent.name)
-    // Skip if sanitized name is empty or would create invalid command name
-    // Discord command names must start with a lowercase letter or number
-    if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
-      continue
-    }
-    // Truncate base name before appending suffix so the -agent suffix is never
-    // lost to Discord's 32-char command name limit.
-    const agentSuffix = '-agent'
-    const agentBaseName = sanitizedName.slice(0, 32 - agentSuffix.length)
-    const commandName = `${agentBaseName}${agentSuffix}`
-    const description = buildQuickAgentCommandDescription({
-      agentName: agent.name,
-      description: agent.description,
-    })
-
-    commands.push(
-      new SlashCommandBuilder()
-        .setName(commandName)
-        .setDescription(truncateCommandDescription(description))
-        .setDMPermission(false)
-        .toJSON(),
+  // Discord allows max 100 guild commands. Slice to stay within the limit,
+  // trimming lowest-priority dynamic commands (MCP prompts, then skills) first.
+  const MAX_DISCORD_COMMANDS = 100
+  if (commands.length > MAX_DISCORD_COMMANDS) {
+    cliLogger.warn(
+      `COMMANDS: ${commands.length} commands exceed Discord limit of ${MAX_DISCORD_COMMANDS}, truncating to ${MAX_DISCORD_COMMANDS}`,
     )
+    commands.length = MAX_DISCORD_COMMANDS
   }
 
   const rest = createDiscordRest(token)

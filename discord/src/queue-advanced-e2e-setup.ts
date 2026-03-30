@@ -330,6 +330,42 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Question tool for select+queue drain test: model asks a question via dropdown,
+  // user answers via select menu while a message is queued.
+  const questionSelectQueueMatcher: DeterministicMatcher = {
+    id: 'question-select-queue-marker',
+    priority: 107,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_SELECT_QUEUE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-select-queue-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'How to proceed?',
+              header: 'Select action',
+              options: [
+                { label: 'Alpha', description: 'Alpha option' },
+                { label: 'Beta', description: 'Beta option' },
+              ],
+            }],
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   // Model responds with text + tool call, then after tool result the
   // follow-up matcher responds with text. This creates two assistant messages:
   // first with finish="tool-calls" + completed, second with finish="stop".
@@ -380,6 +416,59 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         { type: 'text-start', id: 'tool-call-footer-followup' },
         { type: 'text-delta', id: 'tool-call-footer-followup', delta: 'tool call completed' },
         { type: 'text-end', id: 'tool-call-footer-followup' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const undoFileMatcher: DeterministicMatcher = {
+    id: 'undo-file-marker',
+    priority: 111,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'UNDO_FILE_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'undo-file-text' },
+        { type: 'text-delta', id: 'undo-file-text', delta: 'creating undo file' },
+        { type: 'text-end', id: 'undo-file-text' },
+        {
+          type: 'tool-call',
+          toolCallId: 'undo-file-bash',
+          toolName: 'bash',
+          input: JSON.stringify({
+            command: 'mkdir -p tmp && printf created > tmp/undo-marker.txt',
+            description: 'Create undo marker file',
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const undoFileFollowupMatcher: DeterministicMatcher = {
+    id: 'undo-file-followup',
+    priority: 112,
+    when: {
+      latestUserTextIncludes: 'UNDO_FILE_MARKER',
+      rawPromptIncludes: 'creating undo file',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'undo-file-followup' },
+        { type: 'text-delta', id: 'undo-file-followup', delta: 'undo file created' },
+        { type: 'text-end', id: 'undo-file-followup' },
         {
           type: 'finish',
           finishReason: 'stop',
@@ -601,10 +690,13 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,
     questionToolMatcher,
+    questionSelectQueueMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     multiToolMatcher,
     multiToolFollowupMatcher,
+    undoFileMatcher,
+    undoFileFollowupMatcher,
     multiStepChainInitMatcher,
     multiStepChainStep2Matcher,
     multiStepChainStep3Matcher,

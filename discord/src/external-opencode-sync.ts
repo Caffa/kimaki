@@ -1,0 +1,727 @@
+import fs from 'node:fs'
+import {
+  ChannelType,
+  ThreadAutoArchiveDuration,
+  type Client,
+  type TextChannel,
+  type ThreadChannel,
+} from 'discord.js'
+import type {
+  OpencodeClient,
+  Part,
+} from '@opencode-ai/sdk/v2'
+import {
+  getChannelVerbosity,
+  getPartMessageIds,
+  getThreadIdBySessionId,
+  getThreadSessionSource,
+  listTrackedTextChannels,
+  setPartMessagesBatch,
+  upsertThreadSession,
+} from './database.js'
+import { sendThreadMessage } from './discord-utils.js'
+import { createLogger, LogPrefix } from './logger.js'
+import {
+  formatPart,
+  collectSessionChunks,
+  batchChunksForDiscord,
+  type SessionChunk,
+} from './message-formatting.js'
+import {
+  initializeOpencodeForDirectory,
+} from './opencode.js'
+import { isEssentialToolPart } from './session-handler/thread-session-runtime.js'
+import { notifyError } from './sentry.js'
+import { extractNonXmlContent } from './xml.js'
+
+
+const logger = createLogger(LogPrefix.OPENCODE)
+
+const EXTERNAL_SYNC_INTERVAL_MS = 5_000
+// Don't sync sessions from before the CLI started. 5 min grace window
+// covers sessions that were just created before the bot connected.
+const CLI_START_MS = Date.now() - 5 * 60 * 1000
+
+type RenderableUserTextPart = {
+  id: string
+  text: string
+}
+
+type SessionMessagesResponse = Awaited<
+  ReturnType<OpencodeClient['session']['messages']>
+>
+type SessionMessage = NonNullable<SessionMessagesResponse['data']>[number]
+type SessionMessageLike = {
+  info: {
+    role: string
+  }
+  parts: Part[]
+}
+
+type DiscordOriginMetadata = {
+  messageId?: string
+  username: string
+  threadId?: string
+}
+
+type TrackedTextChannelRow = Awaited<ReturnType<typeof listTrackedTextChannels>>[number]
+
+type DirectorySyncTarget = {
+  directory: string
+  channelId: string
+  startMs: number
+}
+
+type GlobalListedSession = NonNullable<
+  Awaited<ReturnType<OpencodeClient['experimental']['session']['list']>>['data']
+>[number]
+
+let externalSyncInterval: ReturnType<typeof setInterval> | null = null
+
+function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
+  const candidate = part as Extract<Part, { type: 'text' }> & {
+    synthetic?: unknown
+  }
+  return candidate.synthetic === true
+}
+
+function parseDiscordOriginMetadata(text: string): DiscordOriginMetadata | null {
+  const match = text.match(/<discord-user\s+([^>]+)\s*\/>/)
+  if (!match?.[1]) {
+    return null
+  }
+  const attrs = [...match[1].matchAll(/([a-z-]+)="([^"]*)"/g)].reduce(
+    (acc, current) => {
+      const [, key, value] = current
+      if (!key) {
+        return acc
+      }
+      acc[key] = value || ''
+      return acc
+    },
+    {} as Record<string, string>,
+  )
+  const username = attrs['name']
+  if (!username) {
+    return null
+  }
+  return {
+    messageId: attrs['message-id'] || undefined,
+    username,
+    threadId: attrs['thread-id'] || undefined,
+  }
+}
+
+function getDiscordOriginMetadataFromMessage({
+  message,
+}: {
+  message: SessionMessageLike
+}): DiscordOriginMetadata | null {
+  const textParts = message.parts.filter((p): p is Extract<typeof p, { type: 'text' }> => {
+    return p.type === 'text'
+  })
+  // Synthetic parts first (normal promptAsync path), then non-synthetic
+  // (session.command() path where the tag is embedded in arguments text).
+  const sorted = [
+    ...textParts.filter((p) => { return isSyntheticTextPart(p) }),
+    ...textParts.filter((p) => { return !isSyntheticTextPart(p) }),
+  ]
+  for (const part of sorted) {
+    const metadata = parseDiscordOriginMetadata(part.text || '')
+    if (metadata) {
+      return metadata
+    }
+  }
+  return null
+}
+
+function getRenderableUserTextParts({
+  message,
+}: {
+  message: SessionMessageLike
+}): RenderableUserTextPart[] {
+  if (message.info.role !== 'user') {
+    return []
+  }
+
+  return message.parts.flatMap((part) => {
+    if (part.type !== 'text') {
+      return [] as RenderableUserTextPart[]
+    }
+    if (isSyntheticTextPart(part)) {
+      return [] as RenderableUserTextPart[]
+    }
+    const cleanedText = extractNonXmlContent(part.text || '').trim()
+    if (!cleanedText) {
+      return [] as RenderableUserTextPart[]
+    }
+    return [{ id: part.id, text: cleanedText }]
+  })
+}
+
+function getExternalUserMirrorText({
+  username,
+  prompt,
+}: {
+  username: string
+  prompt: string
+}): string {
+  return `» **${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
+}
+
+// Pure derivation: is the latest user turn from Discord?
+// Checks the newest user message with renderable text for a <discord-user />
+// synthetic part. If present, the session is currently driven from Discord
+// (kimaki manages it) and external sync should skip it. If absent (CLI/TUI),
+// external sync should mirror it — this naturally handles the "reclaim" case
+// (external → discord → external) without any DB source toggling.
+function isLatestUserTurnFromDiscord({
+  messages,
+}: {
+  messages: SessionMessageLike[]
+}): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!
+    if (message.info.role !== 'user') {
+      continue
+    }
+    const renderableParts = getRenderableUserTextParts({ message })
+    if (renderableParts.length === 0) {
+      continue
+    }
+    // Found the latest user message with actual text content.
+    // If it has <discord-user /> origin metadata, it came from Discord.
+    return getDiscordOriginMetadataFromMessage({ message }) !== null
+  }
+  // No user messages with text — treat as external (allow sync).
+  return false
+}
+
+function shouldMirrorAssistantPart({
+  part,
+  verbosity,
+}: {
+  part: Part
+  verbosity: 'tools_and_text' | 'text_and_essential_tools' | 'text_only'
+}): boolean {
+  if (verbosity === 'text_only') {
+    return part.type === 'text'
+  }
+  if (verbosity === 'text_and_essential_tools') {
+    if (part.type === 'text') {
+      return true
+    }
+    return isEssentialToolPart(part)
+  }
+  return true
+}
+
+function getSessionThreadName({
+  sessionTitle,
+  messages,
+}: {
+  sessionTitle?: string | null
+  messages: SessionMessageLike[]
+}): string {
+  const normalizedTitle = sessionTitle?.trim()
+  if (normalizedTitle) {
+    return normalizedTitle.slice(0, 100)
+  }
+  const firstUserMessage = messages.find((message) => {
+    return message.info.role === 'user'
+  })
+  const firstUserText = firstUserMessage
+    ? getRenderableUserTextParts({ message: firstUserMessage })
+      .map((part) => {
+        return part.text
+      })
+      .join(' ')
+      .trim()
+    : ''
+  if (firstUserText) {
+    return firstUserText.slice(0, 100)
+  }
+  return 'opencode session'
+}
+
+type SessionWithTime = { time: { created: number; updated: number } }
+
+function getSessionRecencyTimestamp(session: SessionWithTime): number {
+  return session.time.updated || session.time.created || 0
+}
+
+function sortSessionsByRecency<T extends SessionWithTime>(sessions: T[]): T[] {
+  return [...sessions].sort((left, right) => {
+    return getSessionRecencyTimestamp(right) - getSessionRecencyTimestamp(left)
+  })
+}
+
+function groupTrackedChannelsByDirectory(
+  trackedChannels: TrackedTextChannelRow[],
+): DirectorySyncTarget[] {
+  const grouped = trackedChannels.reduce((acc, channel) => {
+    const existing = acc.get(channel.directory)
+    const createdAtMs = Math.max(channel.created_at?.getTime() || 0, CLI_START_MS)
+    if (!existing) {
+      acc.set(channel.directory, {
+        directory: channel.directory,
+        channelId: channel.channel_id,
+        startMs: createdAtMs,
+      })
+      return acc
+    }
+    if (createdAtMs < existing.startMs) {
+      acc.set(channel.directory, {
+        directory: channel.directory,
+        channelId: channel.channel_id,
+        startMs: createdAtMs,
+      })
+    }
+    return acc
+  }, new Map<string, DirectorySyncTarget>())
+  return [...grouped.values()]
+}
+
+async function ensureExternalSessionThread({
+  discordClient,
+  channelId,
+  sessionId,
+  sessionTitle,
+  messages,
+}: {
+  discordClient: Client
+  channelId: string
+  sessionId: string
+  sessionTitle?: string | null
+  messages: SessionMessage[]
+}): Promise<ThreadChannel | Error | null> {
+  const existingThreadId = await getThreadIdBySessionId(sessionId)
+  if (existingThreadId) {
+    // Caller already verified via isLatestUserTurnFromDiscord that this
+    // session should be synced. If the thread was kimaki-owned, flip it
+    // to external_poll so typing and future polls work naturally.
+    const existingSource = await getThreadSessionSource(existingThreadId)
+    if (existingSource === 'kimaki') {
+      await upsertThreadSession({
+        threadId: existingThreadId,
+        sessionId,
+        source: 'external_poll',
+      })
+      logger.log(`[EXTERNAL_SYNC] Reclaimed thread ${existingThreadId} for session ${sessionId} (user resumed from OpenCode)`)
+    }
+    const existingThread = await discordClient.channels.fetch(existingThreadId).catch((error) => {
+      return new Error(`Failed to fetch thread ${existingThreadId}`, {
+        cause: error,
+      })
+    })
+    if (!(existingThread instanceof Error) && existingThread?.isThread()) {
+      return existingThread
+    }
+  }
+
+  const parentChannel = await discordClient.channels.fetch(channelId).catch((error) => {
+    return new Error(`Failed to fetch parent channel ${channelId}`, {
+      cause: error,
+    })
+  })
+  if (parentChannel instanceof Error) {
+    return parentChannel
+  }
+  if (!parentChannel || parentChannel.type !== ChannelType.GuildText) {
+    return new Error(`Channel ${channelId} is not a text channel`)
+  }
+
+  const threadName = 'Sync: ' + getSessionThreadName({ sessionTitle, messages })
+  const thread = await (parentChannel as TextChannel).threads.create({
+    name: threadName.slice(0, 100),
+    autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+    reason: `Sync external OpenCode session ${sessionId}`,
+  }).catch((error) => {
+    return new Error(`Failed to create thread for session ${sessionId}`, {
+      cause: error,
+    })
+  })
+  if (thread instanceof Error) {
+    return thread
+  }
+
+  await upsertThreadSession({
+    threadId: thread.id,
+    sessionId,
+    source: 'external_poll',
+  })
+
+  return thread
+}
+
+type DirectPartMapping = { partId: string; messageId: string; threadId: string }
+
+// Collect all unsynced parts from all messages into SessionChunks.
+// User messages that originated from this Discord thread are returned as
+// directMappings (persisted without sending a Discord message). All other
+// user and assistant parts are returned as chunks to send.
+function collectUnsyncedChunks({
+  messages,
+  syncedPartIds,
+  verbosity,
+  thread,
+}: {
+  messages: SessionMessage[]
+  syncedPartIds: Set<string>
+  verbosity: 'tools_and_text' | 'text_and_essential_tools' | 'text_only'
+  thread: ThreadChannel
+}): { chunks: SessionChunk[]; directMappings: DirectPartMapping[] } {
+  const chunks: SessionChunk[] = []
+  const directMappings: DirectPartMapping[] = []
+
+  for (const message of messages) {
+    if (message.info.role === 'user') {
+      const renderableParts = getRenderableUserTextParts({ message })
+      const unsyncedParts = renderableParts.filter((p) => {
+        return !syncedPartIds.has(p.id)
+      })
+      if (unsyncedParts.length === 0) {
+        continue
+      }
+      // If the user message came from this Discord thread, skip mirroring
+      // — it's already visible. When message-id is available, record a
+      // direct mapping for part dedup. When it's missing (sourceMessageId
+      // is optional in IngressInput), just mark parts as synced.
+      const discordOrigin = getDiscordOriginMetadataFromMessage({ message })
+      if (discordOrigin && (!discordOrigin.threadId || discordOrigin.threadId === thread.id)) {
+        unsyncedParts.forEach((part) => {
+          directMappings.push({
+            partId: part.id,
+            messageId: discordOrigin.messageId || '',
+            threadId: thread.id,
+          })
+          syncedPartIds.add(part.id)
+        })
+        continue
+      }
+      const promptText = unsyncedParts.map((p) => {
+        return p.text
+      }).join('\n\n')
+      chunks.push({
+        partIds: unsyncedParts.map((p) => {
+          return p.id
+        }),
+        content: getExternalUserMirrorText({ username: 'user', prompt: promptText }),
+      })
+      continue
+    }
+
+    if (message.info.role !== 'assistant') {
+      continue
+    }
+    // Filter assistant parts by verbosity before passing to shared collector
+    const filteredParts = message.parts.filter((part) => {
+      return shouldMirrorAssistantPart({ part, verbosity })
+    })
+    const { chunks: assistantChunks } = collectSessionChunks({
+      messages: [{ info: message.info, parts: filteredParts }],
+      skipPartIds: syncedPartIds,
+    })
+    // Mark empty-content parts as synced (collectSessionChunks skips them)
+    for (const part of filteredParts) {
+      if (!syncedPartIds.has(part.id)) {
+        const content = formatPart(part)
+        if (!content.trim()) {
+          syncedPartIds.add(part.id)
+        }
+      }
+    }
+    chunks.push(...assistantChunks)
+  }
+
+  return { chunks, directMappings }
+}
+
+async function syncSessionToThread({
+  client,
+  discordClient,
+  directory,
+  channelId,
+  sessionId,
+  sessionTitle,
+}: {
+  client: OpencodeClient
+  discordClient: Client
+  directory: string
+  channelId: string
+  sessionId: string
+  sessionTitle?: string | null
+}): Promise<void> {
+  const messagesResponse = await client.session.messages({
+    sessionID: sessionId,
+    directory,
+  }).catch((error) => {
+    return new Error(`Failed to fetch messages for session ${sessionId}`, {
+      cause: error,
+    })
+  })
+  if (messagesResponse instanceof Error) {
+    throw messagesResponse
+  }
+  const messages = messagesResponse.data || []
+
+  // Pure derivation from opencode events: if the latest user turn has
+  // <discord-user /> metadata, kimaki's thread runtime owns this session.
+  // Skip external sync entirely. When the user resumes from CLI/TUI the
+  // latest user turn will lack the tag, so sync picks it up naturally.
+  if (isLatestUserTurnFromDiscord({ messages })) {
+    return
+  }
+
+  const thread = await ensureExternalSessionThread({
+    discordClient,
+    channelId,
+    sessionId,
+    sessionTitle,
+    messages,
+  })
+  if (thread === null) {
+    return
+  }
+  if (thread instanceof Error) {
+    throw thread
+  }
+
+  const [existingPartIds, verbosity] = await Promise.all([
+    getPartMessageIds(thread.id),
+    getChannelVerbosity(thread.parentId || thread.id),
+  ])
+  const syncedPartIds = new Set(existingPartIds)
+
+  const { chunks, directMappings } = collectUnsyncedChunks({ messages, syncedPartIds, verbosity, thread })
+
+  // Persist mappings for user parts that originated from this Discord thread
+  if (directMappings.length > 0) {
+    await setPartMessagesBatch(directMappings)
+  }
+
+  const batched = batchChunksForDiscord(chunks)
+  for (const batch of batched) {
+    const sentMessage = await sendThreadMessage(thread, batch.content)
+    await setPartMessagesBatch(
+      batch.partIds.map((partId) => ({
+        partId,
+        messageId: sentMessage.id,
+        threadId: thread.id,
+      })),
+    )
+  }
+}
+
+// Pulse typing indicator for sessions that are currently busy.
+// Takes the global session statuses map (already fetched) and sends
+// typing to threads whose session is busy and still managed by external_poll.
+async function pulseTypingForBusySessions({
+  discordClient,
+  statuses,
+}: {
+  discordClient: Client
+  statuses: Record<string, { type: string }>
+}): Promise<void> {
+  for (const [sessionId, status] of Object.entries(statuses)) {
+    if (status.type !== 'busy') {
+      continue
+    }
+    const threadId = await getThreadIdBySessionId(sessionId)
+    if (!threadId) {
+      continue
+    }
+    // Skip sessions already managed by the runtime (source='kimaki')
+    const source = await getThreadSessionSource(threadId)
+    if (source && source !== 'external_poll') {
+      continue
+    }
+    const thread = await discordClient.channels.fetch(threadId).catch(() => {
+      return null
+    })
+    if (thread?.isThread()) {
+      await thread.sendTyping().catch(() => {})
+    }
+  }
+}
+
+// Use experimental.session.list (global, all directories) to reduce from
+// N*2 HTTP calls to 1 global list + per-active-directory status calls.
+async function pollExternalSessions({
+  discordClient,
+}: {
+  discordClient: Client
+}): Promise<void> {
+  const trackedChannels = await listTrackedTextChannels()
+  const directoryTargets = groupTrackedChannelsByDirectory(trackedChannels)
+    .filter((t) => {
+      return fs.existsSync(t.directory)
+    })
+  if (directoryTargets.length === 0) {
+    return
+  }
+
+  // Build a lookup: directory → { channelId, startMs }
+  const directoryMap = new Map<string, { channelId: string; startMs: number }>()
+  for (const target of directoryTargets) {
+    directoryMap.set(target.directory, {
+      channelId: target.channelId,
+      startMs: target.startMs,
+    })
+  }
+
+  // Use earliest startMs across all directories for the global query
+  const globalStartMs = Math.min(...directoryTargets.map((t) => {
+    return t.startMs
+  }))
+
+  // Get one opencode client — try each existing directory until one succeeds
+  let client: OpencodeClient | undefined
+  for (const target of directoryTargets) {
+    const result = await initializeOpencodeForDirectory(target.directory, {
+      channelId: target.channelId,
+    })
+    if (!(result instanceof Error)) {
+      client = result()
+      break
+    }
+  }
+  if (!client) {
+    return
+  }
+
+  // One global API call for all sessions across all directories.
+  // Results are sorted by most recently updated, so a fixed limit of 50
+  // is enough — we always get the most active sessions first.
+  const sessionsResponse = await client.experimental.session.list({
+    roots: true,
+    start: globalStartMs,
+    limit: 50,
+  }).catch((error) => {
+    return new Error('Failed to list global sessions', { cause: error })
+  })
+  if (sessionsResponse instanceof Error) {
+    logger.warn(`[EXTERNAL_SYNC] ${sessionsResponse.message}`)
+    return
+  }
+
+  const allSessions = sessionsResponse.data || []
+
+  // Group sessions by directory, filtering to tracked directories only
+  const sessionsByDirectory = new Map<string, GlobalListedSession[]>()
+  for (const session of allSessions) {
+    const target = directoryMap.get(session.directory)
+    if (!target) {
+      continue
+    }
+    // Filter by per-directory startMs (time.updated or time.created)
+    if ((session.time.updated || session.time.created || 0) < target.startMs) {
+      continue
+    }
+    // Skip sessions whose title hasn't been generated yet
+    if (/^new session\s*-/i.test(session.title || '')) {
+      continue
+    }
+    const existing = sessionsByDirectory.get(session.directory) || []
+    existing.push(session)
+    sessionsByDirectory.set(session.directory, existing)
+  }
+
+  // Fetch session.status() only for directories that have sessions to sync.
+  // session.status() is instance-scoped (uses x-opencode-directory header),
+  // so we must call it per directory — but only for active ones, not all 30+.
+  const activeDirectories = [...sessionsByDirectory.keys()]
+  const statusResults = await Promise.all(
+    activeDirectories.map(async (directory) => {
+      const res = await client.session.status({ directory }).catch(() => {
+        return null
+      })
+      return res?.data ? Object.entries(res.data) : []
+    }),
+  )
+  const mergedStatuses = Object.fromEntries(statusResults.flat()) as Record<string, { type: string }>
+
+  // Pulse typing for busy sessions
+  await pulseTypingForBusySessions({ discordClient, statuses: mergedStatuses }).catch(() => {})
+
+  for (const [directory, sessions] of sessionsByDirectory) {
+    const target = directoryMap.get(directory)!
+    const sorted = sortSessionsByRecency(sessions)
+    logger.log(`[EXTERNAL_SYNC] ${directory}: ${sorted.length} sessions to sync`)
+
+    for (const session of sorted) {
+      await syncSessionToThread({
+        client,
+        discordClient,
+        directory,
+        channelId: target.channelId,
+        sessionId: session.id,
+        sessionTitle: session.title,
+      }).catch((error) => {
+        logger.warn(
+          `[EXTERNAL_SYNC] Failed syncing session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        void notifyError(
+          error instanceof Error ? error : new Error(String(error)),
+          `External session sync failed for ${session.id}`,
+        )
+      })
+    }
+  }
+}
+
+export function startExternalOpencodeSessionSync({
+  discordClient,
+}: {
+  discordClient: Client
+}): void {
+  if (
+    process.env.KIMAKI_VITEST &&
+    process.env.KIMAKI_ENABLE_EXTERNAL_OPENCODE_SYNC !== '1'
+  ) {
+    return
+  }
+  if (externalSyncInterval) {
+    return
+  }
+
+  logger.log(`[EXTERNAL_SYNC] started, polling every ${EXTERNAL_SYNC_INTERVAL_MS}ms`)
+  let polling = false
+  const runPoll = async (): Promise<void> => {
+    if (polling) {
+      return
+    }
+    polling = true
+    const result = await pollExternalSessions({ discordClient }).catch(
+      (e) => new Error('External session poll failed', { cause: e }),
+    )
+    polling = false
+    if (result instanceof Error) {
+      logger.warn(`[EXTERNAL_SYNC] ${result.message}`)
+      void notifyError(result, 'External session poll top-level failure')
+    }
+  }
+
+  void runPoll()
+  externalSyncInterval = setInterval(() => {
+    void runPoll()
+  }, EXTERNAL_SYNC_INTERVAL_MS)
+}
+
+export function stopExternalOpencodeSessionSync(): void {
+  if (!externalSyncInterval) {
+    return
+  }
+  clearInterval(externalSyncInterval)
+  externalSyncInterval = null
+}
+
+export const externalOpencodeSyncInternals = {
+  getRenderableUserTextParts,
+  getSessionThreadName,
+  groupTrackedChannelsByDirectory,
+  sortSessionsByRecency,
+  parseDiscordOriginMetadata,
+  getDiscordOriginMetadataFromMessage,
+  isLatestUserTurnFromDiscord,
+}

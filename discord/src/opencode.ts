@@ -67,6 +67,10 @@ import {
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
+// Tracks directories that have been initialized, to avoid repeated log spam
+// from the external sync polling loop.
+const initializedDirectories = new Set<string>()
+
 const STARTUP_STDERR_TAIL_LIMIT = 30
 const STARTUP_STDERR_LINE_MAX_LENGTH = 120
 const STARTUP_ERROR_REASON_MAX_LENGTH = 1500
@@ -514,6 +518,73 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
     opencodeLogger.warn(kimakiShimDirectory.message)
   }
   const gatewayToken = store.getState().gatewayToken
+  const vitestOpencodeEnv = (() => {
+    if (process.env.KIMAKI_VITEST !== '1') {
+      return {}
+    }
+    const root = path.join(getDataDir(), 'opencode-vitest-home')
+    return {
+      OPENCODE_TEST_HOME: root,
+      OPENCODE_CONFIG_DIR: path.join(root, '.opencode-kimaki'),
+      XDG_CONFIG_HOME: path.join(root, '.config'),
+      XDG_DATA_HOME: path.join(root, '.local', 'share'),
+      XDG_CACHE_HOME: path.join(root, '.cache'),
+      XDG_STATE_HOME: path.join(root, '.local', 'state'),
+    }
+  })()
+
+  // Write config to a file instead of passing via OPENCODE_CONFIG_CONTENT env var.
+  // OPENCODE_CONFIG (file path) is loaded before project config in opencode's
+  // priority chain, so project-level opencode.json can override kimaki defaults.
+  // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
+  // causing issue #90 (project permissions not being respected).
+  const opencodeConfig = {
+    $schema: 'https://opencode.ai/config.json',
+    lsp: false,
+    formatter: false,
+    plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
+    permission: {
+      edit: 'allow',
+      bash: 'allow',
+      external_directory: externalDirectoryPermissions,
+      webfetch: 'allow',
+    },
+    agent: {
+      explore: {
+        permission: {
+          '*': 'deny',
+          grep: 'allow',
+          glob: 'allow',
+          list: 'allow',
+          read: {
+            '*': 'allow',
+            '*.env': 'deny',
+            '*.env.*': 'deny',
+            '*.env.example': 'allow',
+          },
+          webfetch: 'allow',
+          websearch: 'allow',
+          codesearch: 'allow',
+          external_directory: externalDirectoryPermissions,
+        },
+      },
+    },
+    skills: {
+      paths: [path.resolve(__dirname, '..', 'skills')],
+    },
+  } satisfies Config
+  const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
+  const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)
+  const existingContent = (() => {
+    try {
+      return fs.readFileSync(opencodeConfigPath, 'utf-8')
+    } catch {
+      return ''
+    }
+  })()
+  if (existingContent !== opencodeConfigJson) {
+    fs.writeFileSync(opencodeConfigPath, opencodeConfigJson)
+  }
 
   const serverProcess = spawn(
     spawnCommand,
@@ -527,41 +598,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
       cwd: os.homedir(),
       env: {
         ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          $schema: 'https://opencode.ai/config.json',
-          lsp: false,
-          formatter: false,
-          plugin: [new URL('../src/kimaki-opencode-plugin.ts', import.meta.url).href],
-          permission: {
-            edit: 'allow',
-            bash: 'allow',
-            external_directory: externalDirectoryPermissions,
-            webfetch: 'allow',
-          },
-          agent: {
-            explore: {
-              permission: {
-                '*': 'deny',
-                grep: 'allow',
-                glob: 'allow',
-                list: 'allow',
-                read: {
-                  '*': 'allow',
-                  '*.env': 'deny',
-                  '*.env.*': 'deny',
-                  '*.env.example': 'allow',
-                },
-                webfetch: 'allow',
-                websearch: 'allow',
-                codesearch: 'allow',
-                external_directory: externalDirectoryPermissions,
-              },
-            },
-          },
-          skills: {
-            paths: [path.resolve(__dirname, '..', 'skills')],
-          },
-        } satisfies Config),
+        OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
         KIMAKI_DATA_DIR: getDataDir(),
@@ -574,6 +611,7 @@ async function startSingleServer(): Promise<ServerStartError | SingleServer> {
         ...(process.env.KIMAKI_SENTRY_DSN && {
           KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
         }),
+        ...vitestOpencodeEnv,
         ...(pathEnv && { [pathEnvKey]: pathEnv }),
       },
     },
@@ -783,9 +821,12 @@ export async function initializeOpencodeForDirectory(
     return server
   }
 
-  opencodeLogger.log(
-    `Using shared server on port ${server.port} for directory: ${directory}`,
-  )
+  if (!initializedDirectories.has(directory)) {
+    initializedDirectories.add(directory)
+    opencodeLogger.log(
+      `Using shared server on port ${server.port} for directory: ${directory}`,
+    )
+  }
 
   return () => {
     if (!singleServer) {

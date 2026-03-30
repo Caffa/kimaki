@@ -259,7 +259,7 @@ export async function startGenAiSession({
     apiKey,
   })
 
-  const model = 'gemini-2.5-flash-native-audio-preview-12-2025'
+  const model = 'gemini-3.1-flash-live-preview'
 
   session = await ai.live.connect({
     model,
@@ -275,10 +275,10 @@ export async function startGenAiSession({
           genaiLogger.error('Error handling turn:', error)
         }
       },
-      onerror: function (e: ErrorEvent) {
+      onerror: function (e: { message?: string }) {
         genaiLogger.debug('Error:', e.message)
       },
-      onclose: function (e: CloseEvent) {
+      onclose: function (e: { reason?: string }) {
         genaiLogger.debug('Close:', e.reason)
       },
     },

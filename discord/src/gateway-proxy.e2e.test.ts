@@ -423,7 +423,7 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
 
   test(
@@ -443,7 +443,7 @@ describeIf('gateway-proxy e2e', () => {
       await waitForFooterMessage({
         discord,
         threadId: firstThreadId,
-        timeout: 15_000,
+        timeout: 4_000,
         afterMessageIncludes: 'follow up through proxy',
         afterAuthorId: TEST_USER_ID,
       })
@@ -463,8 +463,12 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
+
+  // Reconnect test lives in gateway-proxy-reconnect.e2e.test.ts.
+  // It was here before but kills the proxy mid-suite, breaking shared
+  // state (bot/proxy connection) for all subsequent tests.
 
   test(
     'shell command via ! prefix in thread',
@@ -533,7 +537,7 @@ describeIf('gateway-proxy e2e', () => {
       expect(reply).toBeDefined()
       expect(reply.content.trim().length).toBeGreaterThan(0)
     },
-    30_000,
+    15_000,
   )
 
   test(
@@ -629,6 +633,6 @@ describeIf('gateway-proxy e2e', () => {
         store.setState({ discordBaseUrl: previousBaseUrl })
       }
     },
-    30_000,
+    15_000,
   )
 })

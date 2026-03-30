@@ -178,8 +178,10 @@ Without a schema, all values stay as strings. `--port 3000` → `"3000"` (string
 | `[name]` in command | Optional argument |
 | `[...files]` in command | Variadic (collects remaining args into array) |
 | `<value>` in option | Required value (error if missing) |
-| `[value]` in option | Optional value (`true` if flag present without value) |
+| `[value]` in option | Optional value (`undefined` if flag present without value) |
 | no brackets in option | Boolean flag (`undefined` if not passed, `true` if passed) |
+
+**Optionality is determined solely by bracket syntax, not by the schema.** `[square brackets]` makes an option optional regardless of whether the schema is `z.string()` or `z.string().optional()`. The schema's `.optional()` is never consulted for this — it only affects type coercion. So `z.string()` with `[--name]` is treated as optional: if the flag is omitted, `options.name` is `undefined` even though the schema has no `.optional()`.
 
 ## Global Options and Middleware
 
@@ -601,6 +603,18 @@ cli.help()
 cli.version('1.0.0')
 cli.parse()
 ```
+
+## `openInBrowser(url)`
+
+Opens a URL in the default browser. In non-TTY environments (CI, piped output, agents), prints the URL to stdout instead of opening a browser.
+
+```ts
+import { openInBrowser } from 'goke'
+
+openInBrowser('https://example.com/dashboard')
+```
+
+Use this after generating URLs (OAuth callbacks, dashboards, docs links) so interactive users get a browser tab and non-interactive environments get a printable URL.
 
 ## Exposing your CLI as a skill
 

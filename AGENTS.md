@@ -204,13 +204,38 @@ if we added new fields on the schema then we would also need to update db.ts wit
 
 we use prisma to write type safe queries. the database schema is defined in `discord/schema.prisma`.
 
-`discord/src/schema.sql` is **generated** from the prisma schema - never edit it directly. to regenerate it after modifying schema.prisma:
+`discord/src/schema.sql` is **generated** from the prisma schema — never edit it directly. to regenerate it after modifying schema.prisma:
 
 ```bash
 cd discord && pnpm generate
 ```
 
-this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db and extracts the schema).
+this runs `prisma generate` (for the client) and `pnpm generate:sql` (which creates a temp sqlite db, pushes the prisma schema, and extracts the CREATE TABLE statements). the resulting `schema.sql` uses `CREATE TABLE IF NOT EXISTS`, so it creates tables for new users automatically on startup.
+
+### how schema changes work
+
+**new tables**: schema.sql handles them automatically. `CREATE TABLE IF NOT EXISTS` runs on every startup via `migrateSchema()` in `db.ts`, so new tables appear without any manual migration.
+
+**new columns on existing tables**: schema.sql won't add columns to tables that already exist (`IF NOT EXISTS` skips the whole CREATE). add a migration in `db.ts` `migrateSchema()` using:
+
+```ts
+try {
+  await prisma.$executeRawUnsafe(
+    'ALTER TABLE table_name ADD COLUMN column_name TEXT',
+  )
+} catch {
+  // Column already exists
+}
+```
+
+this is the only migration pattern needed. ALTER TABLE ADD COLUMN silently fails if the column exists. never recreate tables to change column types or nullability — it's too complex and risky for a user-facing sqlite database.
+
+**workflow for adding a new column:**
+
+1. add the field to `discord/schema.prisma`
+2. run `pnpm generate` inside discord folder (regenerates prisma client + schema.sql)
+3. add `ALTER TABLE ... ADD COLUMN` in `db.ts` `migrateSchema()` with try/catch
+4. schema.sql handles new installs, the ALTER handles existing installs
 
 when adding new tables:
 
@@ -1119,26 +1144,3 @@ const jsonSchema = toJSONSchema(mySchema, {
 });
 ```
 
-
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
-```
-
-<!-- opensrc:end -->

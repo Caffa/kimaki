@@ -350,7 +350,7 @@ function getTokenTotal(tokens: TokenUsage): number {
 }
 
 /** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
-function isEssentialToolName(toolName: string): boolean {
+export function isEssentialToolName(toolName: string): boolean {
   const essentialTools = [
     'edit',
     'write',
@@ -370,7 +370,7 @@ function isEssentialToolName(toolName: string): boolean {
   })
 }
 
-function isEssentialToolPart(part: Part): boolean {
+export function isEssentialToolPart(part: Part): boolean {
   if (part.type !== 'tool') {
     return false
   }
@@ -411,6 +411,11 @@ export type IngressInput = {
   prompt: string
   userId: string
   username: string
+  // Discord message ID and thread ID for the source message, embedded in
+  // <discord-user> synthetic context so the external sync loop can detect
+  // messages that originated from Discord and skip re-mirroring them.
+  sourceMessageId?: string
+  sourceThreadId?: string
   images?: DiscordFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
@@ -982,10 +987,28 @@ export class ThreadSessionRuntime {
       // with every tool call and was the primary OOM vector — 1000 buffer entries
       // each carrying the full cumulative parts array reached 4GB+.
       const info = compacted.properties.info as Record<string, unknown>
+      const partsSummary = Array.isArray(info.parts)
+        ? info.parts.flatMap((part) => {
+            if (!part || typeof part !== 'object') {
+              return [] as Array<{ id: string; type: string }>
+            }
+            const candidate = part as { id?: unknown; type?: unknown }
+            if (
+              typeof candidate.id !== 'string'
+              || typeof candidate.type !== 'string'
+            ) {
+              return [] as Array<{ id: string; type: string }>
+            }
+            return [{ id: candidate.id, type: candidate.type }]
+          })
+        : []
       delete info.system
       delete info.summary
       delete info.tools
       delete info.parts
+      if (partsSummary.length > 0) {
+        info.partsSummary = partsSummary
+      }
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
@@ -2441,6 +2464,66 @@ export class ThreadSessionRuntime {
       return
     }
     this.onInteractiveUiStateChanged()
+
+    // When a question is answered and the local queue has items, the model may
+    // continue the same run without ever reaching the local-queue idle gate.
+    // Hand the queued items to OpenCode's own prompt queue immediately instead
+    // of waiting for tryDrainQueue() to see an idle session.
+    if (this.getQueueLength() > 0 && !this.questionReplyQueueHandoffPromise) {
+      logger.log(
+        `[QUESTION REPLIED] Queue has ${this.getQueueLength()} items, handing off to opencode queue`,
+      )
+      this.questionReplyQueueHandoffPromise = this.handoffQueuedItemsAfterQuestionReply({
+        sessionId,
+      }).catch((error) => {
+        logger.error('[QUESTION REPLIED] Failed to hand off queued messages:', error)
+        if (error instanceof Error) {
+          void notifyError(error, 'Failed to hand off queued messages after question reply')
+        }
+      }).finally(() => {
+        this.questionReplyQueueHandoffPromise = null
+      })
+    }
+  }
+
+  // Detached helper promise for the "question answered while local queue has
+  // items" flow. Prevents starting two overlapping local->opencode queue
+  // handoff sequences when multiple question replies land close together.
+  private questionReplyQueueHandoffPromise: Promise<void> | null = null
+
+  private async handoffQueuedItemsAfterQuestionReply({
+    sessionId,
+  }: {
+    sessionId: string
+  }): Promise<void> {
+    if (this.listenerAborted) {
+      return
+    }
+    if (this.state?.sessionId !== sessionId) {
+      logger.log(
+        `[QUESTION REPLIED] Session changed before queue handoff for thread ${this.threadId}`,
+      )
+      return
+    }
+
+    while (this.state?.sessionId === sessionId) {
+      const next = threadState.dequeueItem(this.threadId)
+      if (!next) {
+        return
+      }
+
+      const displayText = next.command
+        ? `/${next.command.name}`
+        : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
+      if (displayText.trim()) {
+        await sendThreadMessage(
+          this.thread,
+          `» **${next.username}:** ${displayText}`,
+        )
+      }
+
+      await this.submitViaOpencodeQueue(next)
+    }
   }
 
   private async handleSessionStatus(properties: {
@@ -2700,7 +2783,9 @@ export class ThreadSessionRuntime {
 
       let syntheticContext = ''
       if (input.username) {
-        syntheticContext += `<discord-user name="${input.username}" />`
+        const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
+        const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
+        syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
       }
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -2821,6 +2906,8 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       model: input.model,
       permissions: input.permissions,
+      sourceMessageId: input.sourceMessageId,
+      sourceThreadId: input.sourceThreadId,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
     }
@@ -3039,6 +3126,47 @@ export class ThreadSessionRuntime {
     // Drain local queued messages after explicit abort.
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
+    })
+  }
+
+  async abortActiveRunAndWait({
+    reason,
+    timeoutMs = 2_000,
+  }: {
+    reason: string
+    timeoutMs?: number
+  }): Promise<void> {
+    const state = this.state
+    const sessionId = state?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    let needsIdleWait = false
+    const waitSinceTimestamp = Date.now()
+    const abortResult = await errore.tryAsync(() => {
+      return this.dispatchAction(async () => {
+        needsIdleWait = this.isMainSessionBusy()
+        const outcome = this.abortActiveRunInternal({ reason })
+        if (outcome.apiAbortPromise) {
+          void outcome.apiAbortPromise
+        }
+      })
+    })
+    if (abortResult instanceof Error) {
+      logger.error(`[ABORT WAIT] Failed to abort active run: ${abortResult.message}`)
+      return
+    }
+    if (!needsIdleWait) {
+      return
+    }
+    await this.waitForEvent({
+      predicate: (event) => {
+        return event.type === 'session.idle'
+          && (event.properties as { sessionID?: string }).sessionID === sessionId
+      },
+      sinceTimestamp: waitSinceTimestamp,
+      timeoutMs,
     })
   }
 
@@ -3311,7 +3439,9 @@ export class ThreadSessionRuntime {
 
     let syntheticContext = ''
     if (input.username) {
-      syntheticContext += `<discord-user name="${input.username}" />`
+      const msgAttr = input.sourceMessageId ? ` message-id="${input.sourceMessageId}"` : ''
+      const thrAttr = input.sourceThreadId ? ` thread-id="${input.sourceThreadId}"` : ''
+      syntheticContext += `<discord-user name="${input.username}"${msgAttr}${thrAttr} />`
     }
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
@@ -3380,13 +3510,20 @@ export class ThreadSessionRuntime {
     if (input.command) {
       const queuedCommand = input.command
       const commandSignal = AbortSignal.timeout(30_000)
+      // session.command() only accepts FilePart in parts, not text parts.
+      // Append <discord-user /> tag to arguments so external sync can
+      // detect this message came from Discord (same tag as promptAsync).
+      const discordTag = input.username
+        ? `\n<discord-user name="${input.username}" />`
+        : ''
       const commandResponse = await errore.tryAsync(() => {
         return getClient().session.command(
           {
             sessionID: session.id,
+
             directory: this.sdkDirectory,
             command: queuedCommand.name,
-            arguments: queuedCommand.arguments,
+            arguments: queuedCommand.arguments + discordTag,
             agent: earlyAgentPreference,
             ...variantField,
           },
@@ -3604,6 +3741,12 @@ export class ThreadSessionRuntime {
         permission: sessionPermissions,
       })
       session = sessionResponse.data
+      // Insert DB row immediately so the external-sync poller sees
+      // source='kimaki' before the next poll tick and skips this session.
+      // The upsert at the end of ensureSession is kept for the reuse path.
+      if (session) {
+        await setThreadSession(this.thread.id, session.id)
+      }
       createdNewSession = true
     }
 

@@ -23,7 +23,7 @@ import {
 import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
-import { handleToggleMentionModeCommand } from './commands/mention-mode.js'
+
 import {
   handleResumeCommand,
   handleResumeAutocomplete,
@@ -43,6 +43,7 @@ import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
 import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
+import { handleBtwCommand } from './commands/btw.js'
 import {
   handleModelCommand,
   handleProviderSelectMenu,
@@ -218,12 +219,6 @@ export function registerInteractionHandler({
               })
               return
 
-            case 'toggle-mention-mode':
-              await handleToggleMentionModeCommand({
-                command: interaction,
-                appId,
-              })
-              return
 
             case 'resume':
               await handleResumeCommand({ command: interaction, appId })
@@ -245,7 +240,6 @@ export function registerInteractionHandler({
               return
 
             case 'abort':
-            case 'stop':
               await handleAbortCommand({ command: interaction, appId })
               return
 
@@ -263,6 +257,10 @@ export function registerInteractionHandler({
 
             case 'fork':
               await handleForkCommand(interaction)
+              return
+
+            case 'btw':
+              await handleBtwCommand({ command: interaction, appId })
               return
 
             case 'model':
@@ -328,12 +326,7 @@ export function registerInteractionHandler({
               await handleSessionIdCommand({ command: interaction, appId })
               return
 
-            case 'memory-snapshot':
-              await handleMemorySnapshotCommand({
-                command: interaction,
-                appId,
-              })
-              return
+
 
             case 'restart':
               await handleRestartCommand({

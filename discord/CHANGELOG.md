@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.4.87
+
+1. **New `/btw` command** — fork the current session into a new thread and immediately send a prompt, without replaying past messages:
+   ```
+   /btw prompt: why is the auth module structured this way?
+   ```
+   Useful for side questions or tangents without polluting or blocking the original thread. The forked thread inherits the full session context and starts working right away.
+
+2. **Fixed slash command registration exceeding Discord's 100-command limit** — with many agents, skills, and MCP prompts, the total could exceed Discord's hard cap and cause registration errors. Dynamic commands are now registered in priority order (agents → user commands → skills → MCP prompts) and trimmed at 100. Three rarely-used static commands were removed to free slots: `stop` (duplicate of `/abort`), `memory-snapshot` (use `kill -SIGUSR1` instead), and `toggle-mention-mode`.
+
+## 0.4.86
+
+1. **Fixed voice messages getting lost when a question dropdown is pending** — sending a voice message while the AI's question dropdown is showing no longer discards the voice content. Previously, `message.content` (empty for voice) was passed as the question answer, sending `""` to the model, and the early-return prevented transcription from ever running. Now the empty-content message properly unblocks OpenCode's question waiter and flows through normal transcription, arriving as the next user message after the model responds.
+
+## 0.4.85
+
+1. **Fixed infinite reconnect loop after gateway proxy restart** — after a failed RESUME, the proxy now sends an `INVALID_SESSION` payload and properly drains the WebSocket sink before teardown, so the client reconnects cleanly instead of looping indefinitely.
+
+2. **Fixed `ClientReady` errors crashing the bot silently** — unhandled rejections thrown inside the `ClientReady` handler are now caught and logged instead of taking down the process.
+
+3. **Fixed slash commands being mirrored by external sync** — slash commands like `/errore-skill` dispatched from Discord were missing the `<discord-user />` origin tag (because `session.command()` doesn't accept synthetic text parts), causing external sync to treat them as external messages and mirror them as `» user: …`. The tag is now appended to command arguments so origin detection works correctly.
+
+4. **Fixed Discord origin detection in command-argument text** — the origin metadata parser previously only matched the tag when it was the entire string (anchored `^…$`) and only looked in synthetic text parts. It now matches the tag anywhere in text and checks all text parts (synthetic first, non-synthetic as fallback).
+
+## 0.4.84
+
+1. **New `--projects-dir` flag** — set a custom directory where new projects are created:
+   ```bash
+   kimaki --projects-dir ~/my-projects
+   ```
+   Defaults to `<data-dir>/projects` if not set. The directory is created automatically if it doesn't exist.
+
+2. **`kimaki tunnel --kill` flag** — kill any existing process on the port before starting the tunnel:
+   ```bash
+   kimaki tunnel --kill
+   kimaki tunnel -k
+   ```
+   All tunnel usage examples in the system message and onboarding tutorial now include `--kill` so agents always free stale ports automatically.
+
+3. **Screenshare links are now private by default** — `/screenshare` replies ephemerally, the default lifetime is 30 minutes, and tunnel IDs use 128-bit random values so leaked hosts are much harder to guess.
+
+4. **Fixed queued messages getting stuck after question dropdown answered** — when a user answered a pending question via the Discord select menu, queued messages could stay stranded indefinitely. Queued items are now handed off to OpenCode immediately after the question reply instead of waiting for a separate idle event.
+
+5. **Fixed external sync treating kimaki-initiated sessions as external** — the external sync poller was mirroring sessions owned by kimaki itself, creating duplicate `Sync:` threads. Detection now uses a pure event-based check (presence of `<discord-user />` in the latest user message) instead of a DB lookup, so it's accurate even when the DB entry hasn't been written yet.
+
+6. **Fixed external sync missing Discord origin when message-id is absent** — bot-initiated threads weren't passing `sourceMessageId` to the ingress path, causing the origin parser to return null and mistakenly mirror those turns as `» user: hi`. Both the parser and the ingress call are now fixed.
+
+7. **Fixed gateway reconnection crashes** — the forced gateway relogin mechanism was interfering with discord.js's own exponential-backoff reconnect logic, causing uncaught exceptions on handshake timeouts that killed the process. discord.js reconnection now handles recovery on its own.
+
+## 0.4.83
+
+1. **External OpenCode session sync** — kimaki now mirrors OpenCode sessions started outside Discord (e.g. from the CLI or another editor) into tracked Discord project threads automatically. Sessions are polled every 5 seconds, a new thread is created prefixed with `Sync:`, and messages stream in just like a normal kimaki session. Typing indicators show while the external session is busy.
+
+2. **Two-way external sync** — replies sent in the synced Discord thread are forwarded back into the external OpenCode session. If you switch back to the CLI to continue a conversation, kimaki detects the new CLI-originated messages and re-claims the thread so sync keeps flowing.
+
+3. **Live voice sessions switched to Gemini 2.0 Flash Live** — Discord voice sessions now use Google's latest lower-latency live audio model for faster, more natural conversations.
+
+4. **Fixed scheduled thread prompts not triggering** — tasks scheduled against an existing thread were posted as bot messages that the bot's own-message guard was silently ignoring. Scheduled tasks now use the canonical start-marker path so they fire correctly.
+
+5. **Fixed abort race before next message** — when a user sent a new message while a permission prompt was pending, the abort was fire-and-forget and the new message could race with the dying run. The abort now waits for `session.idle` (up to 2s) before the next message is enqueued.
+
+6. **Suppressed notifications for intermediate queue steps** — permission prompts, question dropdowns, and footer messages now send silently when the thread queue has pending items. Only the final message in a queue notifies the user.
+
+7. **SQLite cleanup on channel deletion** — deleting a Discord channel now removes all orphan rows (`channel_directories` and children) from the local SQLite database. `kimaki project list` no longer shows ghost entries, and a new `--prune` flag removes any remaining stale entries.
+
+8. **Fixed OpenCode server restart on bot shutdown** — SIGINT was not suppressing the auto-restart loop, causing orphan OpenCode server processes to spawn after the bot exited. Both SIGINT and the `shuttingDown` flag now correctly suppress restarts.
+
 ## 0.4.82
 
 1. **`/restart-opencode-server` now re-registers slash commands** — after restarting the OpenCode server, kimaki immediately re-registers all Discord slash commands (built-in + user commands + agents). New or changed commands, agents, and plugins are picked up without a full bot restart.

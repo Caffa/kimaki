@@ -7,9 +7,6 @@ import {
   closeDatabase,
   getThreadWorktree,
   getThreadSession,
-  createPendingWorktree,
-  setWorktreeReady,
-  setWorktreeError,
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
@@ -20,9 +17,8 @@ import {
 import {
   stopOpencodeServer,
 } from './opencode.js'
-import { formatWorktreeName } from './commands/new-worktree.js'
+import { formatWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { createWorktreeWithSubmodules } from './worktrees.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -36,6 +32,7 @@ import {
 } from './discord-utils.js'
 import {
   getOpencodeSystemMessage,
+  isInjectedPromptMarker,
   type ThreadStartMarker,
 } from './system-message.js'
 import yaml from 'js-yaml'
@@ -49,7 +46,7 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
-import { cancelPendingQuestion, type CancelQuestionResult } from './commands/ask-question.js'
+import { cancelPendingQuestion, hasPendingQuestionForThread } from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
@@ -84,6 +81,10 @@ import {
   stopAsrService,
   shouldAutoStartAsr,
 } from './asr-service-manager.js'
+import {
+  startExternalOpencodeSessionSync,
+  stopExternalOpencodeSessionSync,
+} from './external-opencode-sync.js'
 
 export {
   initDatabase,
@@ -310,6 +311,7 @@ export async function startDiscordBot({
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+    startExternalOpencodeSessionSync({ discordClient: c })
 
     // Channel logging is informational only; do it in background so startup stays responsive.
     void (async () => {
@@ -340,7 +342,13 @@ export async function startDiscordBot({
   if (discordClient.isReady()) {
     await setupHandlers(discordClient)
   } else {
-    discordClient.once(Events.ClientReady, setupHandlers)
+    discordClient.once(Events.ClientReady, (readyClient) => {
+      void setupHandlers(readyClient).catch((error) => {
+        discordLogger.error(
+          `[GATEWAY] ClientReady handler failed: ${formatErrorWithStack(error)}`,
+        )
+      })
+    })
   }
 
   discordClient.on(Events.Error, (error) => {
@@ -423,7 +431,7 @@ export async function startDiscordBot({
         footer: message.embeds[0]?.footer?.text,
       })
       const isCliInjectedPrompt = Boolean(
-        isSelfBotMessage && promptMarker?.cliThreadPrompt,
+        isSelfBotMessage && isInjectedPromptMarker({ marker: promptMarker }),
       )
       const sessionStartSource = isCliInjectedPrompt
         ? parseSessionStartSourceFromMarker(promptMarker)
@@ -631,8 +639,8 @@ export async function startDiscordBot({
           return
         }
 
-        // Capture narrowed non-undefined value for use in the preprocess closure
         const resolvedProjectDir = projectDirectory
+
         const sdkDir =
           worktreeInfo?.status === 'ready' &&
           worktreeInfo.worktree_directory
@@ -648,21 +656,38 @@ export async function startDiscordBot({
         })
 
         // Cancel interactive UI when a real user sends a message.
-        // If a question was pending and answered with the user's text,
-        // early-return: the message was consumed as the question answer
-        // and must NOT also be sent as a new prompt (causes abort loops).
         if (!message.author.bot && !isCliInjectedPrompt) {
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
           if (dismissedPermission) {
-            runtime.abortActiveRun('user sent a new message while permission was pending')
+            await runtime.abortActiveRunAndWait({
+              reason: 'user sent a new message while permission was pending',
+            })
           }
-          const questionResult = await cancelPendingQuestion(thread.id, message.content)
+          // For text messages: pass the content as the question answer so the
+          // model sees the user's response. The early return prevents the message
+          // from also being sent as a new prompt (duplicate).
+          // For voice/image messages: message.content is "" (audio is in
+          // attachments, transcription happens later). Passing "" as the answer
+          // loses the content entirely. Instead, reply with "" to properly
+          // unblock OpenCode's question.waitForReply (without a reply the next
+          // promptAsync immediately fails with MessageAbortedError), then let
+          // the voice message flow through normal preprocessing — it gets
+          // transcribed and queued as the next user message after the model
+          // finishes responding to the empty answer.
+          if (message.content.trim().length > 0) {
+            const questionResult = await cancelPendingQuestion(thread.id, message.content)
+            if (questionResult === 'replied') {
+              void cancelPendingFileUpload(thread.id)
+              return
+            }
+          } else if (hasPendingQuestionForThread(thread.id)) {
+            // Reply empty to unblock the question tool — no early return so
+            // the voice/image message continues through to enqueueIncoming.
+            await cancelPendingQuestion(thread.id, '')
+          }
           void cancelPendingFileUpload(thread.id)
-          if (questionResult === 'replied') {
-            return
-          }
         }
 
         // Expensive pre-processing (voice transcription, context fetch,
@@ -676,6 +701,8 @@ export async function startDiscordBot({
             cliInjectedUsername ||
             message.member?.displayName ||
             message.author.displayName,
+          sourceMessageId: message.id,
+          sourceThreadId: thread.id,
           appId: currentAppId,
           agent: cliInjectedAgent,
           model: cliInjectedModel,
@@ -804,45 +831,23 @@ export async function startDiscordBot({
           )
           discordLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
 
-          // Store pending worktree immediately so bot knows about it
-          await createPendingWorktree({
-            threadId: thread.id,
+          const worktreeStatusMessage = await thread
+            .send({
+              content: worktreeCreatingMessage(worktreeName),
+              flags: SILENT_MESSAGE_FLAGS,
+            })
+            .catch(() => undefined)
+
+          const result = await createWorktreeInBackground({
+            thread,
+            starterMessage: worktreeStatusMessage,
             worktreeName,
             projectDirectory,
+            rest: discordClient.rest,
           })
 
-          const worktreeResult = await createWorktreeWithSubmodules({
-            directory: projectDirectory,
-            name: worktreeName,
-          })
-
-          if (worktreeResult instanceof Error) {
-            const errMsg = worktreeResult.message
-            discordLogger.error(`[WORKTREE] Creation failed: ${errMsg}`)
-            await setWorktreeError({
-              threadId: thread.id,
-              errorMessage: errMsg,
-            })
-            await thread.send({
-              content: `⚠️ Failed to create worktree: ${errMsg}\nUsing main project directory instead.`,
-              flags: NOTIFY_MESSAGE_FLAGS,
-            })
-          } else {
-            await setWorktreeReady({
-              threadId: thread.id,
-              worktreeDirectory: worktreeResult.directory,
-            })
-            sessionDirectory = worktreeResult.directory
-            discordLogger.log(
-              `[WORKTREE] Created: ${worktreeResult.directory} (branch: ${worktreeResult.branch})`,
-            )
-            // React with tree emoji to mark as worktree thread
-            await reactToThread({
-              rest: discordClient.rest,
-              threadId: thread.id,
-              channelId: thread.parentId || undefined,
-              emoji: '🌳',
-            })
+          if (!(result instanceof Error)) {
+            sessionDirectory = result
           }
         }
 
@@ -859,6 +864,8 @@ export async function startDiscordBot({
           userId: message.author.id,
           username:
             message.member?.displayName || message.author.displayName,
+          sourceMessageId: message.id,
+          sourceThreadId: thread.id,
           appId: currentAppId,
           preprocess: () => {
             return preprocessNewThreadMessage({
@@ -988,66 +995,24 @@ export async function startDiscordBot({
 
         const worktreeStatusMessage = await thread
           .send({
-            content: `🌳 Creating worktree: ${marker.worktree}\n⏳ Setting up (this can take a bit)...`,
+            content: worktreeCreatingMessage(marker.worktree),
             flags: SILENT_MESSAGE_FLAGS,
           })
-          .catch(() => {
-            return null
-          })
+          .catch(() => undefined)
 
-        await createPendingWorktree({
-          threadId: thread.id,
+        const result = await createWorktreeInBackground({
+          thread,
+          starterMessage: worktreeStatusMessage,
           worktreeName: marker.worktree,
           projectDirectory,
+          rest: discordClient.rest,
         })
 
-        const worktreeResult = await createWorktreeWithSubmodules({
-          directory: projectDirectory,
-          name: marker.worktree,
-        })
-
-        if (errore.isError(worktreeResult)) {
-          discordLogger.error(
-            `[BOT_SESSION] Worktree creation failed: ${worktreeResult.message}`,
-          )
-          await setWorktreeError({
-            threadId: thread.id,
-            errorMessage: worktreeResult.message,
-          })
-          await (worktreeStatusMessage?.edit({
-            content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-            flags: NOTIFY_MESSAGE_FLAGS,
-          }) ||
-            thread.send({
-              content: `⚠️ Failed to create worktree: ${worktreeResult.message}\nUsing main project directory instead.`,
-              flags: NOTIFY_MESSAGE_FLAGS,
-            }))
+        if (result instanceof Error) {
           return projectDirectory
         }
 
-        await setWorktreeReady({
-          threadId: thread.id,
-          worktreeDirectory: worktreeResult.directory,
-        })
-        discordLogger.log(
-          `[BOT_SESSION] Worktree created: ${worktreeResult.directory}`,
-        )
-        // React with tree emoji to mark as worktree thread
-        await reactToThread({
-          rest: discordClient.rest,
-          threadId: thread.id,
-          channelId: thread.parentId || undefined,
-          emoji: '🌳',
-        })
-        await (worktreeStatusMessage?.edit({
-          content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-          flags: SILENT_MESSAGE_FLAGS,
-        }) ||
-          thread.send({
-            content: `🌳 **Worktree ready: ${marker.worktree}**\n📁 \`${worktreeResult.directory}\`\n🌿 Branch: \`${worktreeResult.branch}\``,
-            flags: SILENT_MESSAGE_FLAGS,
-          }))
-        return worktreeResult.directory
+        return result
       })()
 
       discordLogger.log(
@@ -1187,6 +1152,7 @@ export async function startDiscordBot({
       }
 
       voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
+      stopExternalOpencodeSessionSync()
       await stopOpencodeServer()
 
       discordLogger.log('Closing database...')

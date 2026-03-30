@@ -56,6 +56,18 @@ bunx critique --web "Short title describing the changes" --filter "src/config.ts
 
 The string after \`--web\` becomes the diff page title — make it reflect what the changes do (e.g. "Add retry logic to API client", "Fix auth timeout bug").
 
+### fetching user comments from critique diffs
+
+Users can add line-level comments (annotations) on any critique diff page via the Agentation widget (bottom-right corner of the diff page). To read those comments:
+
+\`\`\`bash
+curl https://critique.work/v/<id>/annotations
+\`\`\`
+
+Returns \`text/markdown\` with each annotation showing the file, line, and comment text.
+Use this when the user says they left comments on a critique diff and you need to read them.
+You can also use WebFetch on \`https://critique.work/v/<id>/annotations\` to get the markdown directly.
+
 ### about critique
 
 critique is an open source tool (MIT license) at https://github.com/remorses/critique.
@@ -134,7 +146,7 @@ Use random tunnel IDs by default. Only pass \`-t\` when exposing a service that 
 tmux new-session -d -s myapp-dev
 
 # Run the dev server with kimaki tunnel inside the session
-tmux send-keys -t myapp-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
+tmux send-keys -t myapp-dev "kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
 \`\`\`
 
 ### getting the tunnel URL
@@ -149,15 +161,15 @@ tmux capture-pane -t myapp-dev -p | grep -i "tunnel"
 \`\`\`bash
 # Next.js project
 tmux new-session -d -s projectname-nextjs-dev-3000
-tmux send-keys -t nextjs-dev "kimaki tunnel -p 3000 -- pnpm dev" Enter
+tmux send-keys -t nextjs-dev "kimaki tunnel --kill -p 3000 -- pnpm dev" Enter
 
 # Vite project on port 5173
 tmux new-session -d -s vite-dev-5173
-tmux send-keys -t vite-dev "kimaki tunnel -p 5173 -- pnpm dev" Enter
+tmux send-keys -t vite-dev "kimaki tunnel --kill -p 5173 -- pnpm dev" Enter
 
 # Custom tunnel ID (only for intentionally public-safe services)
 tmux new-session -d -s holocron-dev
-tmux send-keys -t holocron-dev "kimaki tunnel -p 3000 -t holocron -- pnpm dev" Enter
+tmux send-keys -t holocron-dev "kimaki tunnel --kill -p 3000 -t holocron -- pnpm dev" Enter
 \`\`\`
 
 ### stopping the dev server
@@ -213,6 +225,17 @@ export type ThreadStartMarker = {
    * opencode's findLast() evaluation.
    */
   permissions?: string[]
+}
+
+export function isInjectedPromptMarker({
+  marker,
+}: {
+  marker: ThreadStartMarker | undefined
+}): boolean {
+  if (!marker) {
+    return false
+  }
+  return Boolean(marker.cliThreadPrompt || marker.start)
 }
 
 export type AgentInfo = {
