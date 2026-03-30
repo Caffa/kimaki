@@ -201,61 +201,6 @@ describe('transcribeAudio with real API', () => {
 
     expect(result).not.toBeInstanceOf(Error)
     const { transcription } = result as { transcription: string }
-    expect(transcription.length).toBeGreaterThan(0)
-    console.log('Gemini transcription:', result)
-  })
-
-  test('transcribes with OpenAI', { timeout: 30_000 }, async () => {
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(audioPath)) {
-      console.log('Skipping: example-audio.mp3 not found')
-      return
-    }
-
-    const audio = fs.readFileSync(audioPath)
-    const result = await transcribeAudio({
-      audio,
-      prompt: 'test project',
-      apiKey,
-      provider: 'openai',
-    })
-
-    expect(result).not.toBeInstanceOf(Error)
-    const { transcription } = result as { transcription: string }
-    expect(transcription.length).toBeGreaterThan(0)
-    console.log('OpenAI transcription:', result)
-  })
-
-  test('transcribes OGG with OpenAI (converts to WAV)', { timeout: 30_000 }, async () => {
-    const apiKey = process.env.OPENAI_API_KEY
-    const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(oggPath)) {
-      console.log('Skipping: example-audio.ogg not found')
-      return
-    }
-
-    const audio = fs.readFileSync(oggPath)
-    const result = await transcribeAudio({
-      audio,
-      prompt: 'test project',
-      apiKey,
-      provider: 'openai',
-      mediaType: 'audio/ogg',
-    })
-
-    expect(result).not.toBeInstanceOf(Error)
-    const { transcription } = result as { transcription: string }
-    expect(transcription.length).toBeGreaterThan(0)
-    console.log('OpenAI OGG transcription:', result)
-  })
 })
 
 describe('convertOggToWav', () => {

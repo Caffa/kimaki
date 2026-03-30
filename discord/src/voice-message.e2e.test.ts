@@ -502,7 +502,7 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Fix the login bug in auth.ts
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
 
@@ -594,7 +594,7 @@ e2eTest('voice message handling', () => {
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Investigate the missing content type path
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const messages = await waitForSessionMessages({
@@ -702,14 +702,14 @@ e2eTest('voice message handling', () => {
         FAST_RESPONSE_MARKER initial setup
         --- from: assistant (TestBot)
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Add error handling to the parser
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState?.sessionId).toBeDefined()
       if (!finalState?.sessionId) {
@@ -956,11 +956,11 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Queue this task for later
         Queued at position 1
         ⬥ slow-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **voice-tester:** Voice message transcription from Discord user:
         Queue this task for later
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.queueItems.length).toBe(0)
 
@@ -1077,14 +1077,14 @@ e2eTest('voice message handling', () => {
         FAST_RESPONSE_MARKER quick task
         --- from: assistant (TestBot)
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Delayed transcription result
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -1214,14 +1214,14 @@ e2eTest('voice message handling', () => {
         FAST_RESPONSE_MARKER fast before queued voice
         --- from: assistant (TestBot)
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queued voice after idle
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)

@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "b01f488f",
+    "suggestionShownAt": "2026-03-30T14:43:40.887Z",
+    "userPromptSubmittedAt": "2026-03-30T14:43:52.479Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "2a542b74",
+      "suggestedPrompt": "Yes, proceed with the merge plan.",
+      "actualUserPrompt": "I definitely want to keep these local modifications. I did not remove the high priority features. I just haven't brought them in yet. And I definitely want to bring in the slash command and the external open code sync. Bring in all the high priority features. And for the medium priority features, I want to bring most of them in. I just don't want the project directory flag because I like my hard-coded directory. We can discuss how to resolve the fixes and improvements that have a conflict. Integrate in the ones that are missing and easy to bring in. Also bring in the low priority skills because I don't think I removed it. It's just that I have not brought them in yet. If a merge is difficult, do not do it. Just focus on doing the modifications that are unlikely to break the functionality and we can do the breaking functionality changes later on. For the conflicts requiring manual resolution, the first one I want to keep my local voice banner and I don't want the project directory flag. For the second one, I do want to keep my hard coded directory. For the third one, I want to keep my local ASR. For the fourth one, we can use the more complex upstream message formatting because it's needed for external sync. For the fifth one, can we keep ASR service integration along with the external open code sync and the simpler message handling? Merge them both. I also want the BTW/slash command in six. So you can create a checkout branch and integrate as you suggested.",
+      "classification": "changed_course",
+      "similarity": 0.034296565389696165,
+      "timestamp": "2026-03-30T13:35:22.905Z"
+    },
+    {
+      "turnId": "b01f488f",
+      "suggestedPrompt": "Let's test it first before merging to main.",
+      "actualUserPrompt": "Let's test it first before merging to main.",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-03-30T14:43:52.479Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

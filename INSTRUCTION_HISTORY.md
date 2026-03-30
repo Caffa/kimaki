@@ -31,3 +31,11 @@ Do npm link for my local kimaki
 ## 2026-03-30T13:35:48.388Z
 
 You should commit the local changes first.
+
+## 2026-03-30T14:43:52.483Z
+
+Let's test it first before merging to main.
+
+## 2026-03-30T14:57:33.279Z
+
+Remove the voice tests for OpenAI API. We only care about the local parakeet voice tests.

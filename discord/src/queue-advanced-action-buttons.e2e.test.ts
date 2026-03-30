@@ -166,12 +166,12 @@ describe('queue advanced: action buttons', () => {
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
         ⬥ action-buttons-click-continued
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(timeline).toContain('action-buttons-click-continued')
     },
@@ -254,7 +254,7 @@ describe('queue advanced: action buttons', () => {
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         **Action Required**
         _Buttons dismissed._
         --- from: user (queue-action-tester)

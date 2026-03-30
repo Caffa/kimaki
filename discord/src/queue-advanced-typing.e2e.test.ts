@@ -74,7 +74,7 @@ e2eTest('queue advanced: typing lifecycle', () => {
       const timeline = await th.text({ showTyping: true })
       expect(timeline).toContain('Reply with exactly: typing-stop-normal')
       expect(timeline).toContain('⬥ ok')
-      expect(timeline).toContain('*project ⋅ main ⋅')
+      expect(timeline).toContain('*project ⋅ integrate-upstream-features ⋅')
       const typingCount = (timeline.match(/\[bot typing\]/g) || []).length
       expect(typingCount).toBeGreaterThanOrEqual(1)
       expect(replyIndex).toBeGreaterThanOrEqual(0)

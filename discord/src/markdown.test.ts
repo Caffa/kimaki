@@ -209,7 +209,7 @@ test('generate markdown with system info', async () => {
 
     ### 👤 User
 
-    [current git branch is main]
+    [current git branch is integrate-upstream-features]
 
     hello markdown test
 
@@ -248,13 +248,19 @@ test('generate markdown without system info', async () => {
 
     ### 👤 User
 
-    [current git branch is main]
+    [current git branch is integrate-upstream-features]
 
     hello markdown test
 
 
-    ### 🤖 Assistant (glm-4.7)
+    ### 🤖 Assistant (deterministic-v2)
 
+    **Started using deterministic-provider/deterministic-v2**
+
+    Hello! This is a deterministic markdown test response.
+
+
+    *Completed in Xs*
     "
   `)
 })

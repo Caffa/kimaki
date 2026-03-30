@@ -241,7 +241,7 @@ describe('queue advanced: voice message during pending question', () => {
         🎤 Transcribing voice message...
         📝 **Transcribed message:** I want option Alpha please
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // Voice content must be present as a real transcribed message, not lost

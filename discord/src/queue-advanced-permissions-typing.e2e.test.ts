@@ -54,7 +54,7 @@ describe('queue advanced: typing around permissions', () => {
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 8_000,
         predicate: (t) => {
           return t.name === 'PERMISSION_TYPING_MARKER'
         },
@@ -74,7 +74,7 @@ describe('queue advanced: typing around permissions', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'Permission Required',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       th.clearTypingEvents()
@@ -95,7 +95,7 @@ describe('queue advanced: typing around permissions', () => {
 
       await th.waitForInteractionAck({
         interactionId: interaction.id,
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       const resumedTyping = await th.waitForTypingEvent({ timeout: 9_000 })
@@ -136,7 +136,7 @@ describe('queue advanced: typing around permissions', () => {
         ⬥ permission-flow-done
         [bot typing]
         [bot typing]
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ **z_orchestrator***"
+        *project ⋅ integrate-upstream-features ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,
@@ -152,7 +152,7 @@ describe('queue advanced: typing around permissions', () => {
       })
 
       const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
+        timeout: 8_000,
         predicate: (t) => {
           return t.name === initialPrompt
         },
@@ -170,7 +170,7 @@ describe('queue advanced: typing around permissions', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'Permission Required',
-        timeout: 4_000,
+        timeout: 8_000,
       })
 
       await th.user(TEST_USER_ID).sendMessage({

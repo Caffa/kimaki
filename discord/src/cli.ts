@@ -104,7 +104,6 @@ import { spawn, execSync, type ExecSyncOptions } from 'node:child_process'
 
 import {
   setDataDir,
-  setProjectsDir,
   getDataDir,
   getProjectsDir,
 } from './config.js'
@@ -1870,7 +1869,6 @@ cli
     'Data directory for config and database (default: ~/.kimaki)',
   )
   .option(
-    '--projects-dir <path>',
     'Directory where new projects are created (default: <data-dir>/projects)',
   )
   .option('--install-url', 'Print the bot install URL and exit')
@@ -1946,11 +1944,6 @@ cli
         if (options.dataDir) {
           setDataDir(options.dataDir)
           cliLogger.log(`Using data directory: ${getDataDir()}`)
-        }
-
-        if (options.projectsDir) {
-          setProjectsDir(options.projectsDir)
-          cliLogger.log(`Using projects directory: ${getProjectsDir()}`)
         }
 
         // Initialize file logging to <dataDir>/kimaki.log
