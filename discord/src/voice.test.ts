@@ -201,6 +201,9 @@ describe('transcribeAudio with real API', () => {
 
     expect(result).not.toBeInstanceOf(Error)
     const { transcription } = result as { transcription: string }
+    expect(transcription.length).toBeGreaterThan(0)
+    console.log('Gemini transcription:', result)
+  })
 })
 
 describe('convertOggToWav', () => {
