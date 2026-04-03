@@ -20,7 +20,10 @@ Voice transcription works **without cloud API keys** using NVIDIA Parakeet runni
 - **Better privacy** — audio never leaves your machine
 - **10x faster** than Whisper on Apple Silicon with better English accuracy
 
-On non-Apple Silicon devices, set `ASR_PROVIDER=openai` or `ASR_PROVIDER=gemini` to use cloud transcription.
+**Other platforms:** Set `ASR_PROVIDER` to use alternative providers:
+- `ASR_PROVIDER=openai` — OpenAI Whisper API (requires API key)
+- `ASR_PROVIDER=gemini` — Google Gemini API (requires API key)
+- `ASR_PROVIDER=vllm` — Local Whisper via vLLM (no API key, requires GPU setup)
 
 ### Local Project Directory (Designed for Coding Agents)
 
