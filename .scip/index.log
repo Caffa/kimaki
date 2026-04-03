@@ -26,3 +26,9 @@
 {"timestamp":"2026-03-27T06:06:40.823Z","level":"info","source":"tool","action":"query_complete","tool":"scip_project_tree","modules":445}
 {"timestamp":"2026-03-27T06:06:50.523Z","level":"info","source":"tool","action":"execute","tool":"scip_search_symbols","query":"new project","limit":30}
 {"timestamp":"2026-03-27T06:06:50.609Z","level":"info","source":"tool","action":"query_complete","tool":"scip_search_symbols","hits":0}
+{"timestamp":"2026-04-03T15:18:21.637Z","level":"info","source":"tool","action":"execute","tool":"scip_project_tree","depth":2}
+{"timestamp":"2026-04-03T15:18:22.262Z","level":"info","source":"tool","action":"query_complete","tool":"scip_project_tree","modules":445}
+{"timestamp":"2026-04-03T15:18:42.610Z","level":"info","source":"tool","action":"execute","tool":"scip_search_symbols","query":"projectDirectory","limit":20}
+{"timestamp":"2026-04-03T15:18:42.752Z","level":"info","source":"tool","action":"query_complete","tool":"scip_search_symbols","hits":458}
+{"timestamp":"2026-04-03T15:19:10.773Z","level":"info","source":"tool","action":"execute","tool":"scip_search_symbols","query":"projectDirectory","limit":50}
+{"timestamp":"2026-04-03T15:19:10.868Z","level":"info","source":"tool","action":"query_complete","tool":"scip_search_symbols","hits":458}

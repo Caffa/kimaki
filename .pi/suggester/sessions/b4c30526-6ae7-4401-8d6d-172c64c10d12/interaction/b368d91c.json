@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "commit the readme changes",
+    "shownAt": "2026-04-03T15:19:49.932Z",
+    "turnId": "b368d91c",
+    "sourceLeafId": "b368d91c",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

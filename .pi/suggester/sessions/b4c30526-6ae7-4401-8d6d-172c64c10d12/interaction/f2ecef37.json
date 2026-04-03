@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "b368d91c",
+    "suggestionShownAt": "2026-04-03T15:19:49.932Z",
+    "userPromptSubmittedAt": "2026-04-03T15:20:30.600Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "b368d91c",
+      "suggestedPrompt": "commit the readme changes",
+      "actualUserPrompt": "commit the readme changes and commit any other changes.",
+      "classification": "changed_course",
+      "similarity": 0.5982142857142857,
+      "timestamp": "2026-04-03T15:20:30.600Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

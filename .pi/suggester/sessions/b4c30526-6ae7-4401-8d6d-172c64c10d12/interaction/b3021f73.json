@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "push the changes",
+    "shownAt": "2026-04-03T15:20:50.213Z",
+    "turnId": "b3021f73",
+    "sourceLeafId": "b3021f73",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "b368d91c",
+      "suggestedPrompt": "commit the readme changes",
+      "actualUserPrompt": "commit the readme changes and commit any other changes.",
+      "classification": "changed_course",
+      "similarity": 0.5982142857142857,
+      "timestamp": "2026-04-03T15:20:30.600Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

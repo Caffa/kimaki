@@ -2,37 +2,37 @@
   "schemaVersion": 1,
   "suggestionUsage": {
     "calls": 3,
-    "inputTokens": 5277,
-    "outputTokens": 938,
+    "inputTokens": 2218,
+    "outputTokens": 1528,
     "cacheReadTokens": 0,
     "cacheWriteTokens": 0,
-    "totalTokens": 6215,
+    "totalTokens": 3746,
     "costTotal": 0,
     "last": {
-      "inputTokens": 1382,
-      "outputTokens": 407,
+      "inputTokens": 851,
+      "outputTokens": 366,
       "cacheReadTokens": 0,
       "cacheWriteTokens": 0,
-      "totalTokens": 1789,
+      "totalTokens": 1217,
       "costTotal": 0
     }
   },
   "seederUsage": {
     "calls": 1,
     "inputTokens": 86,
-    "outputTokens": 163,
+    "outputTokens": 167,
     "cacheReadTokens": 0,
     "cacheWriteTokens": 0,
-    "totalTokens": 249,
+    "totalTokens": 253,
     "costTotal": 0,
     "last": {
       "inputTokens": 86,
-      "outputTokens": 163,
+      "outputTokens": 167,
       "cacheReadTokens": 0,
       "cacheWriteTokens": 0,
-      "totalTokens": 249,
+      "totalTokens": 253,
       "costTotal": 0
     }
   },
-  "updatedAt": "2026-03-30T15:44:26.695Z"
+  "updatedAt": "2026-04-03T15:23:12.233Z"
 }

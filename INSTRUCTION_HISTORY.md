@@ -39,3 +39,13 @@ Let's test it first before merging to main.
 ## 2026-03-30T14:57:33.279Z
 
 Remove the voice tests for OpenAI API. We only care about the local parakeet voice tests.
+
+## 2026-04-03T15:18:12.654Z
+
+Update the readme to explain how we are different from the original project (https://github.com/remorses/kimaki) that we forked for. Make it to the point, and have this 'differences' section, above the original readme info that explains what the project does. 
+
+Talking points: Local ASR without AIP key (but note the local ASR is meant for mac silicon users), and then the local project directory (we should make an override flag but just design the install instructions for someone to be downloading this via their coding agent (e.g. pi agent) so they just need to tell it what to change the project directory to)
+
+## 2026-04-03T15:20:30.607Z
+
+commit the readme changes and commit any other changes.
