@@ -7,6 +7,32 @@
     <br/>
 </div>
 
+## Differences from Original
+
+This is a fork of [remorses/kimaki](https://github.com/remorses/kimaki) with these key modifications:
+
+### Local ASR (No API Key Required)
+
+Voice transcription works **without cloud API keys** using NVIDIA Parakeet running locally via MLX:
+
+- **Default on Apple Silicon** (M1/M2/M3) — parakeet-mlx provides fast, accurate local transcription
+- **No API key needed** — completely local, no OpenAI or Gemini API keys required for voice messages
+- **Better privacy** — audio never leaves your machine
+- **10x faster** than Whisper on Apple Silicon with better English accuracy
+
+On non-Apple Silicon devices, set `ASR_PROVIDER=openai` or `ASR_PROVIDER=gemini` to use cloud transcription.
+
+### Local Project Directory (Designed for Coding Agents)
+
+This fork is designed to be installed and run by AI coding agents. Configure your project directory when adding a project:
+
+```bash
+# Add a project directory for the agent to work on
+npx kimaki project add /path/to/your/project
+```
+
+---
+
 Kimaki is a Discord bot that lets you control [OpenCode](https://opencode.ai) coding sessions from Discord. Send a message in a Discord channel, an AI agent edits code on your machine.
 
 ## Quick Start
@@ -62,7 +88,7 @@ Both modes work identically after setup. Keep the CLI running — it's the bridg
 
 **File attachments** — Attach images, code files, or any other files to your message. Kimaki includes them in the session context.
 
-**Voice messages** — Record a voice message in Discord. Kimaki transcribes it using Google's Gemini API and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention. Requires a Gemini API key (prompted during setup).
+**Voice messages** — Record a voice message in Discord. Kimaki transcribes it (using local Parakeet ASR on Apple Silicon, or with OpenAI/Gemini API on other platforms) and processes it as text. The transcription uses your project's file tree for accuracy, recognizing function names and file paths you mention. On Apple Silicon (M1/M2/M3), no API key is required for voice transcription.
 
 **Session management** — Resume sessions where you left off, fork from any message, or generate public URLs to share your session.
 
