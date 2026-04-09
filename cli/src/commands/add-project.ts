@@ -3,6 +3,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
   findChannelsByDirectory,
@@ -19,8 +20,57 @@ import {
 
 const logger = createLogger(LogPrefix.ADD_PROJECT)
 
-// Prefix for Pi agent project values in autocomplete
+// Discord limits option values to 100 characters.
+// For short paths, we use 'pi:<path>' directly.
+// For long paths, we use 'pihash:<hash>' and store the mapping.
 const PI_PROJECT_PREFIX = 'pi:'
+const PI_HASH_PREFIX = 'pihash:'
+const MAX_VALUE_LENGTH = 100
+
+// In-memory cache for hash-to-path mapping.
+// This is regenerated on each autocomplete call, so it stays fresh.
+const hashToPathCache = new Map<string, string>()
+
+/**
+ * Generate a short hash for a path.
+ */
+function hashPath(fullPath: string): string {
+  return crypto.createHash('sha256').update(fullPath).digest('hex').slice(0, 16)
+}
+
+/**
+ * Encode a Pi project path for use as a Discord option value.
+ * Uses direct encoding for short paths, hash for long paths.
+ */
+function encodePiPath(fullPath: string): string {
+  const directValue = `${PI_PROJECT_PREFIX}${fullPath}`
+  if (directValue.length <= MAX_VALUE_LENGTH) {
+    return directValue
+  }
+  const hash = hashPath(fullPath)
+  hashToPathCache.set(hash, fullPath)
+  return `${PI_HASH_PREFIX}${hash}`
+}
+
+/**
+ * Decode a Discord option value to get the full project path.
+ */
+function decodeProjectId(projectId: string): string {
+  if (projectId.startsWith(PI_HASH_PREFIX)) {
+    const hash = projectId.slice(PI_HASH_PREFIX.length)
+    const fullPath = hashToPathCache.get(hash)
+    if (fullPath) {
+      return fullPath
+    }
+    logger.warn(`[ADD-PROJECT] Hash not found in cache: ${hash}`)
+    throw new Error('Project session expired. Please refresh and try again.')
+  }
+  if (projectId.startsWith(PI_PROJECT_PREFIX)) {
+    return projectId.slice(PI_PROJECT_PREFIX.length)
+  }
+  // OpenCode project ID - return as-is (will be looked up)
+  return projectId
+}
 
 // Type for combined project items from both OpenCode and Pi agent sources
 type ProjectItem = {
@@ -95,9 +145,13 @@ export async function handleAddProjectCommand({
   try {
     let directory: string
 
-    // Check if this is a Pi agent path (prefixed with 'pi:')
-    if (projectId.startsWith(PI_PROJECT_PREFIX)) {
-      directory = projectId.slice(PI_PROJECT_PREFIX.length)
+    // Decode the project ID - handles both Pi paths and OpenCode IDs
+    const decodedId = decodeProjectId(projectId)
+
+    // Check if this is a Pi agent path (contains path separators) or OpenCode ID
+    if (decodedId.includes('/') || decodedId.includes('\\\')) {
+      // It's a Pi agent path (decoded from pi: or pihash: prefix)
+      directory = decodedId
       logger.log(`[ADD-PROJECT] Using Pi agent directory: ${directory}`)
     } else {
       // OpenCode project - fetch project info
@@ -200,9 +254,14 @@ export async function handleAddProjectAutocomplete({
       .map((project) => {
         const sourceLabel = project.source === 'pi-agent' ? ' [Pi]' : ''
         const name = `${project.displayName}${sourceLabel} (${abbreviatePath(project.worktree)})`
+        // Pi paths use encodePiPath (handles long paths with hash)
+        // OpenCode IDs are already short UUIDs
+        const value = project.source === 'pi-agent' 
+          ? encodePiPath(project.worktree)
+          : project.id
         return {
           name: name.length > 100 ? name.slice(0, 99) + '…' : name,
-          value: project.id,
+          value,
         }
       })
 
