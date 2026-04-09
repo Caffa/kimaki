@@ -2,21 +2,19 @@
 // Handles markdown splitting for Discord's 2000-char limit, code block escaping,
 // thread message sending, and channel metadata extraction from topic tags.
 
-// Use namespace import for CJS interop — discord.js is CJS and its named
-// exports aren't detectable by all ESM loaders (e.g. tsx/esbuild) because
-// discord.js uses tslib's __exportStar which is opaque to static analysis.
-import * as discord from 'discord.js'
-import type {
-  APIInteractionGuildMember,
-  AutocompleteInteraction,
-  GuildMember as GuildMemberType,
-  Guild,
-  Message,
-  REST as RESTType,
-  TextChannel,
-  ThreadChannel,
+import {
+  type APIInteractionGuildMember,
+  type AutocompleteInteraction,
+  ChannelType,
+  GuildMember,
+  MessageFlags,
+  PermissionsBitField,
+  type Guild,
+  type Message,
+  type TextChannel,
+  type ThreadChannel,
 } from 'discord.js'
-const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
+import { REST, Routes } from 'discord.js'
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
@@ -29,8 +27,106 @@ import * as errore from 'errore'
 import mime from 'mime'
 import fs from 'node:fs'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
+
+/**
+ * Detect transient network errors that should be retried.
+ * These are typically socket/connection errors that occur when Discord
+ * closes the connection unexpectedly or there's a temporary network issue.
+ */
+export function isTransientError(error: Error): boolean {
+  const message = error.message.toLowerCase()
+  const name = error.name?.toLowerCase() ?? ''
+  
+  // Socket errors from undici (HTTP client)
+  if (name.includes('socket') || message.includes('socket')) {
+    return true
+  }
+  
+  // "other side closed" - connection terminated unexpectedly
+  if (message.includes('other side closed') || message.includes('connection closed')) {
+    return true
+  }
+  
+  // ECONNRESET, ECONNREFUSED, ETIMEDOUT, etc.
+  if (
+    message.includes('econnreset') ||
+    message.includes('econnrefused') ||
+    message.includes('etimedout') ||
+    message.includes('epipe')
+  ) {
+    return true
+  }
+  
+  // Discord rate limit or transient API errors
+  if (error instanceof Error) {
+    const anyError = error as Error & { code?: string | number; status?: number }
+    // 429 Too Many Requests, 503 Service Unavailable, 502 Bad Gateway
+    if (
+      anyError.status === 429 ||
+      anyError.status === 503 ||
+      anyError.status === 502 ||
+      anyError.code === 429 ||
+      anyError.code === 503 ||
+      anyError.code === 502
+    ) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+/**
+ * Retry a Discord API operation with exponential backoff.
+ * Only retries on transient network errors, not on validation/logic errors.
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  options?: {
+    maxRetries?: number
+    initialDelayMs?: number
+    maxDelayMs?: number
+    operationName?: string
+  },
+): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 3
+  const initialDelayMs = options?.initialDelayMs ?? 500
+  const maxDelayMs = options?.maxDelayMs ?? 10000
+  const operationName = options?.operationName ?? 'operation'
+  
+  let lastError: Error | undefined
+  let delayMs = initialDelayMs
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const result = await errore.tryAsync(operation)
+    
+    if (!(result instanceof Error)) {
+      return result
+    }
+    
+    // Don't retry if it's not a transient error
+    if (!isTransientError(result)) {
+      throw result
+    }
+    
+    lastError = result
+    
+    // Don't sleep after the last attempt
+    if (attempt < maxRetries) {
+      discordLogger.log(
+        `[RETRY] ${operationName} failed with transient error, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries + 1}): ${result.message}`,
+      )
+      await delay(delayMs)
+      delayMs = Math.min(delayMs * 2, maxDelayMs)
+    }
+  }
+  
+  // All retries exhausted, throw the last error
+  throw lastError
+}
 
 /**
  * Centralized permission check for Kimaki bot access.
@@ -39,7 +135,7 @@ const discordLogger = createLogger(LogPrefix.DISCORD)
  * Returns false if member is null or has the "no-kimaki" role (overrides all).
  */
 export function hasKimakiBotPermission(
-  member: GuildMemberType | APIInteractionGuildMember | null,
+  member: GuildMember | APIInteractionGuildMember | null,
   guild?: Guild | null,
 ): boolean {
   if (!member) {
@@ -63,7 +159,7 @@ export function hasKimakiBotPermission(
 }
 
 function hasRoleByName(
-  member: GuildMemberType | APIInteractionGuildMember,
+  member: GuildMember | APIInteractionGuildMember,
   roleName: string,
   guild?: Guild | null,
 ): boolean {
@@ -91,7 +187,7 @@ function hasRoleByName(
  * Check if the member has the "no-kimaki" role that blocks bot access.
  * Separate from hasKimakiBotPermission so callers can show a specific error message.
  */
-export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
+export function hasNoKimakiRole(member: GuildMember | null): boolean {
   if (!member?.roles?.cache) {
     return false
   }
@@ -110,7 +206,7 @@ export async function reactToThread({
   channelId,
   emoji,
 }: {
-  rest: RESTType
+  rest: REST
   threadId: string
   /** Parent channel ID where the thread starter message lives.
    * If not provided, fetches the thread info from Discord API to resolve it. */
@@ -171,7 +267,7 @@ export async function archiveThread({
   client,
   archiveDelay = 0,
 }: {
-  rest: RESTType
+  rest: REST
   threadId: string
   parentChannelId?: string
   sessionId?: string
@@ -546,10 +642,14 @@ export async function sendThreadMessage(
 
   for (const segment of segments) {
     if (segment.type === 'components') {
-      const message = await thread.send({
-        components: segment.components,
-        flags: MessageFlags.IsComponentsV2 | baseFlags,
-      })
+      // Use retry for transient network errors
+      const message = await withRetry(
+        () => thread.send({
+          components: segment.components,
+          flags: MessageFlags.IsComponentsV2 | baseFlags,
+        }),
+        { operationName: 'sendThreadMessage (components)' },
+      )
       if (!firstMessage) {
         firstMessage = message
       }
@@ -586,7 +686,11 @@ export async function sendThreadMessage(
       if (chunk.length > MAX_LENGTH) {
         chunk = chunk.slice(0, MAX_LENGTH - 4) + '...'
       }
-      const message = await thread.send({ content: chunk, flags: sendFlags })
+      // Use retry for transient network errors
+      const message = await withRetry(
+        () => thread.send({ content: chunk, flags: sendFlags }),
+        { operationName: 'sendThreadMessage (text)' },
+      )
       if (!firstMessage) {
         firstMessage = message
       }

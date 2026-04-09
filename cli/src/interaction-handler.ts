@@ -78,6 +78,7 @@ import {
 } from './commands/file-upload.js'
 import { handleActionButton } from './commands/action-buttons.js'
 import { handleHtmlActionButton } from './html-actions.js'
+import { handleImprovementApprovalButton } from './commands/improvement-approval.js'
 import {
   handleQueueCommand,
   handleClearQueueCommand,
@@ -94,8 +95,7 @@ import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
-
-import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
+import { handleMemorySnapshotCommand } from './commands/memory-snapshot.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import {
   handleScreenshareCommand,
@@ -328,13 +328,6 @@ export function registerInteractionHandler({
 
 
 
-            case 'upgrade-and-restart':
-              await handleUpgradeAndRestartCommand({
-                command: interaction,
-                appId,
-              })
-              return
-
             case 'transcription-key':
               await handleTranscriptionApiKeyCommand({
                 interaction,
@@ -434,6 +427,11 @@ export function registerInteractionHandler({
             return
           }
 
+
+          if (customId.startsWith('improve_approve_') || customId.startsWith('improve_reject_') || customId.startsWith('improve_view_')) {
+            await handleImprovementApprovalButton(interaction)
+            return
+          }
           return
         }
 

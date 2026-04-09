@@ -1,0 +1,5 @@
+mlx>=0.21.0
+mlx-audio>=0.1.0
+nemo-toolkit>=2.0.0
+librosa>=0.10.0
+soundfile>=0.12.0
