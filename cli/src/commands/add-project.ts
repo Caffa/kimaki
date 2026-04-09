@@ -149,7 +149,7 @@ export async function handleAddProjectCommand({
     const decodedId = decodeProjectId(projectId)
 
     // Check if this is a Pi agent path (contains path separators) or OpenCode ID
-    if (decodedId.includes('/') || decodedId.includes('\\\')) {
+    if (decodedId.includes('/') || decodedId.includes('\\')) {
       // It's a Pi agent path (decoded from pi: or pihash: prefix)
       directory = decodedId
       logger.log(`[ADD-PROJECT] Using Pi agent directory: ${directory}`)
