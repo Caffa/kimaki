@@ -1081,6 +1081,17 @@ export async function getAllThreadSessionIds(): Promise<string[]> {
   return rows.map((row) => row.session_id).filter((id) => id !== '')
 }
 
+/**
+ * Delete thread_sessions rows by session ID. Used to clean up stale
+ * mappings when the Discord thread is permanently gone.
+ */
+export async function deleteThreadSessionsBySessionId(sessionId: string): Promise<void> {
+  const prisma = await getPrisma()
+  await prisma.thread_sessions.deleteMany({
+    where: { session_id: sessionId },
+  })
+}
+
 export async function appendSessionEventsSinceLastTimestamp({
   sessionId,
   events,
@@ -1277,7 +1288,7 @@ export async function getBotTokenWithMode(): Promise<
 > {
   const prisma = await getPrisma()
   // Pick the bot that was most recently started via run(). last_used_at is the
-  // cross-process source of truth — no in-memory flags needed.
+  // cross-process source of truth - no in-memory flags needed.
   // Fall back to created_at for DBs that predate the last_used_at column.
   const allBots = await prisma.bot_tokens.findMany({
     orderBy: [{ last_used_at: 'desc' }, { created_at: 'desc' }],
@@ -1515,11 +1526,13 @@ export async function setChannelDirectory({
   channelId,
   directory,
   channelType,
+  guildId,
   skipIfExists = false,
 }: {
   channelId: string
   directory: string
   channelType: PrismaChannelType
+  guildId?: string
   skipIfExists?: boolean
 }): Promise<void> {
   const prisma = await getPrisma()
@@ -1536,6 +1549,7 @@ export async function setChannelDirectory({
         channel_id: channelId,
         directory,
         channel_type: channelType,
+        guild_id: guildId ?? null,
       },
     })
   } else {
@@ -1546,10 +1560,12 @@ export async function setChannelDirectory({
         channel_id: channelId,
         directory,
         channel_type: channelType,
+        guild_id: guildId ?? null,
       },
       update: {
         directory,
         channel_type: channelType,
+        ...(guildId !== undefined ? { guild_id: guildId ?? null } : {}),
       },
     })
   }
@@ -1557,27 +1573,42 @@ export async function setChannelDirectory({
 
 /**
  * Find channels by directory path.
+ * When guildId is provided, returns channels matching that guild PLUS channels
+ * with no guild_id (NULL) — these are pre-migration records that haven't
+ * been backfilled yet. This prevents “duplicate channel” bugs.
  */
 export async function findChannelsByDirectory({
   directory,
   channelType,
+  guildId,
 }: {
   directory?: string
   channelType?: PrismaChannelType
+  guildId?: string
 }): Promise<
   Array<{ channel_id: string; directory: string; channel_type: string }>
 > {
   const prisma = await getPrisma()
-  const where: {
+  type WhereInput = {
     directory?: string
     channel_type?: PrismaChannelType
-  } = {}
+    guild_id?: string | null
+    OR?: Array<{ guild_id?: string | null }>
+  }
+  const where: WhereInput = {}
   if (directory) {
     where.directory = directory
   }
   if (channelType) {
     where.channel_type = channelType
   }
+
+  if (guildId) {
+    // Include rows matching the guild OR rows with NULL guild_id
+    // (pre-migration data that hasn't been backfilled yet)
+    where.OR = [{ guild_id: guildId }, { guild_id: null }]
+  }
+
   const rows = await prisma.channel_directories.findMany({
     where,
     select: { channel_id: true, directory: true, channel_type: true },
@@ -1596,6 +1627,28 @@ export async function getAllTextChannelDirectories(): Promise<string[]> {
     distinct: ['directory'],
   })
   return rows.map((row) => row.directory)
+}
+
+/**
+ * Backfill guild_id for channel_directories rows that have NULL guild_id.
+ * Called after bot connects when guild info is available.
+ * Uses a guildId => channelId[] map to batch-update rows efficiently.
+ */
+export async function backfillChannelGuildIds(
+  guildChannelMap: Array<{ guildId: string; channelIds: string[] }>,
+): Promise<number> {
+  const prisma = await getPrisma()
+  let updated = 0
+  for (const { guildId, channelIds } of guildChannelMap) {
+    for (const channelId of channelIds) {
+      const result = await prisma.channel_directories.updateMany({
+        where: { channel_id: channelId, guild_id: null },
+        data: { guild_id: guildId },
+      })
+      updated += result.count
+    }
+  }
+  return updated
 }
 
 export async function listTrackedTextChannels(): Promise<

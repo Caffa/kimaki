@@ -11,6 +11,8 @@ import type {
   Part,
 } from '@opencode-ai/sdk/v2'
 import {
+  deleteChannelDirectoryById,
+  deleteThreadSessionsBySessionId,
   getChannelVerbosity,
   getPartMessageIds,
   getThreadIdBySessionId,
@@ -38,6 +40,56 @@ import { extractNonXmlContent } from './xml.js'
 const logger = createLogger(LogPrefix.OPENCODE)
 
 const EXTERNAL_SYNC_INTERVAL_MS = 5_000
+
+// Discord error codes that mean a resource is permanently gone.
+// 10003 = Unknown Channel, 50001 = Missing Access, 50013 = Missing Permissions.
+// These are not transient — retrying will never succeed.
+const PERMANENT_DISCORD_CODES = new Set([10003, 50001, 50013])
+
+function isPermanentDiscordError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const cause = (error as { cause?: unknown }).cause
+  // Check the nested DiscordAPIError (set as cause in our catch blocks)
+  const discordError = cause ?? error
+  if (
+    discordError &&
+    typeof discordError === 'object' &&
+    'code' in discordError
+  ) {
+    const code = (discordError as { code: unknown }).code
+    if (typeof code === 'number' && PERMANENT_DISCORD_CODES.has(code)) {
+      return true
+    }
+  }
+  // Also check HTTP status on the cause
+  if (
+    discordError &&
+    typeof discordError === 'object' &&
+    'status' in discordError
+  ) {
+    const status = (discordError as { status: unknown }).status
+    if (status === 403 || status === 404) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Thrown when the parent channel for an external sync target is permanently
+ * gone (deleted, bot kicked, or access removed). Carries the channelId so
+ * the poll loop can prune the stale channel_directories row.
+ */
+class StaleChannelError extends Error {
+  readonly channelId: string
+  constructor(channelId: string, cause: Error) {
+    super(`Channel ${channelId} is permanently gone`, { cause })
+    this.name = 'StaleChannelError'
+    this.channelId = channelId
+  }
+}
 // Don't sync sessions from before the CLI started. 5 min grace window
 // covers sessions that were just created before the bot connected.
 const CLI_START_MS = Date.now() - 5 * 60 * 1000
@@ -313,6 +365,14 @@ async function ensureExternalSessionThread({
     if (!(existingThread instanceof Error) && existingThread?.isThread()) {
       return existingThread
     }
+    // Thread was deleted or bot lost access — clean up the stale mapping
+    // so subsequent polls don't keep retrying a dead thread.
+    if (existingThread instanceof Error && isPermanentDiscordError(existingThread)) {
+      logger.log(
+        `[EXTERNAL_SYNC] Thread ${existingThreadId} is gone (permanent error), removing stale mapping for session ${sessionId}`,
+      )
+      await deleteThreadSessionsBySessionId(sessionId).catch(() => {})
+    }
   }
 
   const parentChannel = await discordClient.channels.fetch(channelId).catch((error) => {
@@ -321,10 +381,17 @@ async function ensureExternalSessionThread({
     })
   })
   if (parentChannel instanceof Error) {
+    // If the error is permanent (channel deleted, bot kicked, etc.),
+    // throw StaleChannelError so the poll loop can prune the row.
+    if (isPermanentDiscordError(parentChannel)) {
+      throw new StaleChannelError(channelId, parentChannel)
+    }
     return parentChannel
   }
   if (!parentChannel || parentChannel.type !== ChannelType.GuildText) {
-    return new Error(`Channel ${channelId} is not a text channel`)
+    // Channel exists but isn't a text channel — bot may have lost access
+    // or the channel type changed. Prune the stale entry.
+    throw new StaleChannelError(channelId, new Error(`Channel ${channelId} is not a text channel`))
   }
 
   const threadName = 'Sync: ' + getSessionThreadName({ sessionTitle, messages })
@@ -617,6 +684,15 @@ async function pollExternalSessions({
         sessionId: session.id,
         sessionTitle: session.title,
       }).catch((error) => {
+        // If the parent channel is permanently gone, prune the stale
+        // channel_directories row so we stop retrying every 5 seconds.
+        if (error instanceof StaleChannelError) {
+          logger.warn(
+            `[EXTERNAL_SYNC] Channel ${error.channelId} is permanently gone, pruning stale channel_directories entry for ${directory}`,
+          )
+          void deleteChannelDirectoryById(error.channelId).catch(() => {})
+          return
+        }
         logger.warn(
           `[EXTERNAL_SYNC] Failed syncing session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
         )
