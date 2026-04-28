@@ -455,7 +455,13 @@ export function createTranscriptionModel({
     provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
 
   if (resolvedProvider === 'openai') {
-    const openai = createOpenAI({ apiKey })
+    // Explicitly set baseURL to OpenAI's real API to avoid inheriting
+    // OPENAI_BASE_URL env var, which may point to a local/self-hosted LLM
+    // server that doesn't support gpt-4o-audio-preview transcription.
+    const openai = createOpenAI({
+      apiKey,
+      baseURL: 'https://api.openai.com/v1',
+    })
     return openai.chat('gpt-4o-audio-preview')
   }
 
