@@ -1,0 +1,39 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "commit these changes",
+    "shownAt": "2026-04-30T07:02:13.202Z",
+    "turnId": "1612b84f",
+    "sourceLeafId": "1612b84f",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a14dcade",
+      "suggestedPrompt": "run those fix commands",
+      "actualUserPrompt": "run those fix commands. Just to confirm, I want the local version of kimaki in this folder. We can update this fork with updates from the original repository https://github.com/remorses/kimaki but I want to keep my local ASR (parakeet-mlx) and the banner and the project directory hardcoded.",
+      "classification": "changed_course",
+      "similarity": 0.11906802774098028,
+      "timestamp": "2026-04-30T05:44:03.391Z"
+    },
+    {
+      "turnId": "65b94b90",
+      "suggestedPrompt": "Yes, disable the auto-upgrade and make it skip when npm link is detected.",
+      "actualUserPrompt": "Yes, disable the auto-upgrade and make it skip when npm link is detected.",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-04-30T06:30:59.877Z"
+    },
+    {
+      "turnId": "4a3ae565",
+      "suggestedPrompt": "restart kimaki and verify it works",
+      "actualUserPrompt": "restart kimaki and verify it works",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-04-30T07:01:01.134Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

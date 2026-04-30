@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "suggestionUsage": {
-    "calls": 1,
-    "inputTokens": 1332,
-    "outputTokens": 33,
+    "calls": 5,
+    "inputTokens": 7018,
+    "outputTokens": 585,
     "cacheReadTokens": 0,
     "cacheWriteTokens": 0,
-    "totalTokens": 1365,
+    "totalTokens": 7603,
     "costTotal": 0,
     "last": {
-      "inputTokens": 1332,
-      "outputTokens": 33,
+      "inputTokens": 1026,
+      "outputTokens": 189,
       "cacheReadTokens": 0,
       "cacheWriteTokens": 0,
-      "totalTokens": 1365,
+      "totalTokens": 1215,
       "costTotal": 0
     }
   },
@@ -34,5 +34,5 @@
       "costTotal": 0
     }
   },
-  "updatedAt": "2026-04-30T05:42:37.539Z"
+  "updatedAt": "2026-04-30T07:02:19.012Z"
 }
