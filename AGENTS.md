@@ -1,5 +1,22 @@
 <!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
 
+## ⚠️ CRITICAL: npm link and auto-upgrade
+
+This repo is a **local fork** of kimaki, run via `npm link` from `cli/`. The upstream `backgroundUpgradeKimaki()` and `/upgrade-and-restart` Discord command are **disabled when `isNpmLinked()` detects `.git`** in the package directory or its parent. This prevents `npm i -g kimaki@latest` from replacing the symlink and destroying local customizations (ASR, banner, Pi agent sessions).
+
+**To update this fork from upstream:**
+```
+git fetch upstream
+git merge upstream/main
+pnpm install   # in cli/
+pnpm build      # in cli/
+npm link        # in cli/ (re-links the global command)
+```
+
+**Never run** `npm i -g kimaki@latest` manually — it will replace the fork with the vanilla npm package.
+
+---
+
 after every change always run tsc inside cli to validate your changes. try to never use as any
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
@@ -7,6 +24,45 @@ do not use spawnSync. use our util execAsync. which uses spawn under the hood
 the important package in this repo is cli. it contains the discord bot code.
 
 after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+
+# ⚠️ FORK: local dev install — no auto-upgrade
+
+This is a **local fork** of kimaki, installed via `npm link` from `cli/` rather than
+`npm i -g kimaki` from the npm registry. This means:
+
+- **Background auto-upgrade is DISABLED.** The `backgroundUpgradeKimaki()` function in
+  `cli/src/upgrade.ts` detects `npm link` via `isNpmLinked()` and skips the upgrade.
+  Running `npm i -g kimaki@latest` would replace the symlink with the upstream npm package,
+  destroying all local customizations (ASR services, figlet banner, Pi agent sessions, etc).
+
+- **The `/upgrade-and-restart` Discord command is BLOCKED when running via npm link.**
+  It displays a warning advising to update via `git merge upstream/main` + `pnpm build` +
+  `npm link` instead.
+
+- **To update from upstream:**
+  ```bash
+  git fetch upstream
+  git merge upstream/main    # resolve conflicts, preserve local customizations
+  cd cli
+  pnpm install
+  pnpm build
+  npm link                   # re-symlink if needed
+  ```
+
+- **Key local customizations to preserve during merges:**
+  - `asr-service/` — local Parakeet MLX ASR server
+  - `cli/src/asr-service-manager.ts` — auto-start/stop parakeet service
+  - `cli/src/vllm-service-manager.ts` — vLLM Whisper service manager
+  - `cli/src/voice.ts` — extended TranscriptionProvider type (`parakeet | vllm`)
+  - `cli/src/voice-handler.ts` — parakeet default on Apple Silicon, voice channel notifications
+  - `cli/src/cli.ts` — figlet "LOCAL VOICE" banner on startup
+  - `cli/src/pi-agent-sessions.ts` — Pi agent session discovery for /add-project
+  - `cli/src/commands/add-project.ts` — Pi project directory auto-discovery
+  - `cli/src/commands/improvement-approval.ts` — improvement approval button handler
+  - `cli/src/commands/memory-snapshot.ts` — memory snapshot command
+  - `cli/src/discord-utils.ts` — withRetry/isTransientError for transient Discord API errors
+  - `cli/src/external-opencode-sync.ts` — isPermanentDiscordError, stale channel self-healing
+  - `cli/src/opencode.ts` — killOrphanedOpencodeServers() pre-startup cleanup
 
 # repo architecture
 

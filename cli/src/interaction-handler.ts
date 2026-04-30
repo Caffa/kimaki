@@ -108,6 +108,7 @@ import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 import { handleMemorySnapshotCommand } from './commands/memory-snapshot.js'
+import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import {
   handleScreenshareCommand,
@@ -381,6 +382,13 @@ export function registerInteractionHandler({
 
             case 'vscode':
               await handleVscodeCommand({ command: interaction, appId })
+              return
+
+            case 'upgrade-and-restart':
+              await handleUpgradeAndRestartCommand({
+                command: interaction,
+                appId,
+              })
               return
           }
 

@@ -1,5 +1,9 @@
 # Session learnings
 
+## ⚠️ CRITICAL: Never run `npm i -g kimaki@latest`
+
+This repo is a local fork run via `npm link`. The auto-upgrade (`backgroundUpgradeKimaki`) and `/upgrade-and-restart` Discord command are **disabled** when `isNpmLinked()` detects `.git` in the package dir or parent. To update from upstream: `git fetch upstream && git merge upstream/main`, then `pnpm install && pnpm build && npm link` from `cli/`.
+
 ## Prompt ingress architecture
 
 All user prompts funnel through `ThreadSessionRuntime.enqueueIncoming` in
