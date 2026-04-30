@@ -76,6 +76,7 @@ model channel_directories {
   channel_id   String      @id
   directory    String
   channel_type ChannelType
+  guild_id     String?     // Discord guild (server) ID this channel belongs to
   // app_id String? // no longer used: channel ownership is no longer scoped per bot app
   created_at   DateTime?   @default(now())
 
@@ -85,6 +86,8 @@ model channel_directories {
   channel_verbosity    channel_verbosity?
   channel_mention_mode channel_mention_mode?
   scheduled_tasks      scheduled_tasks[]
+
+  @@index([guild_id])
 }
 
 enum ChannelType {

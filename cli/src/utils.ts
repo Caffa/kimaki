@@ -214,3 +214,15 @@ export function abbreviatePath(fullPath: string): string {
   }
   return fullPath
 }
+
+/**
+ * Expand a leading tilde (~) in a path to the user's home directory.
+ * Returns the path unchanged if it doesn't start with ~.
+ */
+export function expandTilde(filePath: string): string {
+  if (filePath.startsWith('~')) {
+    if (filePath === '~') return os.homedir()
+    if (filePath.startsWith('~/')) return filePath.replace('~', os.homedir())
+  }
+  return filePath
+}

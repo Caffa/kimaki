@@ -37,6 +37,8 @@ import {
   ensureKimakiCategory,
   createProjectChannels,
   createDefaultKimakiChannel,
+  createDefaultKimakiVoiceChannel,
+  linkVoiceChannelToDirectory,
   type ChannelWithTags,
 } from './discord-bot.js'
 import {
@@ -46,6 +48,7 @@ import {
   setBotMode,
   setChannelDirectory,
   findChannelsByDirectory,
+  backfillChannelGuildIds,
   getThreadSession,
   getThreadIdBySessionId,
   getSessionEventSnapshot,
@@ -726,6 +729,7 @@ async function storeChannelDirectories({
           channelId: channel.id,
           directory: channel.kimakiDirectory,
           channelType: 'text',
+          guildId: guild.id,
           skipIfExists: true,
         })
 
@@ -739,6 +743,7 @@ async function storeChannelDirectories({
             channelId: voiceChannel.id,
             directory: channel.kimakiDirectory,
             channelType: 'voice',
+            guildId: guild.id,
             skipIfExists: true,
           })
         }
@@ -809,12 +814,14 @@ async function ensureDefaultChannelsWithWelcome({
   appId,
   isGatewayMode,
   installerDiscordUserId,
+  voiceChannelDirectory,
 }: {
   guilds: Guild[]
   discordClient: import('discord.js').Client
   appId: string
   isGatewayMode: boolean
   installerDiscordUserId?: string
+  voiceChannelDirectory?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
   const created: { name: string; id: string; guildId: string }[] = []
   for (const guild of guilds) {
@@ -839,6 +846,20 @@ async function ensureDefaultChannelsWithWelcome({
           channel: result.textChannel,
           mentionUserId,
         })
+      }
+      
+      // Also create a default voice channel for the specified directory
+      if (voiceChannelDirectory) {
+        const voiceResult = await createDefaultKimakiVoiceChannel({
+          guild,
+          botName: discordClient.user?.username,
+          directory: voiceChannelDirectory,
+        })
+        if (voiceResult) {
+          cliLogger.log(
+            `Created default voice channel: 🔊${voiceResult.channelName} linked to ${voiceChannelDirectory}`,
+          )
+        }
       }
     } catch (error) {
       cliLogger.warn(
@@ -1587,6 +1608,17 @@ ${borderedLines.join('\n')}
     // ── Channel setup flow ──
     // Store channel-directory mappings discovered during Discord login.
     await storeChannelDirectories({ kimakiChannels })
+
+    // Backfill guild_id for any channel_directories rows that still have NULL guild_id.
+    // This is a one-time migration step; new records are created with guild_id set.
+    const guildChannelMap = kimakiChannels.map(({ guild, channels }) => ({
+      guildId: guild.id,
+      channelIds: channels.map((ch) => ch.id),
+    }))
+    const backfilled = await backfillChannelGuildIds(guildChannelMap)
+    if (backfilled > 0) {
+      cliLogger.log(`Backfilled guild_id for ${backfilled} channel(s)`)
+    }
 
     if (!hasConfiguredTextChannels) {
       note(
@@ -3385,6 +3417,7 @@ cli
         const existingChannels = await findChannelsByDirectory({
           directory: absolutePath,
           channelType: 'text',
+          guildId: guild.id,
         })
 
         for (const existingChannel of existingChannels) {

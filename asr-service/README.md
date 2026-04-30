@@ -1,45 +1,47 @@
 # ASR Service for Kimaki
 
 This directory contains the local ASR (Automatic Speech Recognition) service for Kimaki.
-It uses NVIDIA's Parakeet model accelerated by Apple's MLX framework for fast, accurate,
+It uses NVIDIA's Parakeet TDT model accelerated by Apple's MLX framework for fast, accurate,
 and private voice transcription on Apple Silicon devices.
 
 ## Features
 
 - **Local Processing**: All audio is processed locally - nothing sent to cloud
-- **Apple Silicon Optimized**: Uses MLX for M1/M2/M3 acceleration
-- **Fast**: ~10x faster than Whisper on Apple Silicon
-- **Accurate**: NVIDIA Parakeet model for high-quality English transcription
+- **Apple Silicon Optimized**: Uses MLX for M1/M2/M3/M4 acceleration
+- **Fast**: ~0.4s transcription time, ~1.2s model load
+- **Accurate**: NVIDIA Parakeet TDT 0.6B for high-quality English transcription
 
 ## Prerequisites
 
 1. Apple Silicon Mac (M1/M2/M3/M4)
 2. Python 3.12+
-3. Audio input files in WAV, MP3, or OGG format
+3. [uv](https://docs.astral.sh/uv/) package manager (recommended)
 
 ## Installation
 
+Using uv (recommended):
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+cd asr-service
+uv run --with parakeet-mlx --with mlx python asr_server.py
+```
 
-# Install dependencies
+Or with pip:
+```bash
 pip install -r requirements.txt
-
-# Or install individually:
-pip install mlx mlx-audio
-pip install nemo-toolkit  # Optional, for alternative models
+python asr_server.py
 ```
 
 ## Running the Server
 
 ```bash
 # Default: http://127.0.0.1:8765
-python asr_server.py
+uv run --with parakeet-mlx --with mlx python asr_server.py
 
 # Custom port/host
-ASR_PORT=9000 ASR_HOST=0.0.0.0 python asr_server.py
+ASR_PORT=9000 ASR_HOST=0.0.0.0 uv run --with parakeet-mlx --with mlx python asr_server.py
+
+# Use a different model
+PARAKEET_MODEL=mlx-community/parakeet-tdt_ctc-110m uv run --with parakeet-mlx python asr_server.py
 ```
 
 ## Endpoints
@@ -54,8 +56,9 @@ Response:
 ```json
 {
   "status": "healthy",
-  "mlx_available": true,
-  "model_loaded": true
+  "parakeet_available": true,
+  "model_loaded": true,
+  "model_name": "mlx-community/parakeet-tdt-0.6b-v2"
 }
 ```
 
@@ -64,8 +67,8 @@ Response:
 ```bash
 # Send audio file for transcription
 curl -X POST http://127.0.0.1:8765/transcribe \
-  --data-binary @audio.ogg \
-  -H "Content-Type: application/octet-stream"
+  --data-binary @audio.wav \
+  -H "Content-Type: audio/wav"
 ```
 
 Response:
@@ -108,18 +111,27 @@ export ASR_PROVIDER=vllm
 export VLLM_AUTO_START=true
 ```
 
+## Available Models
+
+- `mlx-community/parakeet-tdt-0.6b-v2` (default) - Best quality English transcription
+- `mlx-community/parakeet-tdt_ctc-110m` - Smaller, faster model
+
+Set via `PARAKEET_MODEL` environment variable.
+
 ## Troubleshooting
 
-### MLX Not Found
+### parakeet-mlx Not Found
 
-```
-pip install mlx mlx-audio
+```bash
+pip install parakeet-mlx
+# or
+uv run --with parakeet-mlx python asr_server.py
 ```
 
 ### Model Download
 
-The first transcription may take longer as it downloads the Parakeet model.
-Subsequent transcriptions will use the cached model.
+The first run will download the model from HuggingFace (~1GB).
+Subsequent runs use the cached model.
 
 ### Port Already in Use
 
@@ -130,6 +142,13 @@ curl http://127.0.0.1:8765/health
 # Kill existing process
 lsof -i :8765
 kill <PID>
+```
+
+### Memory Issues
+
+If you get memory errors, try a smaller model:
+```bash
+PARAKEET_MODEL=mlx-community/parakeet-tdt_ctc-110m python asr_server.py
 ```
 
 ## License

@@ -12,7 +12,7 @@ import {
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { createProjectChannels } from '../channel-management.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { abbreviatePath } from '../utils.js'
+import { abbreviatePath, expandTilde } from '../utils.js'
 import {
   getPiAgentProjectDirectories,
   getLatestSessionTime,
@@ -176,14 +176,18 @@ export async function handleAddProjectCommand({
       directory = project.worktree
     }
 
-    if (!fs.existsSync(directory)) {
+    // Expand tilde to home directory for path validation
+    const expandedDirectory = expandTilde(directory)
+
+    if (!fs.existsSync(expandedDirectory)) {
       await command.editReply(`Directory does not exist: ${directory}`)
       return
     }
 
     const existingChannels = await findChannelsByDirectory({
-      directory,
+      directory: expandedDirectory,
       channelType: 'text',
+      guildId: guild.id,
     })
 
     if (existingChannels.length > 0) {
@@ -196,7 +200,7 @@ export async function handleAddProjectCommand({
     const { textChannelId, voiceChannelId, channelName } =
       await createProjectChannels({
         guild,
-        projectDirectory: directory,
+        projectDirectory: expandedDirectory,
         botName: command.client.user?.username,
       })
 

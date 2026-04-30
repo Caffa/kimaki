@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Let me try it and check if opencode processes remain after stopping.",
+    "shownAt": "2026-04-10T14:33:46.735Z",
+    "turnId": "d087a77d",
+    "sourceLeafId": "d087a77d",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 2
+}

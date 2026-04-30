@@ -29,7 +29,10 @@ export async function handleRemoveProjectCommand({
 
   try {
     // Get channel IDs for this directory
-    const channels = await findChannelsByDirectory({ directory })
+    const channels = await findChannelsByDirectory({
+      directory,
+      guildId: guild.id,
+    })
 
     if (channels.length === 0) {
       await command.editReply(
@@ -107,9 +110,10 @@ export async function handleRemoveProjectAutocomplete({
   }
 
   try {
-    // Get all directories with channels
+    // Get all directories with channels in this guild
     const allChannels = (await findChannelsByDirectory({
       channelType: 'text',
+      guildId: guild.id,
     })) as Array<{
       directory: string
       channel_id: string

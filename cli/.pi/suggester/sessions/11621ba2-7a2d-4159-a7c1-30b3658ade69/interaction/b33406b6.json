@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "try starting kimaki again",
+    "shownAt": "2026-04-10T14:21:44.512Z",
+    "turnId": "b33406b6",
+    "sourceLeafId": "b33406b6",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

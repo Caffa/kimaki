@@ -283,6 +283,29 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('link-voice-channel')
+      .setDescription(truncateCommandDescription('Link a voice channel to a project directory for voice assistant'))
+      .addChannelOption((option) => {
+        option
+          .setName('voice-channel')
+          .setDescription(truncateCommandDescription('The voice channel to link'))
+          .setRequired(true)
+          .addChannelTypes(2) // ChannelType.GuildVoice
+
+        return option
+      })
+      .addStringOption((option) => {
+        option
+          .setName('directory')
+          .setDescription(truncateCommandDescription('Project directory path'))
+          .setRequired(false)
+          .setAutocomplete(true)
+
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('create-new-project')
       .setDescription(
         truncateCommandDescription('Create a new project folder, initialize git, and start a session'),

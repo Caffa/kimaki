@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-ASR (Automatic Speech Recognition) Server for Parakeet MLX.
-Provides HTTP endpoints for audio transcription using NVIDIA's Parakeet model
-accelerated by Apple's MLX framework.
+ASR Service - HTTP wrapper for parakeet-mlx
+Provides HTTP API for speech-to-text transcription using NVIDIA Parakeet on Apple Silicon.
 
 Usage:
     python asr_server.py
@@ -10,6 +9,7 @@ Usage:
 Environment Variables:
     ASR_PORT: Port to run the server on (default: 8765)
     ASR_HOST: Host to bind to (default: 127.0.0.1)
+    PARAKEET_MODEL: Model to use (default: mlx-community/parakeet-tdt-0.6b-v2)
 """
 
 import os
@@ -27,105 +27,89 @@ logging.basicConfig(
 )
 logger = logging.getLogger('asr-server')
 
-# Try to import MLX and Parakeet
-try:
-    import mlx.core as mx
-    from mlx_audio.codec import AudioCodec
-    HAS_MLX = True
-except ImportError:
-    HAS_MLX = False
-    logger.warning("MLX not available. Install with: pip install mlx")
+# Default model
+DEFAULT_MODEL = 'mlx-community/parakeet-tdt-0.6b-v2'
 
+# Try to import parakeet-mlx
+HAS_PARAKEET = False
 try:
-    from nemo.collections.asr.models import EncDecRNNTBPEModel
-    HAS_NEMO = True
+    import parakeet_mlx
+    HAS_PARAKEET = True
 except ImportError:
-    HAS_NEMO = False
-    logger.warning("NeMo not available. Install with: pip install nemo-toolkit")
-
-# Try alternative imports
-try:
-    from mlx.utils import load_model
-    HAS_MLX_UTILS = True
-except ImportError:
-    HAS_MLX_UTILS = False
+    logger.warning("parakeet-mlx not available. Install with: pip install parakeet-mlx")
 
 # Global model reference
 model = None
-codec = None
+model_name = None
 
 # Configuration
 ASR_PORT = int(os.environ.get('ASR_PORT', 8765))
 ASR_HOST = os.environ.get('ASR_HOST', '127.0.0.1')
+PARAKEET_MODEL = os.environ.get('PARAKEET_MODEL', DEFAULT_MODEL)
 
 
 def load_parakeet_model():
-    """Load the Parakeet MLX model for transcription."""
-    global model, codec
+    """Load the Parakeet model for transcription."""
+    global model, model_name
     
-    if not HAS_MLX:
-        raise RuntimeError("MLX is required for Parakeet transcription. Install with: pip install mlx")
+    if not HAS_PARAKEET:
+        raise RuntimeError("parakeet-mlx is required. Install with: pip install parakeet-mlx")
     
-    # Try to load the Parakeet model
-    # This is a placeholder - actual implementation depends on model availability
-    model_path = os.environ.get('PARAKEET_MODEL_PATH')
+    model_name = PARAKEET_MODEL
+    logger.info(f"Loading Parakeet model: {model_name}")
     
-    if model_path and Path(model_path).exists():
-        logger.info(f"Loading Parakeet model from {model_path}")
-        # Load model implementation would go here
-        # model = load_model(model_path)
-    else:
-        # Use default model
-        logger.info("Using default Parakeet model configuration")
-        # Initialize codec for audio processing
-        try:
-            codec = AudioCodec()
-            logger.info("Audio codec initialized successfully")
-        except Exception as e:
-            logger.warning(f"Could not initialize audio codec: {e}")
-    
-    return True
+    try:
+        model = parakeet_mlx.from_pretrained(model_name)
+        logger.info(f"Model loaded successfully: {type(model).__name__}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        raise
 
 
-def transcribe_audio(audio_data: bytes) -> str:
+def transcribe_audio(audio_data: bytes, temp_suffix: str = '.ogg') -> str:
     """
-    Transcribe audio data to text using Parakeet MLX.
+    Transcribe audio data to text using Parakeet.
     
     Args:
-        audio_data: Raw audio bytes (WAV, MP3, or OGG format)
+        audio_data: Raw audio bytes (WAV, MP3, OGG, etc.)
+        temp_suffix: File extension hint for temp file
     
     Returns:
         Transcribed text string
     """
-    global model, codec
+    global model
     
-    if not HAS_MLX:
-        raise RuntimeError("MLX not available")
+    if model is None:
+        raise RuntimeError("Model not loaded. Call load_parakeet_model() first.")
     
-    # For now, return a placeholder
-    # In production, this would:
-    # 1. Decode audio using AudioCodec
-    # 2. Run through Parakeet model
-    # 3. Return transcription
+    # Detect format from audio_data header if possible
+    if audio_data[:4] == b'RIFF':
+        temp_suffix = '.wav'
+    elif audio_data[:3] == b'Ogg':
+        temp_suffix = '.ogg'
+    elif audio_data[:3] == b'ID3' or audio_data[:2] == b'\xff\xfb':
+        temp_suffix = '.mp3'
     
     # Save to temp file for processing
-    with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=temp_suffix, delete=False) as f:
         f.write(audio_data)
         temp_path = f.name
     
     try:
-        # Actual transcription would happen here
-        # For MLX-accelerated Parakeet:
-        # audio = codec.decode(temp_path)
-        # transcription = model.transcribe(audio)
+        logger.info(f"Transcribing audio file: {temp_path}")
         
-        # Placeholder implementation
-        logger.info(f"Processing audio file: {temp_path}")
+        # Run transcription using parakeet-mlx
+        result = model.transcribe(temp_path)
         
-        # Return empty for now - actual model would return transcription
-        return "Transcription would appear here"
+        # result is an AlignedResult object with .text attribute
+        transcription = result.text.strip()
+        
+        logger.info(f"Transcription complete: '{transcription[:100]}{'...' if len(transcription) > 100 else ''}'")
+        return transcription
+    
     finally:
-        # Cleanup
+        # Cleanup temp file
         Path(temp_path).unlink(missing_ok=True)
 
 
@@ -157,9 +141,9 @@ class ASRHandler(BaseHTTPRequestHandler):
         if self.path == '/health':
             self._send_json_response({
                 'status': 'healthy',
-                'mlx_available': HAS_MLX,
-                'nemo_available': HAS_NEMO,
-                'model_loaded': model is not None
+                'parakeet_available': HAS_PARAKEET,
+                'model_loaded': model is not None,
+                'model_name': model_name
             })
         else:
             self._send_json_response({'error': 'Not found'}, 404)
@@ -182,6 +166,8 @@ class ASRHandler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.error(f"Transcription error: {e}")
+                import traceback
+                traceback.print_exc()
                 self._send_json_response({
                     'error': str(e),
                     'success': False
@@ -192,17 +178,22 @@ class ASRHandler(BaseHTTPRequestHandler):
 
 def main():
     """Start the ASR server."""
-    # Attempt to load model on startup
+    if not HAS_PARAKEET:
+        logger.error("parakeet-mlx is required. Install with: pip install parakeet-mlx")
+        sys.exit(1)
+    
+    # Load model on startup
     try:
         load_parakeet_model()
     except Exception as e:
-        logger.warning(f"Could not preload model: {e}")
+        logger.error(f"Failed to load model on startup: {e}")
         logger.info("Model will be loaded on first transcription request")
     
     server = HTTPServer((ASR_HOST, ASR_PORT), ASRHandler)
     logger.info(f"ASR server running on http://{ASR_HOST}:{ASR_PORT}")
     logger.info(f"Health check: http://{ASR_HOST}:{ASR_PORT}/health")
     logger.info(f"Transcribe endpoint: POST http://{ASR_HOST}:{ASR_PORT}/transcribe")
+    logger.info(f"Model: {model_name or 'not loaded'}")
     
     try:
         server.serve_forever()

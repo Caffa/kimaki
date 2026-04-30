@@ -271,6 +271,25 @@ async function migrateSchema(prisma: PrismaClient): Promise<void> {
     // Defensive migration only; ignore if table shape is not ready yet.
   }
 
+  // Migration: add guild_id column to channel_directories.
+  // This allows filtering channels by Discord guild (server) to avoid
+  // "Missing Access" errors when the bot is in multiple guilds.
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE channel_directories ADD COLUMN guild_id TEXT',
+    )
+  } catch {
+    // Column already exists – expected on subsequent runs
+  }
+
+  // Create index on guild_id for efficient lookups
+  try {
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS channel_directories_guild_id_idx ON channel_directories(guild_id)',
+    )
+  } catch {
+    // Index already exists
+  }
 }
 
 /**

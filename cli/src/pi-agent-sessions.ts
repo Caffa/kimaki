@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { createLogger, LogPrefix } from './logger.js'
+import { expandTilde } from './utils.js'
 
 const PI_AGENT_SESSIONS_DIR = path.join(os.homedir(), '.pi', 'agent', 'sessions')
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
@@ -109,8 +110,10 @@ export async function getPiAgentProjectDirectories(): Promise<Set<string>> {
         for (const jsonlPath of sortedJsonlPaths) {
           const projectPath = parseSessionCwd(jsonlPath)
           if (projectPath) {
+            // Expand tilde to home directory for path validation
+            const expandedPath = expandTilde(projectPath)
             // Verify the directory still exists
-            if (fs.existsSync(projectPath)) {
+            if (fs.existsSync(expandedPath)) {
               projectDirs.add(projectPath)
             }
             break // Found valid cwd, no need to check other files
@@ -162,9 +165,14 @@ export function getLatestSessionTime(projectDirectory: string): number | null {
 
       for (const jsonlPath of sortedJsonlPaths) {
         const cwd = parseSessionCwd(jsonlPath)
-        if (cwd === projectDirectory) {
-          const stat = fs.statSync(jsonlPath)
-          return stat.mtime.getTime()
+        if (cwd) {
+          // Expand tilde before comparison
+          const expandedCwd = expandTilde(cwd)
+          const expandedProjectDir = expandTilde(projectDirectory)
+          if (expandedCwd === expandedProjectDir) {
+            const stat = fs.statSync(jsonlPath)
+            return stat.mtime.getTime()
+          }
         }
       }
     }

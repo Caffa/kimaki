@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Start the bot again and keep it running",
+    "shownAt": "2026-04-11T04:24:11.480Z",
+    "turnId": "a6629ede",
+    "sourceLeafId": "a6629ede",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "d44694c6",
+      "suggestedPrompt": "Yes, start the bot now",
+      "actualUserPrompt": "Yes, start the bot now",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-04-11T04:23:32.831Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

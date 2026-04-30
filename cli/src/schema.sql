@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS "channel_directories" (
     "channel_id" TEXT NOT NULL PRIMARY KEY,
     "directory" TEXT NOT NULL,
     "channel_type" TEXT NOT NULL,
+    "guild_id" TEXT,
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS "bot_api_keys" (
@@ -165,6 +166,7 @@ CREATE TABLE IF NOT EXISTS "ipc_requests" (
 );
 CREATE INDEX "session_events_session_id_timestamp_event_index_id_idx" ON "session_events"("session_id", "timestamp", "event_index", "id");
 CREATE INDEX "session_events_thread_id_timestamp_event_index_id_idx" ON "session_events"("thread_id", "timestamp", "event_index", "id");
+CREATE INDEX "channel_directories_guild_id_idx" ON "channel_directories"("guild_id");
 CREATE INDEX "scheduled_tasks_status_next_run_at_idx" ON "scheduled_tasks"("status", "next_run_at");
 CREATE INDEX "scheduled_tasks_channel_id_status_idx" ON "scheduled_tasks"("channel_id", "status");
 CREATE INDEX "scheduled_tasks_thread_id_status_idx" ON "scheduled_tasks"("thread_id", "status");

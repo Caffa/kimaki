@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run it and test the ASR",
+    "shownAt": "2026-04-09T05:09:51.553Z",
+    "turnId": "d79f0619",
+    "sourceLeafId": "d79f0619",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

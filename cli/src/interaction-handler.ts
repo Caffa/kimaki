@@ -33,6 +33,10 @@ import {
   handleAddProjectAutocomplete,
 } from './commands/add-project.js'
 import {
+  handleLinkVoiceChannelCommand,
+  handleLinkVoiceChannelAutocomplete,
+} from './commands/link-voice-channel.js'
+import {
   handleRemoveProjectCommand,
   handleRemoveProjectAutocomplete,
 } from './commands/remove-project.js'
@@ -150,6 +154,10 @@ export function registerInteractionHandler({
               await handleAddProjectAutocomplete({ interaction, appId })
               return
 
+            case 'link-voice-channel':
+              await handleLinkVoiceChannelAutocomplete({ interaction, appId })
+              return
+
             case 'remove-project':
               await handleRemoveProjectAutocomplete({ interaction, appId })
               return
@@ -237,6 +245,10 @@ export function registerInteractionHandler({
                 command: interaction,
                 appId,
               })
+              return
+
+            case 'link-voice-channel':
+              await handleLinkVoiceChannelCommand({ command: interaction, appId })
               return
 
             case 'abort':
