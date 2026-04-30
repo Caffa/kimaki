@@ -43,10 +43,18 @@ import {
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
+import { handleAddDirCommand } from './commands/add-dir.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
-import { handleForkCommand, handleForkSelectMenu } from './commands/fork.js'
+import {
+  handleForkCommand,
+  handleForkSelectMenu,
+} from './commands/fork.js'
+import {
+  handleForkSubagentCommand,
+  handleForkSubagentSelectMenu,
+} from './commands/fork-subagent.js'
 import { handleBtwCommand } from './commands/btw.js'
 import {
   handleModelCommand,
@@ -105,6 +113,7 @@ import {
   handleScreenshareCommand,
   handleScreenshareStopCommand,
 } from './commands/screenshare.js'
+import { handleVscodeCommand } from './commands/vscode.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -255,6 +264,10 @@ export function registerInteractionHandler({
               await handleAbortCommand({ command: interaction, appId })
               return
 
+            case 'add-dir':
+              await handleAddDirCommand({ command: interaction, appId })
+              return
+
             case 'compact':
               await handleCompactCommand({ command: interaction, appId })
               return
@@ -269,6 +282,10 @@ export function registerInteractionHandler({
 
             case 'fork':
               await handleForkCommand(interaction)
+              return
+
+            case 'fork-subagent':
+              await handleForkSubagentCommand(interaction)
               return
 
             case 'btw':
@@ -360,6 +377,10 @@ export function registerInteractionHandler({
                 command: interaction,
                 appId,
               })
+              return
+
+            case 'vscode':
+              await handleVscodeCommand({ command: interaction, appId })
               return
           }
 
@@ -460,6 +481,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('fork_select:')) {
             await handleForkSelectMenu(interaction)
+            return
+          }
+
+          if (customId.startsWith('fork_subagent_select:')) {
+            await handleForkSubagentSelectMenu(interaction)
             return
           }
 
