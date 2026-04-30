@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "45442e0a",
+    "suggestionShownAt": "2026-04-09T12:44:46.023Z",
+    "userPromptSubmittedAt": "2026-04-09T12:46:41.529Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "4470c565",
+      "suggestedPrompt": "run the asr server and test it",
+      "actualUserPrompt": "Use /Users/caffae/Desktop/audio_2026-04-09_20-35-46.wav for an end to end test",
+      "classification": "changed_course",
+      "similarity": 0.18840579710144928,
+      "timestamp": "2026-04-09T12:43:55.927Z"
+    },
+    {
+      "turnId": "45442e0a",
+      "suggestedPrompt": "restart the bot services with the fixed ASR",
+      "actualUserPrompt": "This is good. Can you also just check against the previous version of the code before we merged in the updates from the original project? Because our project is a fork of that project. Because at that time, the ASR server was working correctly. So after we merged, the ASR server stopped working. And now I just need you to check over the integration by comparing with the previous working version. You might need to go a bit behind the git tree.",
+      "classification": "changed_course",
+      "similarity": 0.10607039070067807,
+      "timestamp": "2026-04-09T12:46:41.529Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

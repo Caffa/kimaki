@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Check if the API key is set correctly",
+    "shownAt": "2026-04-09T06:28:24.526Z",
+    "turnId": "08a49e6f",
+    "sourceLeafId": "08a49e6f",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

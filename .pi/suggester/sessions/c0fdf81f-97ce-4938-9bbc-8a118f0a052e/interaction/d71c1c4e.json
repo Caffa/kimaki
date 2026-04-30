@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Yes, how do I give the bot View Channels permission in Discord?",
+    "shownAt": "2026-04-11T04:56:42.908Z",
+    "turnId": "d71c1c4e",
+    "sourceLeafId": "d71c1c4e",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "35f1727b",
+      "suggestedPrompt": "Yes, filter by guild ID in the database query",
+      "actualUserPrompt": "Yes do filter by guild ID but also How do I fix it so that bot has permission to see?",
+      "classification": "changed_course",
+      "similarity": 0.37792642140468224,
+      "timestamp": "2026-04-11T04:32:02.705Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 3
+}

@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run it with parakeet-mlx",
+    "shownAt": "2026-04-09T12:41:53.941Z",
+    "turnId": "f2e9efaf",
+    "sourceLeafId": "f2e9efaf",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 2
+}

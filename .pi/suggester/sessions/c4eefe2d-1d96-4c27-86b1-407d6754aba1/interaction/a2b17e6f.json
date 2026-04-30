@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "started fresh, still seeing the warnings",
+    "shownAt": "2026-04-09T06:02:45.360Z",
+    "turnId": "a2b17e6f",
+    "sourceLeafId": "a2b17e6f",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "5498bbd4",
+      "suggestedPrompt": "Testing it now, will share the logs",
+      "actualUserPrompt": "■  13:59 OPENCODE WARN  2026-04-09T05:59:38 +2284ms service=blob-office Port 2727 already in use — connecting to existing server as client",
+      "classification": "changed_course",
+      "similarity": 0.1111111111111111,
+      "timestamp": "2026-04-09T05:59:47.857Z"
+    },
+    {
+      "turnId": "bce493e8",
+      "suggestedPrompt": "Yes, the visualizer opened. Thanks for the help.",
+      "actualUserPrompt": "I don't see other warnings besides:\n■  14:00 OPENCODE WARN  2026-04-09T06:00:35 +811ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +101ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +26ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +35ms service=skill name=last30days existing=/Users/caffae/.claude/skills/last30days/variants/open/SKILL.md duplicate=/Users/caffae/.claude/skills/last30days/SKILL.md duplicate skill name\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +47ms service=blob-office Port 2727 already in use — connecting to existing server as client\n│  14:00 CHANNEL  Default kimaki channel already exists: 1491674631940210728\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +84ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +86ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +90ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +87ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +76ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +92ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +75ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +77ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +36ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:36 +80ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +83ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +83ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +97ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +93ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +85ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +83ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE WARN  2026-04-09T06:00:37 +78ms service=blob-office Port 2727 already in use — connecting to existing server as client\n■  14:00 OPENCODE ERROR 2026-04-09T06:00:38 +927ms service=mcp clientName=context7 error=MCP error -32601: Method not found failed to get prompts\n\nis there a way to suppress? What happens with this warning? Can we test that if we quit all opencode and kimaki instances, that we don't see this?",
+      "classification": "changed_course",
+      "similarity": 0.012510662496445835,
+      "timestamp": "2026-04-09T06:01:32.510Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

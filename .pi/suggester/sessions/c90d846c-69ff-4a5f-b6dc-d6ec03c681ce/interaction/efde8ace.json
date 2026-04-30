@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "rebuild and test project list",
+    "shownAt": "2026-04-09T06:11:38.781Z",
+    "turnId": "efde8ace",
+    "sourceLeafId": "efde8ace",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "64fc034c",
+      "suggestedPrompt": "run it with the current directory",
+      "actualUserPrompt": "I want to build and run the compiled version, can we link kimaki command to the local version?",
+      "classification": "changed_course",
+      "similarity": 0.21011189390799834,
+      "timestamp": "2026-04-09T06:09:49.082Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 3
+}

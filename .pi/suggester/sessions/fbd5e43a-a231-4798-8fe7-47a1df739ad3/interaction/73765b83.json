@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Add them to gitignore",
+    "shownAt": "2026-04-09T06:06:35.935Z",
+    "turnId": "73765b83",
+    "sourceLeafId": "73765b83",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Let me try adding the project again.",
+    "shownAt": "2026-04-10T10:28:52.220Z",
+    "turnId": "6dc6cc6d",
+    "sourceLeafId": "6dc6cc6d",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "f82ecc06",
+    "suggestionShownAt": "2026-04-09T06:29:25.781Z",
+    "userPromptSubmittedAt": "2026-04-09T06:32:08.331Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "f82ecc06",
+      "suggestedPrompt": "implement the fix",
+      "actualUserPrompt": "Implement the fix. \n\nCan we also set a default voice channel in \"/Users/caffae/Local-Projects-2026\" that acts the same as the general channel for misc tasks with kimaki text channel?",
+      "classification": "changed_course",
+      "similarity": 0.13986584481508338,
+      "timestamp": "2026-04-09T06:32:08.331Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

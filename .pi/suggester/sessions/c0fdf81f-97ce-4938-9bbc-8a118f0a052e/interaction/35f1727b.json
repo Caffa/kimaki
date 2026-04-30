@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "35f1727b",
+    "suggestionShownAt": "2026-04-11T04:28:57.811Z",
+    "userPromptSubmittedAt": "2026-04-11T04:32:02.705Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "35f1727b",
+      "suggestedPrompt": "Yes, filter by guild ID in the database query",
+      "actualUserPrompt": "Yes do filter by guild ID but also How do I fix it so that bot has permission to see?",
+      "classification": "changed_course",
+      "similarity": 0.37792642140468224,
+      "timestamp": "2026-04-11T04:32:02.705Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

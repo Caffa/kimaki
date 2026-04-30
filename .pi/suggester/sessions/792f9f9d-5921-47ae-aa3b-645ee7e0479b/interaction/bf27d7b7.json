@@ -1,0 +1,39 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Test the bot in Discord",
+    "shownAt": "2026-04-09T05:43:04.274Z",
+    "turnId": "bf27d7b7",
+    "sourceLeafId": "bf27d7b7",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "5189b253",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "~/Local-Projects-2026/kimaki integrate-upstream-features*\nbase \" pnpm --filter kimaki dev\n\n> kimaki@0.4.97 dev /Users/caffae/Local-Projects-2026/kimaki/cli\n> tsx src/bin.ts\n\nno subcommand detected. kimaki will automatically restart on crash\n\n│  13:10 CLI      Started caffeinate to prevent system sleep\n│  13:10 DB       Starting hrana server on 127.0.0.1:29988 with db: /Users/caffae/.kimaki/discord-sessions.db\n│  13:10 DB       Hrana server ready at http://127.0.0.1:29988\n│  13:10 DB       Opening database via: file:/Users/caffae/.kimaki/discord-sessions.db\n│  13:10 DB       Running schema migrations...\n│  13:10 DB       Schema migration complete\n│  13:10 DB       Database initialized\n│\n◇  Existing Bot Found ──────────────────────────────────────────╮\n│                                                               │\n│  Using saved bot credentials (gateway mode):                  │\n│  App ID: 1477605701202481173                                  │\n│                                                               │\n│  To use different credentials, run with --restart-onboarding  │\n│                                                               │\n├───────────────────────────────────────────────────────────────╯\n│  13:10 CLI      Starting OpenCode server...\n│  13:10 OPENCODE Registering process cleanup handlers for opencode server\n\n╔══════════════════════════════════════════════════════════════════════════════════════╣\n│                                                                           │\n│ ██╗      ██████╗  ██████╗ █████╗ ██╗                                     │\n│ ██║     ██╔═══██╗██╔════╝██╔══██╗██║                                     │\n│ ██║     ██║   ██║██║     ███████║██║                                     │\n│ ██║     ██║   ██║██║     ██╔══██║██║                                     │\n│ ███████╗╚██████╔╝╚██████╗██║  ██║███████╗                                │\n│ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝                                │\n│                                                                          │\n│ ██╗   ██╗ ██████╗ ██╗ ██████╗███████╗                                    │\n│ ██║   ██║██╔═══██╗██║██╔════╝██╔════╝                                    │\n│ ██║   ██║██║   ██║██║██║     █████╗                                      │\n│ ╚██╗ ██╔╝██║   ██║██║██║     ██╔══╝                                      │\n│  ╚████╔╝ ╚██████╔╝██║╚██████╗███████╗                                    │\n│   ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝                                    │\n│                                                                          │\n│                                                                           │\n│                    ★ L O C A L   T R A N S C R I P T I O N ★              │\n│                         V A R I A N T   O F   K I M A K I                 │\n│                                                                           │\n│   Features:                                                               │\n│   • Parakeet MLX (Apple Silicon) - Local NVIDIA Parakeet via MLX         │\n│   • vLLM Whisper (GPU/CPU)   - OpenAI-compatible Whisper transcription   │\n│   • Fallback chain: Parakeet → vLLM → OpenAI → Gemini                    │\n│                                                                           │\n╚════════════════════════════════════════════════════════════════════════════════║\n\n│  13:10 CLI      Connecting to https://discord-gateway.kimaki.xyz/api...\n│  13:10 OPENCODE Resolved opencode binary: /opt/homebrew/bin/opencode\n│  13:10 CLI      Failed to connect to Discord null\n■  13:10 CLI      Error: SocketError: other side closed\n│      at TLSSocket.onHttpSocketEnd (node:internal/deps/undici/undici:7635:26)\n│      at TLSSocket.emit (node:events:520:22)\n│      at endReadableNT (node:internal/streams/readable:1729:12)\n│      at process.processTicksAndRejections (node:internal/process/task_queues:90:21)\n│  13:10 OPENCODE [cleanup:process-exit] Sent SIGTERM to starting opencode server (pid: 84612)\n/Users/caffae/Local-Projects-2026/kimaki/cli:\n ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  kimaki@0.4.97 dev: `tsx src/bin.ts`\nExit status 64",
+      "classification": "changed_course",
+      "similarity": 0.0029662588060808304,
+      "timestamp": "2026-04-09T05:10:48.906Z"
+    },
+    {
+      "turnId": "6241fc4b",
+      "suggestedPrompt": "Use self-hosted mode",
+      "actualUserPrompt": "Run locally with self-hosted mode",
+      "classification": "changed_course",
+      "similarity": 0.5539083557951482,
+      "timestamp": "2026-04-09T05:39:35.933Z"
+    },
+    {
+      "turnId": "0821c0fe",
+      "suggestedPrompt": "Yes, I have a bot token",
+      "actualUserPrompt": "Yes. ### Discord Bot Details - Kimaki \n\nApplication ID: `1486964647541084190`\nBot Token: `REDACTED_BOT_TOKEN`\n\nClient ID: `1486964647541084190`\n\nInvite URL: `https://discord.com/oauth2/authorize?client_id=1486964647541084190&permissions=8845561955875440&integration_type=0&scope=bot+applications.commands` (already invited bot to server)\n\nMy User ID: `141798255112617984`\n\nServer ID: `1486966847810043924`",
+      "classification": "changed_course",
+      "similarity": 0.07837750484809308,
+      "timestamp": "2026-04-09T05:41:07.315Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

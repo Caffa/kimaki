@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "a14dcade",
+    "suggestionShownAt": "2026-04-30T05:42:36.485Z",
+    "userPromptSubmittedAt": "2026-04-30T05:44:03.391Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a14dcade",
+      "suggestedPrompt": "run those fix commands",
+      "actualUserPrompt": "run those fix commands. Just to confirm, I want the local version of kimaki in this folder. We can update this fork with updates from the original repository https://github.com/remorses/kimaki but I want to keep my local ASR (parakeet-mlx) and the banner and the project directory hardcoded.",
+      "classification": "changed_course",
+      "similarity": 0.11906802774098028,
+      "timestamp": "2026-04-30T05:44:03.391Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

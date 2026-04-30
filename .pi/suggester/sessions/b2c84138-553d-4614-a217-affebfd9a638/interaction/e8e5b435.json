@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "rebuild and reinstall it",
+    "shownAt": "2026-04-10T08:30:11.050Z",
+    "turnId": "e8e5b435",
+    "sourceLeafId": "e8e5b435",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

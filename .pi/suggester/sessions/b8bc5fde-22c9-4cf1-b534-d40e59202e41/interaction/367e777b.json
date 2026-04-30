@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Go with option 2",
+    "shownAt": "2026-04-09T05:52:16.201Z",
+    "turnId": "367e777b",
+    "sourceLeafId": "367e777b",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

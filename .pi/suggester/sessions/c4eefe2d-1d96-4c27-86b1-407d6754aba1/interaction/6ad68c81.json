@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "let me restart and check if it works now",
+    "shownAt": "2026-04-09T05:58:06.292Z",
+    "turnId": "6ad68c81",
+    "sourceLeafId": "6ad68c81",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Push to origin",
+    "shownAt": "2026-04-09T06:41:43.624Z",
+    "turnId": "0e03247c",
+    "sourceLeafId": "0e03247c",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "23bb398e",
+      "suggestedPrompt": "Go ahead and implement this plan",
+      "actualUserPrompt": "Implement. Do add a cache.",
+      "classification": "changed_course",
+      "similarity": 0.25689655172413794,
+      "timestamp": "2026-04-09T06:25:38.987Z"
+    },
+    {
+      "turnId": "265ab4da",
+      "suggestedPrompt": "Commit it.",
+      "actualUserPrompt": "Commit it.\nAlso test why I don't see ~/Local-Projects-2026/kimaki when I run add-project (I see some subfolder paths instead)",
+      "classification": "changed_course",
+      "similarity": 0.12169312169312169,
+      "timestamp": "2026-04-09T06:34:33.377Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

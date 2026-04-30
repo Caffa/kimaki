@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Will test now.",
+    "shownAt": "2026-04-10T10:30:37.214Z",
+    "turnId": "fb753eed",
+    "sourceLeafId": "fb753eed",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 2
+}

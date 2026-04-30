@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Test the add-project command in discord",
+    "shownAt": "2026-04-09T06:28:18.806Z",
+    "turnId": "54a0cb6e",
+    "sourceLeafId": "54a0cb6e",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "23bb398e",
+      "suggestedPrompt": "Go ahead and implement this plan",
+      "actualUserPrompt": "Implement. Do add a cache.",
+      "classification": "changed_course",
+      "similarity": 0.25689655172413794,
+      "timestamp": "2026-04-09T06:25:38.987Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}
