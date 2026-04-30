@@ -27,6 +27,16 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "@parcel/watcher",
+      "sharp",
+      "workerd",
+      "msgpackr-extract",
+      "node-opus",
+      "ref",
+      "protobufjs",
       "@discordjs/opus"
     ]
   }
