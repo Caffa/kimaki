@@ -23,14 +23,16 @@ export function isAppleSilicon(): boolean {
 function getAsrServicePath(): string | null {
   // Try multiple possible locations
   const possiblePaths = [
-    // Running from source (discord/src/)
+    // Running from source root (cwd = repo root)
     path.join(process.cwd(), 'asr-service'),
-    // Running from compiled (discord/)
+    // Running from source (cwd = cli/)
     path.join(process.cwd(), '..', 'asr-service'),
-    // Running from npm-linked package
+    // Running from compiled dist (cli/dist/) — asr-service is at repo root
+    path.join(__dirname, '..', '..', 'asr-service'),
+    // Running from npm-linked package where asr-service is bundled alongside
     path.join(__dirname, '..', 'asr-service'),
     // Running from global npm
-    path.join(__dirname, '..', '..', 'asr-service'),
+    path.join(__dirname, '..', '..', '..', 'asr-service'),
   ]
 
   for (const p of possiblePaths) {

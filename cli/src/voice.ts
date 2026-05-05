@@ -33,6 +33,7 @@ import {
   NoToolResponseError,
 } from './errors.js'
 import { getVLLMBaseUrl, checkVLLMServiceRunning } from './vllm-service-manager.js'
+import { startAsrService, shouldAutoStartAsr } from './asr-service-manager.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -694,7 +695,22 @@ export async function transcribeAudio({
 
   // Handle Parakeet (local ASR) provider
   if (resolvedProvider === 'parakeet') {
-    return transcribeWithParakeet({ audio, prompt, mediaType: mediaTypeParam })
+    const result = await transcribeWithParakeet({ audio, prompt, mediaType: mediaTypeParam })
+    // Auto-restart parakeet service on connection failure, then retry once
+    if (
+      result instanceof TranscriptionError &&
+      shouldAutoStartAsr() &&
+      String(result.reason).includes('not running')
+    ) {
+      voiceLogger.log('Parakeet service not running, attempting auto-restart...')
+      const restarted = await startAsrService()
+      if (restarted) {
+        voiceLogger.log('Parakeet service restarted, retrying transcription')
+        return transcribeWithParakeet({ audio, prompt, mediaType: mediaTypeParam })
+      }
+      voiceLogger.warn('Failed to auto-restart parakeet service')
+    }
+    return result
   }
 
   // Handle vLLM Whisper provider
