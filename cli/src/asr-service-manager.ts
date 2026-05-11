@@ -2,7 +2,12 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createLogger, LogPrefix } from './logger.js'
+
+// ESM-compatible __dirname equivalent
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const asrLogger = createLogger(LogPrefix.ASR)
 
