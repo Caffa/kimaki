@@ -59,6 +59,8 @@ import {
   ensureKimakiAudioCategory,
   createProjectChannels,
   getChannelsWithDescriptions,
+  createDefaultKimakiVoiceChannel,
+  linkVoiceChannelToDirectory,
   type ChannelWithTags,
 } from './channel-management.js'
 import {
@@ -112,6 +114,8 @@ export {
   ensureKimakiAudioCategory,
   createProjectChannels,
   createDefaultKimakiChannel,
+  createDefaultKimakiVoiceChannel,
+  linkVoiceChannelToDirectory,
   getChannelsWithDescriptions,
 } from './channel-management.js'
 export type { ChannelWithTags } from './channel-management.js'
