@@ -156,7 +156,7 @@ All 4 submodules accepted from upstream:
 - **Strategy**: Rebase-onto (clean `upstream/main` + re-applied local customizations)
 - **Prisma → Drizzle migration**: Completed for `voice-handler.ts`
 - **Customizations re-applied**: All 10 areas documented above
-- **Status**: 🔄 In progress — pending build & test verification
+- **Status**: ✅ Complete — build passes, unit tests green, all customizations verified
 
 ---
 
