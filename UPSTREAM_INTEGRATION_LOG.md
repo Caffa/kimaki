@@ -33,7 +33,7 @@ These are changes that exist only in our fork and must be re-applied after each 
 | `asr-service/requirements.txt` | 3 | Python deps (`parakeet-mlx`, etc.) |
 | `asr-service/README.md` | 156 | Setup instructions for Parakeet |
 | `asr-service/.gitignore` | 2 | Excludes `__pycache__/` |
-| `cli/src/asr-service-manager.ts` | 169 | TS lifecycle manager: start/stop/health-check Parakeet |
+| `cli/src/asr-service-manager.ts` | 174 | TS lifecycle manager: start/stop/health-check Parakeet. Uses `fileURLToPath(import.meta.url)` for ESM-compatible path resolution. |
 | `cli/src/vllm-service-manager.ts` | 205 | TS lifecycle manager: start/stop/health-check vLLM Whisper |
 
 ### 2. Voice transcription provider extensions (`cli/src/voice.ts`)
