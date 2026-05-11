@@ -70,6 +70,7 @@ import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import { type ParsedSendAt } from './task-schedule.js'
 import { store } from './store.js'
 import { registerCommands, SKIP_USER_COMMANDS } from './discord-command-registration.js'
+import figlet from 'figlet'
 
 export const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -1483,6 +1484,37 @@ export async function run({
     }
     return true
   })()
+
+  // LOCAL VOICE BANNER
+  // ═══════════════════════════════════════════════════════════════════════════
+  const showLocalTranscriptionBanner = () => {
+    const bigText = figlet.textSync('LOCAL\nVOICE', { font: 'ANSI Shadow' })
+    const totalWidth = 75
+    const lines = bigText.split('\n')
+    const borderedLines = lines.map(line => {
+      const paddedLine = line.padEnd(totalWidth - 2)
+      return `\u2502 ${paddedLine}\u2502`
+    })
+
+    const banner = `
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2563
+\u2502                                                                           \u2502
+${borderedLines.join('\n')}
+\u2502                                                                           \u2502
+\u2502                    \u2605 L O C A L   T R A N S C R I P T I O N \u2605              \u2502
+\u2502                         V A R I A N T   O F   K I M A K I                 \u2502
+\u2502                                                                           \u2502
+\u2502   Features:                                                               \u2502
+\u2502   \u2022 Parakeet MLX (Apple Silicon) - Local NVIDIA Parakeet via MLX         \u2502
+\u2502   \u2022 vLLM Whisper (GPU/CPU)   - OpenAI-compatible Whisper transcription   \u2502
+\u2502   \u2022 Fallback chain: Parakeet \u2192 vLLM \u2192 OpenAI \u2192 Gemini                    \u2502
+\u2502                                                                           \u2502
+\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2551
+`
+    console.log(banner)
+  }
+
+  showLocalTranscriptionBanner()
 
   cliLogger.log(`Connecting to ${getDiscordRestApiUrl()}...`)
   const discordClient = await createDiscordClient()
