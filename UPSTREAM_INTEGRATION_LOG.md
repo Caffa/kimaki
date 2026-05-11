@@ -94,11 +94,13 @@ Local dev fork disables background auto-upgrade when running via `npm link`. Det
 
 ### 9. CLI startup changes (`cli/src/cli.ts`)
 
-No changes needed for this integration (auto-upgrade guard is in `upgrade.ts` which `cli-runner.ts` already imports).
+The `--enable-voice-channels` flag already exists in upstream's `cli.ts`.
+
+The figlet "LOCAL VOICE" startup banner from our old branch was **not** re-applied — it was purely cosmetic and required adding `figlet` as a dependency. Can be re-added in a future commit if desired.
 
 ### 10. Config changes (`cli/src/config.ts`)
 
-No changes needed for this integration (parakeet default logic is in `voice.ts`).
+No changes needed for this integration. Parakeet default logic is in `voice.ts` (checked via `process.env.ASR_PROVIDER` and `process.platform`).
 
 ### 11. Personal files (non-code)
 
