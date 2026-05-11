@@ -85,6 +85,16 @@ import {
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
 } from './external-opencode-sync.js'
+import {
+  startAsrService,
+  stopAsrService,
+  shouldAutoStartAsr,
+} from './asr-service-manager.js'
+import {
+  startVLLMService,
+  stopVLLMService,
+  shouldAutoStartVLLM,
+} from './vllm-service-manager.js'
 
 export {
   initDatabase,
@@ -1256,6 +1266,20 @@ export async function startDiscordBot({
   const stopTaskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
 
+  // Start ASR/vLLM services if configured + running on Apple Silicon
+  if (shouldAutoStartAsr()) {
+    voiceLogger.log('[ASR] Auto-starting Parakeet ASR service (Apple Silicon detected)')
+    await startAsrService().catch((e) => {
+      voiceLogger.error('[ASR] Failed to start ASR service:', e)
+    })
+  }
+  if (shouldAutoStartVLLM()) {
+    voiceLogger.log('[ASR] Auto-starting vLLM Whisper service')
+    await startVLLMService().catch((e) => {
+      voiceLogger.error('[ASR] Failed to start vLLM service:', e)
+    })
+  }
+
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
@@ -1303,6 +1327,10 @@ export async function startDiscordBot({
       voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
       stopExternalOpencodeSessionSync()
       await stopOpencodeServer()
+
+      // Stop ASR and vLLM services
+      stopAsrService()
+      stopVLLMService()
 
       discordLogger.log('Closing database...')
       await closeDatabase()

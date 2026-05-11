@@ -34,6 +34,12 @@ import {
   getTranscriptionApiKey,
   findTextChannelByVoiceChannel,
 } from './database.js'
+import { getDb } from './db.js'
+import {
+  startAsrService,
+  stopAsrService,
+  shouldAutoStartAsr,
+} from './asr-service-manager.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -181,6 +187,71 @@ export async function setupVoiceHandling({
     voiceLogger.log(
       `Voice channel ${channelId} has no associated directory, skipping setup`,
     )
+
+    // Try to notify the user that this voice channel needs configuration
+    let notified = false
+
+    // First try: find a text channel linked to this voice channel
+    const textChannelId = await findTextChannelByVoiceChannel(channelId)
+    if (textChannelId) {
+      try {
+        const textChannel = await discordClient.channels.fetch(textChannelId)
+        if (textChannel?.isTextBased() && 'send' in textChannel) {
+          await textChannel.send({
+            content:
+              '⚠️ This voice channel is not linked to a project directory. Use `/add-project` to link it, or join a configured voice channel.',
+            flags: NOTIFY_MESSAGE_FLAGS,
+          })
+          notified = true
+        }
+      } catch (e) {
+        voiceLogger.error('Failed to send voice channel not configured message:', e)
+      }
+    }
+
+    // Second try: find any kimaki-related text channel in the same guild
+    if (!notified) {
+      try {
+        const voiceChannel = await discordClient.channels.fetch(channelId)
+        if (
+          voiceChannel?.isVoiceBased() &&
+          'guild' in voiceChannel &&
+          voiceChannel.guild
+        ) {
+          const guildId = voiceChannel.guild.id
+          const db = await getDb()
+          const textChannels = await db.query.channel_directories.findMany({
+            where: { channel_type: 'text' },
+            columns: { channel_id: true },
+            limit: 1,
+          })
+          for (const row of textChannels) {
+            try {
+              const ch = await discordClient.channels.fetch(row.channel_id)
+              if (
+                ch?.isTextBased() &&
+                'send' in ch &&
+                'guild' in ch &&
+                ch.guild?.id === guildId
+              ) {
+                await ch.send({
+                  content:
+                    '⚠️ Voice channel not configured. Please use `/add-project` with `--enable-voice` to link a voice channel to a project directory.',
+                  flags: NOTIFY_MESSAGE_FLAGS,
+                })
+                notified = true
+                break
+              }
+            } catch {
+              // Channel may not exist or be in this guild
+            }
+          }
+        }
+      } catch (e) {
+        voiceLogger.error('Failed to send notification to fallback channel:', e)
+      }
+    }
+
     return
   }
 
@@ -571,55 +642,69 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  // Resolve transcription provider and API key.
+  // On Apple Silicon, parakeet is the default provider (no API key needed).
+  // transcribeAudio() handles this internally when no provider/apiKey is passed.
+  // Only pass cloud provider/key when parakeet is unavailable or explicitly overridden.
+  const asrEnv = process.env.ASR_PROVIDER?.toLowerCase()
+  const parakeetDefault =
+    process.platform === 'darwin' &&
+    process.arch === 'arm64' &&
+    asrEnv !== 'openai' &&
+    asrEnv !== 'gemini' &&
+    asrEnv !== 'vllm'
+
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
-  if (appId) {
-    const stored = await getTranscriptionApiKey(appId)
-    if (stored) {
-      transcriptionApiKey = stored.apiKey
-      transcriptionProvider = stored.provider
-    }
-  }
-  if (!transcriptionApiKey) {
-    if (process.env.OPENAI_API_KEY) {
-      transcriptionApiKey = process.env.OPENAI_API_KEY
-      transcriptionProvider = 'openai'
-    } else if (process.env.GEMINI_API_KEY) {
-      transcriptionApiKey = process.env.GEMINI_API_KEY
-      transcriptionProvider = 'gemini'
-    }
-  }
 
-  if (!transcriptionApiKey) {
+  if (!parakeetDefault) {
     if (appId) {
-      const button = new ButtonBuilder()
-        .setCustomId(`transcription_apikey:${appId}`)
-        .setLabel('Set Transcription API Key')
-        .setStyle(ButtonStyle.Primary)
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
-
-      await thread.send({
-        content:
-          'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
-        components: [row],
-        flags: SILENT_MESSAGE_FLAGS,
-      })
-    } else {
-      await sendThreadMessage(
-        thread,
-        'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
-      )
+      const stored = await getTranscriptionApiKey(appId)
+      if (stored) {
+        transcriptionApiKey = stored.apiKey
+        transcriptionProvider = stored.provider
+      }
     }
-    return null
+    if (!transcriptionApiKey) {
+      if (process.env.OPENAI_API_KEY) {
+        transcriptionApiKey = process.env.OPENAI_API_KEY
+        transcriptionProvider = 'openai'
+      } else if (process.env.GEMINI_API_KEY) {
+        transcriptionApiKey = process.env.GEMINI_API_KEY
+        transcriptionProvider = 'gemini'
+      }
+    }
+
+    if (!transcriptionApiKey) {
+      if (appId) {
+        const button = new ButtonBuilder()
+          .setCustomId(`transcription_apikey:${appId}`)
+          .setLabel('Set Transcription API Key')
+          .setStyle(ButtonStyle.Primary)
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
+
+        await thread.send({
+          content:
+            'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
+          components: [row],
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+      } else {
+        await sendThreadMessage(
+          thread,
+          'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
+        )
+      }
+      return null
+    }
   }
 
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
+    apiKey: parakeetDefault ? undefined : transcriptionApiKey,
+    provider: parakeetDefault ? undefined : transcriptionProvider,
     mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,

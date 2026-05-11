@@ -2,8 +2,12 @@
 // Detects the package manager used to install kimaki, checks npm for newer versions,
 // and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
+//
+// Background auto-upgrade is DISABLED when running via npm link (local dev fork)
+// to prevent accidentally overwriting local development changes.
 
 import fs from 'node:fs'
+import path from 'node:path'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
 import { execAsync } from './worktrees.js'
@@ -109,7 +113,14 @@ export async function upgrade(): Promise<string | null> {
 
 // Fire-and-forget background upgrade check on bot startup.
 // Only upgrades if a newer version is available. Errors are silently ignored.
+// DISABLED when running via npm link (local dev fork).
 export async function backgroundUpgradeKimaki(): Promise<void> {
+  // Skip auto-upgrade when running via npm link (local dev fork)
+  if (isNpmLinked()) {
+    logger.debug('Skipping background upgrade: running via npm link (local dev fork)')
+    return
+  }
+
   try {
     const current = getCurrentVersion()
     const latest = await getLatestNpmVersion()
@@ -123,5 +134,35 @@ export async function backgroundUpgradeKimaki(): Promise<void> {
     logger.debug(`Background kimaki upgrade completed: v${latest}`)
   } catch {
     // silently ignored, non-critical
+  }
+}
+
+/**
+ * Detect if kimaki is running via `npm link` (local dev fork) rather than
+ * a regular global install from npm. When running via npm link, the global
+ * node_modules has a symlink pointing back to the local source tree.
+ * We detect this by resolving the real path of the running script and checking
+ * for a .git directory nearby, which only exists in development checkouts.
+ */
+export function isNpmLinked(): boolean {
+  try {
+    const script = process.argv[1]
+    if (!script) return false
+    const resolved = fs.realpathSync(script)
+    // If the real path differs from the argv path, it's a symlink
+    if (resolved !== script) {
+      // Check if the resolved path is inside a git repo
+      // by walking up to find a .git directory
+      let dir = path.dirname(resolved)
+      while (dir !== path.dirname(dir)) {
+        if (fs.existsSync(path.join(dir, '.git'))) {
+          return true
+        }
+        dir = path.dirname(dir)
+      }
+    }
+    return false
+  } catch {
+    return false
   }
 }

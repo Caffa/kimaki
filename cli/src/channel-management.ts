@@ -7,6 +7,7 @@ import {
   type CategoryChannel,
   type Guild,
   type TextChannel,
+  type VoiceChannel,
 } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -330,4 +331,65 @@ export async function createDefaultKimakiChannel({
     channelName,
     projectDirectory,
   }
+}
+
+/** Create a default voice channel under the Kimaki audio category. */
+export async function createDefaultKimakiVoiceChannel({
+  guild,
+  kimakiAudioCategory,
+  projectDirectory,
+}: {
+  guild: Guild
+  kimakiAudioCategory: CategoryChannel | null
+  projectDirectory: string
+}): Promise<{ voiceChannel: VoiceChannel; channelId: string } | null> {
+  if (!kimakiAudioCategory) {
+    logger.warn('No Kimaki audio category available for voice channel creation')
+    return null
+  }
+
+  const channelName = (() => {
+    const base = path.basename(projectDirectory)
+    const sanitized = base
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+    if (!sanitized || sanitized === 'kimaki') {
+      return 'kimaki-voice'
+    }
+    return `${sanitized}-voice`.slice(0, 100)
+  })()
+
+  const voiceChannel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildVoice,
+    parent: kimakiAudioCategory,
+  })
+
+  await setChannelDirectory({
+    channelId: voiceChannel.id,
+    directory: projectDirectory,
+    channelType: 'voice',
+  })
+
+  logger.log(`Created default kimaki voice channel: #${channelName} (${voiceChannel.id})`)
+
+  return { voiceChannel, channelId: voiceChannel.id }
+}
+
+/** Link an existing voice channel to a project directory. */
+export async function linkVoiceChannelToDirectory({
+  channelId,
+  directory,
+}: {
+  channelId: string
+  directory: string
+}): Promise<void> {
+  await setChannelDirectory({
+    channelId,
+    directory,
+    channelType: 'voice',
+  })
+  logger.log(`Linked voice channel ${channelId} to directory ${directory}`)
 }

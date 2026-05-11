@@ -509,6 +509,13 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('link-voice-channel')
+      .setDescription(
+        truncateCommandDescription('Link a voice channel to a project directory for voice assistant'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('mcp')
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
       .setDMPermission(false)
