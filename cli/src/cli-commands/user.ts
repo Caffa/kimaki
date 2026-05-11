@@ -140,7 +140,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const port = options.port ? parseInt(options.port, 10) : undefined
+      const port = options.port ? parseInt(options.port, 10) : 8080
       if (options.port && (!port || port < 1 || port > 65535)) {
         cliLogger.error(`Error: Invalid port number: ${options.port}`)
         process.exit(EXIT_NO_RESTART)
