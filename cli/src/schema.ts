@@ -69,6 +69,15 @@ export const channel_directories = sqliteCore.sqliteTable('channel_directories',
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+// Stores the default parent directory for a Discord server (guild).
+// When a new channel is created in this guild, a subfolder will be created
+// in this parent directory and mapped to the new channel.
+export const guild_default_directories = sqliteCore.sqliteTable('guild_default_directories', {
+  guild_id: sqliteCore.text('guild_id').primaryKey().notNull(),
+  parent_directory: sqliteCore.text('parent_directory').notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   app_id: sqliteCore.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
   gemini_api_key: sqliteCore.text('gemini_api_key'),
@@ -225,6 +234,7 @@ export const relations = defineRelations({
   session_start_sources,
   forum_sync_configs,
   ipc_requests,
+  guild_default_directories,
 }, (r) => ({
   thread_sessions: {
     session_events: r.many.session_events(),

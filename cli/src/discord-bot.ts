@@ -14,6 +14,8 @@ import {
   deleteChannelDirectoryById,
   createPendingWorktree,
   setWorktreeReady,
+  getGuildDefaultDirectory,
+  setChannelDirectory,
 } from './database.js'
 import {
   stopOpencodeServer,
@@ -133,13 +135,14 @@ import {
 } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execSync } from 'node:child_process'
 import * as errore from 'errore'
 import dedent from 'string-dedent'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
 import { startTaskRunner } from './task-runner.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
-// Each session's event.subscribe() holds a connection; without enough connections,
+// Each session's global.event() holds a connection; without enough connections,
 // regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
 // undici is a transitive dep from discord.js — not listed in our package.json.
 // Types are declared in src/undici.d.ts.
@@ -315,6 +318,79 @@ export async function startDiscordBot({
 
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
+
+    // Handle new channel creation - auto-create project folder if guild has default directory
+    c.on(Events.ChannelCreate, async (channel) => {
+      // Only handle text channels
+      if (channel.type !== ChannelType.GuildText) {
+        return
+      }
+
+      const guild = channel.guild
+      if (!guild) {
+        return
+      }
+
+      // Check if this guild has a default parent directory
+      const guildDefaultDir = await getGuildDefaultDirectory(guild.id)
+      if (!guildDefaultDir) {
+        return
+      }
+
+      // Check if channel already has a directory mapping
+      const existingDir = await getChannelDirectory(channel.id)
+      if (existingDir) {
+        return
+      }
+
+      // Create subfolder in the parent directory
+      const channelName = channel.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      const channelDir = path.join(guildDefaultDir.parent_directory, channelName)
+
+      // Ensure the parent directory exists
+      if (!fs.existsSync(guildDefaultDir.parent_directory)) {
+        discordLogger.warn(
+          `[CHANNEL] Parent directory does not exist: ${guildDefaultDir.parent_directory}`,
+        )
+        return
+      }
+
+      // Ensure the directory exists
+      if (!fs.existsSync(channelDir)) {
+        try {
+          fs.mkdirSync(channelDir, { recursive: true })
+        } catch (error) {
+          discordLogger.error(
+            `[CHANNEL] Failed to create directory ${channelDir}: ${error}`,
+          )
+          return
+        }
+
+        // Optionally initialize as git repo (if parent is a git repo)
+        const parentGitDir = path.join(guildDefaultDir.parent_directory, '.git')
+        if (fs.existsSync(parentGitDir)) {
+          try {
+            execSync('git init', { cwd: channelDir, stdio: 'ignore' })
+            discordLogger.log(`[CHANNEL] Initialized git repo in ${channelDir}`)
+          } catch {
+            // Ignore errors - some directories may not support git
+          }
+        }
+
+        discordLogger.log(`[CHANNEL] Created project folder: ${channelDir}`)
+      }
+
+      // Map the channel to this directory
+      await setChannelDirectory({
+        channelId: channel.id,
+        directory: channelDir,
+        channelType: 'text',
+      })
+
+      discordLogger.log(
+        `[CHANNEL] Mapped new channel #${channel.name} to ${channelDir}`,
+      )
+    })
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })

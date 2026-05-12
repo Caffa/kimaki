@@ -663,6 +663,24 @@ export async function getAllTextChannelDirectories() {
   return [...new Set(rows.map((row) => row.directory))]
 }
 
+export async function getGuildDefaultDirectory(guildId: string): Promise<{ parent_directory: string } | undefined> {
+  const db = await getDb()
+  const row = await db.query.guild_default_directories.findFirst({ where: { guild_id: guildId } })
+  return row ? { parent_directory: row.parent_directory } : undefined
+}
+
+export async function setGuildDefaultDirectory(guildId: string, parentDirectory: string) {
+  const db = await getDb()
+  await db.insert(schema.guild_default_directories)
+    .values({ guild_id: guildId, parent_directory: parentDirectory })
+    .onConflictDoUpdate({ target: schema.guild_default_directories.guild_id, set: { parent_directory: parentDirectory } })
+}
+
+export async function deleteGuildDefaultDirectory(guildId: string) {
+  const db = await getDb()
+  await db.delete(schema.guild_default_directories).where(orm.eq(schema.guild_default_directories.guild_id, guildId))
+}
+
 export async function listTrackedTextChannels(): Promise<Array<{ channel_id: string; directory: string; created_at: Date | null }>> {
   const db = await getDb()
   return db.query.channel_directories.findMany({

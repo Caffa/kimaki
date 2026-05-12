@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getGuildDefaultDirectory, setGuildDefaultDirectory, deleteGuildDefaultDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -503,6 +503,170 @@ cli
     cliLogger.log(channelUrl)
     process.exit(0)
   })
+
+
+// ── set-default-dir: Set default parent directory for a guild ──
+cli
+  .command(
+    'project set-default-dir [parentDirectory]',
+    'Set the default parent directory for a Discord server. New channels will automatically get subfolders in this directory.',
+  )
+  .alias('set-default-dir')
+  .option(
+    '-g, --guild <guildId>',
+    'Discord guild/server ID (auto-detects if bot is in only one server)',
+  )
+  .option(
+    '-a, --app-id <appId>',
+    'Bot application ID (reads from database if available)',
+  )
+  .option(
+    '-r, --remove',
+    'Remove the default directory for this guild',
+  )
+  .action(
+    async (
+      parentDirectory: string | undefined,
+      options: {
+        guild?: string
+        appId?: string
+        remove?: boolean
+      },
+    ) => {
+      // Initialize database
+      await initDatabase()
+
+      const { token: botToken, appId } = await resolveBotCredentials({
+        appIdOverride: options.appId,
+      })
+
+      // Create Discord client to get guild info
+      const client = await createDiscordClient()
+
+      let guild: Guild | undefined
+
+      if (options.guild) {
+        const found = client.guilds.cache.get(options.guild)
+        if (!found) {
+          cliLogger.error(`Guild not found: ${options.guild}`)
+          void client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = found
+      } else {
+        const first = client.guilds.cache.first()
+        if (!first) {
+          cliLogger.error('No guild found. Add the bot to a server first.')
+          void client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = first
+      }
+
+      void client.destroy()
+
+      if (options.remove) {
+        await deleteGuildDefaultDirectory(guild.id)
+        note(
+          `Removed default directory for guild **${guild.name}** (${guild.id})`,
+          '✅ Success',
+        )
+        process.exit(0)
+      }
+
+      if (!parentDirectory) {
+        cliLogger.error('Parent directory is required. Use --remove to remove the default.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const absolutePath = path.resolve(parentDirectory)
+
+      if (!fs.existsSync(absolutePath)) {
+        // Create the directory if it doesn't exist
+        fs.mkdirSync(absolutePath, { recursive: true })
+        cliLogger.log(`Created directory: ${absolutePath}`)
+      }
+
+      await setGuildDefaultDirectory(guild.id, absolutePath)
+
+      note(
+        `Set default directory for **${guild.name}** (${guild.id}):\n\n${absolutePath}\n\nNew channels will automatically get project subfolders.`,
+        '✅ Success',
+      )
+
+      process.exit(0)
+    })
+
+
+// ── get-default-dir: Get default parent directory for a guild ──
+cli
+  .command(
+    'project get-default-dir',
+    'Get the default parent directory for a Discord server.',
+  )
+  .alias('get-default-dir')
+  .option(
+    '-g, --guild <guildId>',
+    'Discord guild/server ID (auto-detects if bot is in only one server)',
+  )
+  .option(
+    '-a, --app-id <appId>',
+    'Bot application ID (reads from database if available)',
+  )
+  .action(
+    async (options: {
+      guild?: string
+      appId?: string
+    }) => {
+      // Initialize database
+      await initDatabase()
+
+      const { token: botToken } = await resolveBotCredentials({
+        appIdOverride: options.appId,
+      })
+
+      // Create Discord client to get guild info
+      const client = await createDiscordClient()
+
+      let guild: Guild | undefined
+
+      if (options.guild) {
+        const found = client.guilds.cache.get(options.guild)
+        if (!found) {
+          cliLogger.error(`Guild not found: ${options.guild}`)
+          void client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = found
+      } else {
+        const first = client.guilds.cache.first()
+        if (!first) {
+          cliLogger.error('No guild found. Add the bot to a server first.')
+          void client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = first
+      }
+
+      void client.destroy()
+
+      const guildDefaultDir = await getGuildDefaultDirectory(guild.id)
+
+      if (!guildDefaultDir) {
+        note(
+          `No default directory set for **${guild.name}** (${guild.id})`,
+          'ℹ️  Not Configured',
+        )
+        process.exit(0)
+      }
+
+      note(
+        `Default directory for **${guild.name}** (${guild.id}):\n\n${guildDefaultDir.parent_directory}`,
+        '✅ Configured',
+      )
+
+      process.exit(0)
+    })
 
 
 export default cli
