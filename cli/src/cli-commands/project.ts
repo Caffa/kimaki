@@ -540,8 +540,23 @@ cli
         appIdOverride: options.appId,
       })
 
-      // Create Discord client to get guild info
+      if (!appId) {
+        cliLogger.error('App ID is required. Use --app-id or run `kimaki` first.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      cliLogger.log('Connecting to Discord...')
       const client = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
+        })
+        client.once(Events.Error, reject)
+        void client.login(botToken)
+      })
+
+      cliLogger.log('Finding guild...')
 
       let guild: Guild | undefined
 
@@ -625,8 +640,18 @@ cli
         appIdOverride: options.appId,
       })
 
-      // Create Discord client to get guild info
+      cliLogger.log('Connecting to Discord...')
       const client = await createDiscordClient()
+
+      await new Promise<void>((resolve, reject) => {
+        client.once(Events.ClientReady, () => {
+          resolve()
+        })
+        client.once(Events.Error, reject)
+        void client.login(botToken)
+      })
+
+      cliLogger.log('Finding guild...')
 
       let guild: Guild | undefined
 
