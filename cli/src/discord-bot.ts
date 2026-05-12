@@ -366,6 +366,38 @@ export async function startDiscordBot({
           return
         }
 
+        // Create default AGENTS.md for this channel's bot
+        const agentsMdPath = path.join(channelDir, 'AGENTS.md')
+        if (!fs.existsSync(agentsMdPath)) {
+          const channelDisplayName = `#${channel.name}`
+          const agentsMdContent = `<!-- Agent guidance for ${channelDisplayName} -->
+
+# ${channelDisplayName}
+
+This bot is designed for conversation and personal assistance.
+
+## Bot Purpose
+
+Describe what this bot should do here. For example:
+- Help with decision making and long-term thinking
+- Organize and track experiments
+- Provide accountability and challenge excuses
+
+## Guidelines
+
+- Be honest and direct, even when it's uncomfortable
+- Challenge the user when they make excuses
+- Suggest concrete experiments to test ideas
+- Keep track of outcomes to learn from past decisions
+
+## Customization
+
+Edit this file to define your bot's personality and goals.
+`
+          fs.writeFileSync(agentsMdPath, agentsMdContent)
+          discordLogger.log(`[CHANNEL] Created AGENTS.md in ${channelDir}`)
+        }
+
         // Optionally initialize as git repo (if parent is a git repo)
         const parentGitDir = path.join(guildDefaultDir.parent_directory, '.git')
         if (fs.existsSync(parentGitDir)) {
