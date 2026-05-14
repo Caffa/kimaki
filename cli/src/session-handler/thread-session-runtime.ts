@@ -9,12 +9,14 @@
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
+  GlobalEvent,
   Part,
   PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
 import path from 'node:path'
+import fs from 'node:fs'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
@@ -138,7 +140,84 @@ import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
 import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 
-const logger = createLogger(LogPrefix.SESSION)
+// ── Global Event Unwrapping ──────────────────────────────────────
+// The /global/event SSE endpoint returns events wrapped in { directory, payload }.
+// This function unwraps them, filtering to only events matching the runtime's
+// project directory. Events with an empty directory (server-wide events like
+// server.connected, global.disposed) are dispatched to all runtimes.
+//
+// GlobalEvent.payload includes SyncEvent* types (type: "sync") that are not
+// part of the Event union. We filter them out since none of the event handlers
+// know how to process them yet.
+//
+// Path comparison uses realpathSync to resolve symlinks (macOS /var → /private/var)
+// because the opencode server may resolve paths differently than the filesystem
+// path stored in our database. A normalized-path cache avoids repeated I/O for
+// the same expected directory across events.
+const _realpathCache = new Map<string, string>()
+
+function normalizeDirectoryPath(raw: string): string {
+  const cached = _realpathCache.get(raw)
+  if (cached !== undefined) return cached
+  try {
+    const resolved = fs.realpathSync(raw)
+    _realpathCache.set(raw, resolved)
+    return resolved
+  } catch {
+    // Path doesn't exist on disk yet — fall back to path.normalize which
+    // at least collapses redundant separators, trailing slashes, and dots.
+    const normalized = path.normalize(raw)
+    _realpathCache.set(raw, normalized)
+    return normalized
+  }
+}
+
+function unwrapGlobalEvent(
+  globalEvent: GlobalEvent,
+  expectedDirectory: string,
+): OpenCodeEvent | null {
+  // Filter out SyncEvent* types — they have type: "sync" and are not handled
+  if (globalEvent.payload.type === 'sync') {
+    return null
+  }
+  const eventDir = globalEvent.directory ?? ''
+  // Server-wide events (empty directory) are relevant to all runtimes
+  if (!eventDir) {
+    return globalEvent.payload as OpenCodeEvent
+  }
+  // Resolve symlinks and normalize both paths for reliable comparison.
+  // The opencode server may report paths using resolved symlinks
+  // (e.g. /private/var instead of /var on macOS) while our database
+  // stores the original unresolved path.
+  const resolvedEventDir = normalizeDirectoryPath(eventDir)
+  const resolvedExpectedDir = normalizeDirectoryPath(expectedDirectory)
+  if (resolvedEventDir === resolvedExpectedDir) {
+    // Log the first successful match so it's clear the event stream is working.
+    if (!unwrapGlobalEvent._didLogFirstMatch) {
+      unwrapGlobalEvent._didLogFirstMatch = true
+      logger.log(
+        `[LISTENER] Event directory matched: event=${eventDir} expected=${expectedDirectory} (resolved both to ${resolvedExpectedDir})`,
+      )
+    }
+    return globalEvent.payload as OpenCodeEvent
+  }
+  // Path mismatch — log for debugging but don't spam. This helps diagnose
+  // directory normalization issues without flooding logs on every event.
+  unwrapGlobalEvent._lastMismatchLog = unwrapGlobalEvent._lastMismatchLog ?? 0
+  const now = Date.now()
+  if (now - unwrapGlobalEvent._lastMismatchLog > 60_000) {
+    unwrapGlobalEvent._lastMismatchLog = now
+    logger.warn(
+      `[LISTENER] Event directory mismatch: event=${eventDir} (resolved=${resolvedEventDir}) expected=${expectedDirectory} (resolved=${resolvedExpectedDir}), dropping event type=${globalEvent.payload.type}`,
+    )
+  }
+  return null
+}
+// Rate-limit mismatch logging to once per minute
+unwrapGlobalEvent._lastMismatchLog = 0
+unwrapGlobalEvent._didLogFirstMatch = false
+
+ const logger = createLogger(LogPrefix.SESSION)
 const discordLogger = createLogger(LogPrefix.DISCORD)
 const DETERMINISTIC_CONTEXT_LIMIT = 100_000
 const TOAST_SESSION_ID_REGEX = /\b(ses_[A-Za-z0-9]+)\b\s*$/u
@@ -1373,11 +1452,29 @@ export class ThreadSessionRuntime {
     let backoffMs = 500
     const maxBackoffMs = 30_000
 
-    while (!this.listenerAborted) {
-      const signal = this.listenerSignal
-      if (!signal) {
-        return // disposed before we could subscribe
-      }
+    // Capture the controller signal at loop start. Each loop instance must
+    // use its own captured signal so that handleSharedServerStarted /
+    // handleDirectoryChanged can abort the OLD loop by aborting the OLD
+    // controller, even though they replace the controller in state with
+    // a new one. Without this, the old loop reads the new (non-aborted)
+    // controller from state and never exits, causing duplicate listeners.
+    const loopController = this.state?.listenerController
+    const loopSignal = loopController?.signal
+    if (!loopSignal) {
+      // No controller — already disposed or in a bad state.
+      this.listenerLoopRunning = false
+      return
+    }
+
+    // Use the captured loopSignal for all operations in this loop instance.
+    // This guarantees that when handleSharedServerStarted aborts the OLD
+    // controller, this loop exits — even if the state's controller was
+    // already swapped out before we read it. Using this.listenerSignal here
+    // would read the NEW (non-aborted) controller from state, causing the old
+    // loop to subscribe with the new signal and never exit.
+    const signal = loopSignal
+
+    while (!loopSignal.aborted && !this.disposed) {
       const client = getOpencodeClient(this.projectDirectory)
       if (!client) {
         // This is expected during shared-server transitions: the listener can
@@ -1393,16 +1490,16 @@ export class ThreadSessionRuntime {
         backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
         continue
       }
+      logger.log(
+        `[LISTENER] Subscribing to global event stream for thread ${this.threadId} directory=${this.sdkDirectory}`,
+      )
       const subscribeResult = await errore.tryAsync(() => {
-        return client.event.subscribe(
-          { directory: this.sdkDirectory },
-          { signal },
-        )
+        return client.global.event({ signal })
       })
 
       if (subscribeResult instanceof Error) {
-        if (isAbortError(subscribeResult)) {
-          return // disposed
+        if (isAbortError(subscribeResult) || loopSignal.aborted) {
+          return // disposed or controller was aborted while subscribing
         }
         const subscribeError: Error = subscribeResult
         logger.warn(
@@ -1414,27 +1511,65 @@ export class ThreadSessionRuntime {
         continue
       }
 
-      // Reset backoff on successful connection
-      backoffMs = 500
       const events = subscribeResult.stream
 
       logger.log(
-        `[LISTENER] Connected to event stream for thread ${this.threadId}`,
+        `[LISTENER] Connected to global event stream for thread ${this.threadId}`,
       )
 
       // Re-bootstrap sentPartIds on reconnect to prevent re-sending
       // parts that arrived while we were disconnected.
       await this.bootstrapSentPartIds()
 
+      let receivedAnyEvent = false
       const iterResult = await errore.tryAsync(async () => {
-        for await (const event of events) {
+        for await (const globalEvent of events) {
+          // Check if this loop instance has been superseded by
+          // handleSharedServerStarted / handleDirectoryChanged.
+          if (loopSignal?.aborted) {
+            return // this loop is stale — exit immediately
+          }
+          // Track that we received at least one event so we can reset
+          // backoff. Only resetting after receiving events prevents a
+          // tight reconnect loop when the server keeps closing connections
+          // immediately (empty streams).
+          receivedAnyEvent = true
+          // Global events include a directory field. Only dispatch events
+          // that belong to this runtime's project directory. Server-wide
+          // events (server.connected, global.disposed, etc.) have an empty
+          // directory and are dispatched to all runtimes.
+          const unwrappedEvent = unwrapGlobalEvent(
+            globalEvent,
+            this.sdkDirectory,
+          )
+          if (!unwrappedEvent) {
+            continue // event filtered (wrong directory or sync type)
+          }
           // Each event is dispatched through the serialized action queue
           // to prevent interleaving mutations from concurrent events.
           await this.dispatchAction(() => {
-            return this.handleEvent(event)
+            return this.handleEvent(unwrappedEvent)
           })
         }
       })
+
+      // If loopSignal was aborted while we were in the stream iteration
+      // (e.g. handleSharedServerStarted replaced the controller), exit
+      // immediately without applying backoff — the new listener is
+      // already running.
+      if (loopSignal.aborted) {
+        logger.log(
+          `[LISTENER] Loop signal aborted for thread ${this.threadId}, exiting without backoff`,
+        )
+        return
+      }
+
+      // Only reset backoff when the stream delivered at least one event.
+      // If the server closed the connection without sending any events
+      // (empty stream), keep accumulating backoff to avoid a tight loop.
+      if (receivedAnyEvent) {
+        backoffMs = 500
+      }
 
       if (iterResult instanceof Error) {
         if (isAbortError(iterResult)) {
@@ -1447,7 +1582,28 @@ export class ThreadSessionRuntime {
         )
         await delay(backoffMs)
         backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
+      } else {
+        // Stream ended cleanly (server closed connection, empty response)
+        // without an error. Apply backoff before reconnecting to prevent
+        // a tight loop when the server keeps dropping connections.
+        logger.log(
+          `[LISTENER] Stream ended normally for thread ${this.threadId}, reconnecting in ${backoffMs}ms`,
+        )
+        await delay(backoffMs)
+        backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
       }
+    }
+
+    // Loop exited. Only reset listenerLoopRunning if OUR controller is still
+    // the active one. If handleSharedServerStarted replaced it (loopSignal is
+    // aborted but state has a different controller), a new listener has already
+    // set listenerLoopRunning = true — overwriting it here would clobber the
+    // new listener's flag.
+    if (
+      this.state?.listenerController?.signal === loopSignal
+      || !this.state?.listenerController
+    ) {
+      this.listenerLoopRunning = false
     }
   }
 
