@@ -23,6 +23,7 @@ import {
   getGlobalModel,
   setGlobalModel,
   getVariantCascade,
+  recordModelUsage,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
@@ -323,6 +324,189 @@ export async function getCurrentModelInfo({
 }
 
 /**
+ * Sanitize a model ID to be a valid Discord command name component.
+ * Lowercase, alphanumeric and hyphens only.
+ * Example: anthropic/claude-3-5-sonnet -> claude-3-5-sonnet
+ */
+export function sanitizeModelName(modelId: string): string {
+  // Extract model name from provider/model
+  const name = modelId.includes('/') ? modelId.split('/')[1] : modelId
+  if (!name) return 'model'
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+const QUICK_MODEL_DESCRIPTION_PATTERN = /^\[model:([^\]]+)\]/
+
+/**
+ * Build quick-model command description with an embedded model ID and optional variant.
+ * Metadata format: [model:<modelId>(:<variant>)] <visible description>
+ */
+export function buildQuickModelCommandDescription({
+  modelId,
+  variant,
+}: {
+  modelId: string
+  variant?: string | null
+}): string {
+  const metadataValue = variant ? `${modelId}:${variant}` : modelId
+  const metadataPrefix = `[model:${metadataValue}]`
+  if (metadataPrefix.length > 100) {
+    return metadataPrefix.slice(0, 100)
+  }
+
+  const visibleDescription = `Switch to ${modelId}${variant ? ` (${variant})` : ''}`
+  const maxVisibleLength = 100 - metadataPrefix.length - 1
+
+  if (maxVisibleLength <= 0) {
+    return metadataPrefix
+  }
+
+  const trimmedVisible = visibleDescription.slice(0, maxVisibleLength).trim()
+  if (!trimmedVisible) {
+    return metadataPrefix
+  }
+
+  return `${metadataPrefix} ${trimmedVisible}`
+}
+
+export function parseQuickModelInfoFromDescription(
+  description: string | undefined,
+): { modelId: string; variant: string | null } | undefined {
+  if (!description) {
+    return undefined
+  }
+  const match = QUICK_MODEL_DESCRIPTION_PATTERN.exec(description)
+  if (!match) {
+    return undefined
+  }
+  const value = match[1]?.trim()
+  if (!value) {
+    return undefined
+  }
+
+  if (value.includes(':')) {
+    const parts = value.split(':')
+    const variant = parts.pop() || null
+    const modelId = parts.join(':')
+    return { modelId, variant }
+  }
+
+  return { modelId: value, variant: null }
+}
+
+async function resolveQuickModelInfoFromInteraction({
+  command,
+}: {
+  command: ChatInputCommandInteraction
+}): Promise<{ modelId: string; variant: string | null } | undefined> {
+  const fromCommandObject = parseQuickModelInfoFromDescription(
+    command.command?.description,
+  )
+  if (fromCommandObject) {
+    return fromCommandObject
+  }
+
+  if (!command.guild) {
+    return undefined
+  }
+
+  const fetchedCommand = await command.guild.commands.fetch(command.commandId)
+  if (!fetchedCommand) {
+    return undefined
+  }
+
+  return parseQuickModelInfoFromDescription(fetchedCommand.description)
+}
+
+/**
+ * Handle quick-switch model commands like /model-claude-3-opus.
+ * Instantly sets the model for both current session and global default.
+ */
+export async function handleQuickModelCommand({
+  command,
+  appId,
+}: {
+  command: ChatInputCommandInteraction
+  appId: string
+}): Promise<void> {
+  await command.deferReply({ flags: MessageFlags.Ephemeral })
+
+  const channel = command.channel
+  if (!channel) {
+    await command.editReply({ content: 'This command can only be used in a channel' })
+    return
+  }
+
+  try {
+    const info = await resolveQuickModelInfoFromInteraction({ command })
+    if (!info) {
+      await command.editReply({ content: 'Could not resolve model information' })
+      return
+    }
+
+    const { modelId, variant } = info
+    const variantSuffix = variant ? ` (${variant})` : ''
+
+    // Determine context
+    const isThread = [
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+    ].includes(channel.type)
+
+    let targetChannelId: string
+    let sessionId: string | undefined
+    let thread: ThreadChannel | undefined
+
+    if (isThread) {
+      thread = channel as ThreadChannel
+      const [textChannel, threadSessionId] = await Promise.all([
+        resolveTextChannel(thread),
+        getThreadSession(thread.id),
+      ])
+      targetChannelId = textChannel?.id || channel.id
+      sessionId = threadSessionId
+    } else {
+      targetChannelId = channel.id
+    }
+
+    // Apply to global and channel
+    await setGlobalModel({ appId, modelId, variant })
+    await setChannelModel({ channelId: targetChannelId, modelId, variant })
+
+    let sessionApplied = false
+    let retried = false
+    if (sessionId) {
+      await setSessionModel({ sessionId, modelId, variant })
+      sessionApplied = true
+
+      const runtime = getRuntime(thread!.id)
+      if (runtime) {
+        retried = await runtime.retryLastUserPrompt()
+      }
+    }
+
+    const scopeText = sessionApplied
+      ? 'this session, this channel, and as global default'
+      : 'this channel and as global default'
+    const retryNote = retried ? '\n_Restarting current request with new model..._' : ''
+
+    await command.editReply({
+      content: `Switched to **${modelId}**${variantSuffix} for ${scopeText}.${retryNote}`,
+    })
+  } catch (error) {
+    modelLogger.error('Error in quick model command:', error)
+    await command.editReply({
+      content: `Failed to switch model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    })
+  }
+}
+
+/**
  * Handle the /model slash command.
  * Shows a select menu with available providers.
  */
@@ -333,11 +517,27 @@ export async function handleModelCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  modelLogger.log('[MODEL] handleModelCommand called')
-
-  // Defer reply immediately to avoid 3-second timeout
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-  modelLogger.log('[MODEL] Deferred reply')
+    // Defer reply as the VERY FIRST action — before any logging.
+  // modelLogger.log uses fs.appendFileSync which blocks the event loop;
+  // if the disk is slow this can push past Discord's 3-second ack window.
+  // /agent works because it has NO logging before deferReply.
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  } catch (deferError) {
+    modelLogger.error('[MODEL] deferReply failed:', deferError)
+    // Fallback: try a plain reply if the interaction hasn't been acknowledged
+    try {
+      await interaction.reply({
+        content: 'Could not start model selection. Please try again.',
+        flags: MessageFlags.Ephemeral,
+      })
+    } catch (replyError) {
+      modelLogger.error('[MODEL] Both deferReply and reply failed:', replyError)
+      return
+    }
+    return // Fallback reply succeeded — don't fall through
+  }
+  modelLogger.log('[MODEL] Reply deferred successfully')
 
   const channel = interaction.channel
 
@@ -570,38 +770,46 @@ export async function handleProviderSelectMenu(
     context.providerPage = providerNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (getClient instanceof Error) {
-      await interaction.editReply({ content: getClient.message, components: [] })
-      return
-    }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
-    if (!providersResponse.data) {
-      await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
-      return
-    }
-    const { all: allProviders, connected } = providersResponse.data
-    const availableProviders = allProviders.filter((p) => connected.includes(p.id))
-    const allProviderOptions = [...availableProviders]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((p) => {
-        const modelCount = Object.keys(p.models || {}).length
-        return {
-          label: p.name.slice(0, 100),
-          value: p.id,
-          description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(0, 100),
-        }
+    try {
+      const getClient = await initializeOpencodeForDirectory(context.dir)
+      if (getClient instanceof Error) {
+        await interaction.editReply({ content: getClient.message, components: [] })
+        return
+      }
+      const providersResponse = await getClient().provider.list({ directory: context.dir })
+      if (!providersResponse.data) {
+        await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
+        return
+      }
+      const { all: allProviders, connected } = providersResponse.data
+      const availableProviders = allProviders.filter((p) => connected.includes(p.id))
+      const allProviderOptions = [...availableProviders]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => {
+          const modelCount = Object.keys(p.models || {}).length
+          return {
+            label: p.name.slice(0, 100),
+            value: p.id,
+            description: `${modelCount} model${modelCount !== 1 ? 's' : ''} available`.slice(0, 100),
+          }
+        })
+      const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: providerNavPage })
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`model_provider:${contextHash}`)
+        .setPlaceholder('Select a provider')
+        .addOptions(options)
+      const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+      await interaction.editReply({
+        content: context.providerSelectHeader || `**Set Model Preference**\nSelect a provider:`,
+        components: [actionRow],
       })
-    const { options } = buildPaginatedOptions({ allOptions: allProviderOptions, page: providerNavPage })
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_provider:${contextHash}`)
-      .setPlaceholder('Select a provider')
-      .addOptions(options)
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-    await interaction.editReply({
-      content: context.providerSelectHeader || `**Set Model Preference**\nSelect a provider:`,
-      components: [actionRow],
-    })
+    } catch (error) {
+      modelLogger.error('Error loading providers for pagination:', error)
+      await interaction.editReply({
+        content: `Failed to load providers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        components: [],
+      })
+    }
     return
   }
 
@@ -740,37 +948,45 @@ export async function handleModelSelectMenu(
     context.modelPage = modelNavPage
     setModelContext(contextHash, context)
 
-    const getClient = await initializeOpencodeForDirectory(context.dir)
-    if (getClient instanceof Error) {
-      await interaction.editReply({ content: getClient.message, components: [] })
-      return
+    try {
+      const getClient = await initializeOpencodeForDirectory(context.dir)
+      if (getClient instanceof Error) {
+        await interaction.editReply({ content: getClient.message, components: [] })
+        return
+      }
+      const providersResponse = await getClient().provider.list({ directory: context.dir })
+      const provider = providersResponse.data?.all.find((p) => p.id === context.providerId)
+      if (!provider) {
+        await interaction.editReply({ content: 'Provider not found', components: [] })
+        return
+      }
+      const allModelOptions = Object.entries(provider.models || {})
+        .map(([modelId, model]) => ({
+          label: model.name.slice(0, 100),
+          value: modelId,
+          description: (model.release_date
+            ? new Date(model.release_date).toLocaleDateString()
+            : 'Unknown date'
+          ).slice(0, 100),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+      const { options } = buildPaginatedOptions({ allOptions: allModelOptions, page: modelNavPage })
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`model_select:${contextHash}`)
+        .setPlaceholder('Select a model')
+        .addOptions(options)
+      const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+      await interaction.editReply({
+        content: `**Set Model Preference**\nProvider: **${context.providerName}**\nSelect a model:`,
+        components: [actionRow],
+      })
+    } catch (error) {
+      modelLogger.error('Error loading models for pagination:', error)
+      await interaction.editReply({
+        content: `Failed to load models: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        components: [],
+      })
     }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
-    const provider = providersResponse.data?.all.find((p) => p.id === context.providerId)
-    if (!provider) {
-      await interaction.editReply({ content: 'Provider not found', components: [] })
-      return
-    }
-    const allModelOptions = Object.entries(provider.models || {})
-      .map(([modelId, model]) => ({
-        label: model.name.slice(0, 100),
-        value: modelId,
-        description: (model.release_date
-          ? new Date(model.release_date).toLocaleDateString()
-          : 'Unknown date'
-        ).slice(0, 100),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label))
-    const { options } = buildPaginatedOptions({ allOptions: allModelOptions, page: modelNavPage })
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId(`model_select:${contextHash}`)
-      .setPlaceholder('Select a model')
-      .addOptions(options)
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-    await interaction.editReply({
-      content: `**Set Model Preference**\nProvider: **${context.providerName}**\nSelect a model:`,
-      components: [actionRow],
-    })
     return
   }
 
@@ -993,6 +1209,9 @@ export async function handleModelScopeSelectMenu(
         return
       }
       await setSessionModel({ sessionId: context.sessionId, modelId, variant })
+      if (context.appId) {
+        await recordModelUsage({ appId: context.appId, modelId, variant })
+      }
       modelLogger.log(
         `Set model ${modelId}${variantSuffix} for session ${context.sessionId}`,
       )
@@ -1036,6 +1255,9 @@ export async function handleModelScopeSelectMenu(
     } else {
       // channel scope
       await setChannelModel({ channelId: context.channelId, modelId, variant })
+      if (context.appId) {
+        await recordModelUsage({ appId: context.appId, modelId, variant })
+      }
       modelLogger.log(
         `Set model ${modelId}${variantSuffix} for channel ${context.channelId}`,
       )
@@ -1057,3 +1279,4 @@ export async function handleModelScopeSelectMenu(
     })
   }
 }
+

@@ -270,6 +270,9 @@ export async function setChannelModel({ channelId, modelId, variant }: { channel
       target: schema.channel_models.channel_id,
       set: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
     })
+
+  // Try to record usage if we can resolve appId.
+  // Actually, recordModelUsage will be called from the slash command handlers where appId is available.
 }
 
 export async function getGlobalModel(appId: string) {
@@ -286,6 +289,7 @@ export async function setGlobalModel({ appId, modelId, variant }: { appId: strin
       target: schema.global_models.app_id,
       set: { model_id: modelId, variant: variant ?? null, updated_at: new Date() },
     })
+  await recordModelUsage({ appId, modelId, variant: variant ?? null })
 }
 
 export async function getSessionModel(sessionId: string) {
@@ -302,6 +306,42 @@ export async function setSessionModel({ sessionId, modelId, variant }: { session
       target: schema.session_models.session_id,
       set: { model_id: modelId, variant: variant ?? null },
     })
+  // For session model, we don't necessarily have the appId easily here,
+  // but we can look up the bot token (most recently used).
+  // Actually, handleModelSelectMenu has appId, so it might be better to call recordModelUsage there.
+  // But setGlobalModel also calls it.
+}
+
+export async function recordModelUsage({ appId, modelId, variant }: { appId: string; modelId: string; variant: string | null }) {
+  const db = await getDb()
+  await db.insert(schema.recent_models)
+    .values({ app_id: appId, model_id: modelId, variant, last_used_at: new Date() })
+    .onConflictDoUpdate({
+      target: [schema.recent_models.app_id, schema.recent_models.model_id, schema.recent_models.variant],
+      set: { last_used_at: new Date() },
+    })
+
+  // Keep only last 10 models per app
+  const staleRows = await db.query.recent_models.findMany({
+    where: { app_id: appId },
+    orderBy: { last_used_at: 'desc' },
+    offset: 10,
+    columns: { id: true },
+  })
+
+  if (staleRows.length > 0) {
+    await db.delete(schema.recent_models)
+      .where(orm.inArray(schema.recent_models.id, staleRows.map((r) => r.id)))
+  }
+}
+
+export async function getRecentModels(appId: string) {
+  const db = await getDb()
+  return db.query.recent_models.findMany({
+    where: { app_id: appId },
+    orderBy: { last_used_at: 'desc' },
+    limit: 10,
+  })
 }
 
 export async function clearSessionModel(sessionId: string) {

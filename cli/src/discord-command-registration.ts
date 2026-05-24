@@ -16,6 +16,8 @@ import {
   sanitizeAgentName,
   buildQuickAgentCommandDescription,
 } from './commands/agent.js'
+import { getRecentModels } from './database.js'
+import { sanitizeModelName, buildQuickModelCommandDescription } from './commands/model.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 
@@ -632,6 +634,37 @@ export async function registerCommands({
         .toJSON(),
     )
   }
+
+  // 3. Recent models quick switch commands
+  const recentModels = await getRecentModels(appId).catch((e) => {
+    cliLogger.warn(`COMMANDS: Failed to fetch recent models for ${appId}: ${e.message}`)
+    return []
+  })
+
+  for (const model of recentModels) {
+    const sanitizedName = sanitizeModelName(model.model_id)
+    // Skip if sanitized name is empty or would create invalid command name
+    if (!sanitizedName || !/^[a-z0-9]/.test(sanitizedName)) {
+      continue
+    }
+
+    const modelSuffix = '-model'
+    const baseName = sanitizedName.slice(0, 32 - modelSuffix.length)
+    const commandName = `${baseName}${modelSuffix}`
+    const description = buildQuickModelCommandDescription({
+      modelId: model.model_id,
+      variant: model.variant,
+    })
+
+    commands.push(
+      new SlashCommandBuilder()
+        .setName(commandName)
+        .setDescription(truncateCommandDescription(description))
+        .setDMPermission(false)
+        .toJSON(),
+    )
+  }
+
   store.setState({ registeredUserCommands: newRegisteredCommands })
 
   // Discord allows max 100 guild commands. Slice to stay within the limit,

@@ -23,6 +23,7 @@ import {
   getThreadSession,
   setGlobalModel,
   getVariantCascade,
+  recordModelUsage,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
@@ -419,6 +420,7 @@ async function applyVariant({
         modelId,
         variant,
       })
+      await recordModelUsage({ appId: context.appId, modelId, variant })
       logger.log(
         `Set variant ${variant ?? 'none'} for session ${context.sessionId} (model ${modelId})`,
       )
@@ -446,6 +448,7 @@ async function applyVariant({
         modelId,
         variant,
       })
+      await recordModelUsage({ appId: context.appId, modelId, variant })
       logger.log(
         `Set global variant ${variant ?? 'none'} for app ${context.appId} and channel ${context.channelId} (model ${modelId})`,
       )
@@ -462,6 +465,7 @@ async function applyVariant({
         modelId,
         variant,
       })
+      await recordModelUsage({ appId: context.appId, modelId, variant })
       logger.log(
         `Set channel variant ${variant ?? 'none'} for channel ${context.channelId} (model ${modelId})`,
       )

@@ -152,7 +152,19 @@ export const global_models = sqliteCore.sqliteTable('global_models', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+export const recent_models = sqliteCore.sqliteTable('recent_models', {
+  id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
+  app_id: sqliteCore.text('app_id').notNull().references(() => bot_tokens.app_id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  model_id: sqliteCore.text('model_id').notNull(),
+  variant: sqliteCore.text('variant'),
+  last_used_at: datetime('last_used_at').default(orm.sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  sqliteCore.uniqueIndex('recent_models_app_id_model_id_variant_key').on(table.app_id, table.model_id, table.variant),
+  sqliteCore.index('recent_models_app_id_last_used_at_idx').on(table.app_id, table.last_used_at),
+])
+
 export const scheduled_tasks = sqliteCore.sqliteTable('scheduled_tasks', {
+
   id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
   status: sqliteCore.text('status', { enum: ['planned', 'running', 'completed', 'cancelled', 'failed'] }).notNull().default('planned'),
   schedule_kind: sqliteCore.text('schedule_kind', { enum: ['at', 'cron'] }).notNull(),
@@ -235,6 +247,7 @@ export const relations = defineRelations({
   forum_sync_configs,
   ipc_requests,
   guild_default_directories,
+  recent_models,
 }, (r) => ({
   thread_sessions: {
     session_events: r.many.session_events(),
@@ -253,6 +266,7 @@ export const relations = defineRelations({
     api_keys: r.one.bot_api_keys({ from: r.bot_tokens.app_id, to: r.bot_api_keys.app_id }),
     forum_sync_configs: r.many.forum_sync_configs(),
     global_model: r.one.global_models({ from: r.bot_tokens.app_id, to: r.global_models.app_id }),
+    recent_models: r.many.recent_models(),
   },
   bot_api_keys: {
     bot: r.one.bot_tokens({ from: r.bot_api_keys.app_id, to: r.bot_tokens.app_id }),
@@ -287,6 +301,9 @@ export const relations = defineRelations({
   },
   global_models: {
     bot: r.one.bot_tokens({ from: r.global_models.app_id, to: r.bot_tokens.app_id }),
+  },
+  recent_models: {
+    bot: r.one.bot_tokens({ from: r.recent_models.app_id, to: r.bot_tokens.app_id }),
   },
   scheduled_tasks: {
     channel: r.one.channel_directories({ from: r.scheduled_tasks.channel_id, to: r.channel_directories.channel_id }),

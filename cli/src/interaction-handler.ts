@@ -58,6 +58,7 @@ import {
   handleProviderSelectMenu,
   handleModelSelectMenu,
   handleModelScopeSelectMenu,
+  handleQuickModelCommand,
 } from './commands/model.js'
 import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
@@ -183,10 +184,6 @@ export function registerInteractionHandler({
         }
 
         if (interaction.isChatInputCommand()) {
-          interactionLogger.log(
-            `[COMMAND] Processing: ${interaction.commandName}`,
-          )
-
           if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
             await interaction.reply({
               content: `You don't have permission to use this command.\nTo use Kimaki, ask a server admin to give you the **Kimaki** role.`,
@@ -194,6 +191,10 @@ export function registerInteractionHandler({
             })
             return
           }
+
+          interactionLogger.log(
+            `[COMMAND] Processing: ${interaction.commandName} (id: ${interaction.id})`,
+          )
 
           switch (interaction.commandName) {
             case 'new-session':
@@ -289,6 +290,7 @@ export function registerInteractionHandler({
               return
 
             case 'model':
+              interactionLogger.log(`[COMMAND] Dispatching to handleModelCommand (interaction: ${interaction.id})`)
               await handleModelCommand({ interaction, appId })
               return
 
@@ -393,6 +395,15 @@ export function registerInteractionHandler({
             interaction.commandName !== 'agent'
           ) {
             await handleQuickAgentCommand({ command: interaction, appId })
+            return
+          }
+
+          // Handle quick model switch commands (ending with -model suffix, but not the base /model command)
+          if (
+            interaction.commandName.endsWith('-model') &&
+            interaction.commandName !== 'model'
+          ) {
+            await handleQuickModelCommand({ command: interaction, appId })
             return
           }
 

@@ -113,6 +113,15 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `recent_models` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`app_id` text NOT NULL,
+	`model_id` text NOT NULL,
+	`variant` text,
+	`last_used_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	CONSTRAINT `fk_recent_models_app_id_bot_tokens_app_id_fk` FOREIGN KEY (`app_id`) REFERENCES `bot_tokens`(`app_id`) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
 	`id` integer PRIMARY KEY AUTOINCREMENT,
 	`status` text DEFAULT 'planned' NOT NULL,
@@ -190,6 +199,8 @@ CREATE TABLE IF NOT EXISTS `thread_worktrees` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `forum_sync_configs_app_id_forum_channel_id_key` ON `forum_sync_configs` (`app_id`,`forum_channel_id`);
 CREATE INDEX IF NOT EXISTS `ipc_requests_status_created_at_idx` ON `ipc_requests` (`status`,`created_at`);
+CREATE UNIQUE INDEX IF NOT EXISTS `recent_models_app_id_model_id_variant_key` ON `recent_models` (`app_id`,`model_id`,`variant`);
+CREATE INDEX IF NOT EXISTS `recent_models_app_id_last_used_at_idx` ON `recent_models` (`app_id`,`last_used_at`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_status_next_run_at_idx` ON `scheduled_tasks` (`status`,`next_run_at`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_channel_id_status_idx` ON `scheduled_tasks` (`channel_id`,`status`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_thread_id_status_idx` ON `scheduled_tasks` (`thread_id`,`status`);
