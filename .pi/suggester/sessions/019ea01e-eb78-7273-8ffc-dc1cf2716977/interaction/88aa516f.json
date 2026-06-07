@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "88aa516f",
+    "suggestionShownAt": "2026-06-07T03:57:09.811Z",
+    "userPromptSubmittedAt": "2026-06-07T04:51:37.771Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "88aa516f",
+      "suggestedPrompt": "I don't remember changing it, probably ran an update command by accident",
+      "actualUserPrompt": "I upgraded it. Can you check the original Kimaki to see how they handled upgrading to a newer version of Open Code SDK? Because I would like to use a newer version of Open Code because I assume that they have done a great deal of changes. So can you check the Open Code GitHub repo too to see what changes there are and whether or not we can upgrade to the new version and just change our code?",
+      "classification": "changed_course",
+      "similarity": 0.13012734820234995,
+      "timestamp": "2026-06-07T04:51:37.771Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

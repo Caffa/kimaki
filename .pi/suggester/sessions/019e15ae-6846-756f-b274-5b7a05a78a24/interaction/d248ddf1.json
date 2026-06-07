@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "d248ddf1",
+    "suggestionShownAt": "2026-05-11T06:56:35.140Z",
+    "userPromptSubmittedAt": "2026-05-11T07:13:42.921Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "d248ddf1",
+      "suggestedPrompt": "let me test this real quick",
+      "actualUserPrompt": "I tested and the │  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n\nbug is still there. Did we do a local reinstall?",
+      "classification": "changed_course",
+      "similarity": 0.03676470588235294,
+      "timestamp": "2026-05-11T07:13:42.921Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

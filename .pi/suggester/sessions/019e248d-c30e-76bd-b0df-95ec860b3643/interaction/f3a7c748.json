@@ -1,0 +1,38 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "f3a7c748",
+    "suggestionShownAt": "2026-05-14T05:06:48.139Z",
+    "userPromptSubmittedAt": "2026-05-14T05:57:29.116Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "a90c6e67",
+      "suggestedPrompt": "Still not responding after rebuild",
+      "actualUserPrompt": "rebuild for me",
+      "classification": "changed_course",
+      "similarity": 0.23809523809523808,
+      "timestamp": "2026-05-14T05:00:35.603Z"
+    },
+    {
+      "turnId": "bd1d8182",
+      "suggestedPrompt": "test if kimaki responds to text now",
+      "actualUserPrompt": "There is a repeating bug and no proper reply:\n  13:01 DISCORD  Message in thread Should I be waiting between serum applications to let it dry and absorb into my (1504347616316493835)\n│  13:01 SESSION  No session for thread 1504347616316493835, starting new session\n│  13:01 SESSION  [LISTENER] Subscribing to event stream for thread 1504347616316493835 directory=/Users/caffae/.kimaki/projects/decision-bot\n│  13:01 SESSION  [LISTENER] Connected to event stream for thread 1504347616316493835\n│  13:01 MODEL    [MODEL] Snapshotted session model ollama-cloud/glm-5.1 for session ses_1db23a011ffe2Nc7yXHEUFGH2J\n│  13:01 SESSION  [INGRESS] promptAsync accepted by opencode queue sessionId=ses_1db23a011ffe2Nc7yXHEUFGH2J threadId=1504347616316493835\n│  13:01 SESSION  [LISTENER] Stream ended normally for thread 1504347616316493835, reconnecting in 500ms\n│  13:01 SESSION  [LISTENER] Subscribing to event stream for thread 1504347616316493835 directory=/Users/caffae/.kimaki/projects/decision-bot\n│  13:01 SESSION  [LISTENER] Connected to event stream for thread 1504347616316493835\n│  13:01 SESSION  [LISTENER] Stream ended normally for thread 1504347616316493835, reconnecting in 500ms\n│  13:01 SESSION  [LISTENER] Subscribing to event stream for thread 1504347616316493835 directory=/Users/caffae/.kimaki/projects/decision-bot\n│  13:01 SESSION  [LISTENER] Connected to event stream for thread 1504347616316493835\n│  13:01 SESSION  [LISTENER] Stream ended normally for thread 1504347616316493835, reconnecting in 500ms\n│  13:01 SESSION  [LISTENER] Subscribing to event stream for thread 1504347616316493835 directory=/Users/caffae/.kimaki/projects/decision-bot",
+      "classification": "changed_course",
+      "similarity": 0.03374448455675892,
+      "timestamp": "2026-05-14T05:01:52.171Z"
+    },
+    {
+      "turnId": "f3a7c748",
+      "suggestedPrompt": "rebuild and test it",
+      "actualUserPrompt": "rebuild and test it",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-05-14T05:57:29.116Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

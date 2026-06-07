@@ -516,13 +516,28 @@ async function transcribeWithParakeet({
     const finalBuffer = audioBuffer
     const finalMediaType = mediaType || 'audio/ogg'
 
+    // Determine file extension from media type for the filename
+    const extMap: Record<string, string> = {
+      'audio/wav': '.wav',
+      'audio/x-wav': '.wav',
+      'audio/mp3': '.mp3',
+      'audio/mpeg': '.mp3',
+      'audio/ogg': '.ogg',
+      'audio/opus': '.ogg',
+      'audio/mp4': '.m4a',
+      'audio/m4a': '.m4a',
+      'audio/x-m4a': '.m4a',
+      'audio/flac': '.flac',
+      'audio/aac': '.aac',
+    }
+    const ext = extMap[finalMediaType.toLowerCase()] || '.ogg'
+
+    const formData = new FormData()
+    formData.append('file', new Blob([finalBuffer], { type: finalMediaType }), `audio${ext}`)
+
     const response = await fetch(`${ASR_SERVICE_URL}/transcribe`, {
       method: 'POST',
-      headers: {
-        'Content-Type': finalMediaType,
-        'Content-Length': finalBuffer.length.toString(),
-      },
-      body: finalBuffer,
+      body: formData,
     })
 
     if (!response.ok) {

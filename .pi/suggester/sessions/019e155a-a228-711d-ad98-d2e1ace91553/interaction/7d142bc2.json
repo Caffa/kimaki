@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Go ahead and start the integration.",
+    "shownAt": "2026-05-11T05:03:58.837Z",
+    "turnId": "7d142bc2",
+    "sourceLeafId": "7d142bc2",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

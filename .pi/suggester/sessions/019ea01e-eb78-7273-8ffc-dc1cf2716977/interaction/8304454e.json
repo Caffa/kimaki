@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "restarting kimaki now",
+    "shownAt": "2026-06-07T03:56:46.088Z",
+    "turnId": "8304454e",
+    "sourceLeafId": "8304454e",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

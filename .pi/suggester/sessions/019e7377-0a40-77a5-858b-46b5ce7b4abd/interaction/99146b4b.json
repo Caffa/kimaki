@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Can you fix the SQL syntax error and these sync failures?",
+    "shownAt": "2026-05-29T11:23:28.971Z",
+    "turnId": "99146b4b",
+    "sourceLeafId": "99146b4b",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

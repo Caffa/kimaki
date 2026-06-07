@@ -66,9 +66,6 @@ importers:
       '@opencode-ai/plugin':
         specifier: ^1.4.6
         version: 1.4.6
-      '@opencode-ai/sdk':
-        specifier: ^1.4.6
-        version: 1.4.6
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -391,9 +388,6 @@ importers:
         specifier: ^1.18.0
         version: 1.18.0(@modelcontextprotocol/sdk@1.26.0(zod@4.3.6))
     devDependencies:
-      '@opencode-ai/sdk':
-        specifier: ^1.4.6
-        version: 1.4.6
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
@@ -423,9 +417,6 @@ importers:
   opencode-injection-guard:
     devDependencies:
       '@opencode-ai/plugin':
-        specifier: ^1.2.27
-        version: 1.4.6
-      '@opencode-ai/sdk':
         specifier: ^1.2.27
         version: 1.4.6
       '@types/node':

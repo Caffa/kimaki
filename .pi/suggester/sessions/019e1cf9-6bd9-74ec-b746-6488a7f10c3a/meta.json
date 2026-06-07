@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "019e1cf9-6bd9-74ec-b746-6488a7f10c3a",
+  "sessionFile": "/Users/caffae/.pi/agent/sessions/--Users-caffae-Local-Projects-2026-kimaki--/2026-05-12T16-16-08-666Z_019e1cf9-6bd9-74ec-b746-6488a7f10c3a.jsonl",
+  "cwd": "/Users/caffae/Local-Projects-2026/kimaki",
+  "ignoreLegacyPiSessionEntries": true,
+  "legacyMigration": {
+    "performedAt": "2026-05-12T16:16:09.750Z",
+    "importedLegacyEntries": false,
+    "legacyStateEntryCount": 0,
+    "legacyUsageEntryCount": 0,
+    "note": "Legacy suggester-state/suggester-usage pi session entries were imported once into extension-owned storage and are ignored afterwards."
+  }
+}

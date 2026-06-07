@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Yes check why messages weren't being responded to",
+    "shownAt": "2026-06-07T03:22:03.984Z",
+    "turnId": "2845a5fe",
+    "sourceLeafId": "2845a5fe",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Merge integrate-upstream-v2 into main.",
+    "shownAt": "2026-05-11T05:59:24.099Z",
+    "turnId": "428de2cd",
+    "sourceLeafId": "428de2cd",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "1d173930",
+      "suggestedPrompt": "Looks good. Proceed with the integration.",
+      "actualUserPrompt": "Looks good. Proceed with the integration. Keep both parakeet and whisper (the fallback).",
+      "classification": "changed_course",
+      "similarity": 0.5678294573643411,
+      "timestamp": "2026-05-11T05:42:42.173Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 3
+}

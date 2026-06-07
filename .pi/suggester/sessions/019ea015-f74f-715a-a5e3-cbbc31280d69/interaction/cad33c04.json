@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "2845a5fe",
+    "suggestionShownAt": "2026-06-07T03:22:03.984Z",
+    "userPromptSubmittedAt": "2026-06-07T03:23:03.381Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "2845a5fe",
+      "suggestedPrompt": "Yes check why messages weren't being responded to",
+      "actualUserPrompt": "Do option 1, and restore my fork version to global. checking why messages weren't being responded to",
+      "classification": "changed_course",
+      "similarity": 0.513069586718474,
+      "timestamp": "2026-06-07T03:23:03.381Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

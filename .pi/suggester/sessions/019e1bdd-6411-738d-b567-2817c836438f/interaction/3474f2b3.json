@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "restart and test /model",
+    "shownAt": "2026-05-12T17:10:57.698Z",
+    "turnId": "3474f2b3",
+    "sourceLeafId": "3474f2b3",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "5c6b7914",
+      "suggestedPrompt": "let's test the /model command with the server down",
+      "actualUserPrompt": "I tested /model and still got The application did not respond",
+      "classification": "changed_course",
+      "similarity": 0.31681681681681684,
+      "timestamp": "2026-05-12T16:22:40.558Z"
+    },
+    {
+      "turnId": "40cb7f99",
+      "suggestedPrompt": "Other commands work, it's just /model",
+      "actualUserPrompt": "/agent works but /model does not. I have restarted.",
+      "classification": "changed_course",
+      "similarity": 0.23787878787878788,
+      "timestamp": "2026-05-12T16:51:31.956Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 4
+}

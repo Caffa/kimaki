@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "467f9290",
+    "suggestionShownAt": "2026-05-12T16:19:15.781Z",
+    "userPromptSubmittedAt": "2026-05-12T16:19:38.430Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "467f9290",
+      "suggestedPrompt": "Yes, update them.",
+      "actualUserPrompt": "Yes, update them.",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-05-12T16:19:38.430Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

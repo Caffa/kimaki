@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "99146b4b",
+    "suggestionShownAt": "2026-05-29T11:23:28.971Z",
+    "userPromptSubmittedAt": "2026-05-29T12:30:22.550Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "99146b4b",
+      "suggestedPrompt": "Can you fix the SQL syntax error and these sync failures?",
+      "actualUserPrompt": "Continue",
+      "classification": "changed_course",
+      "similarity": 0.1076923076923077,
+      "timestamp": "2026-05-29T12:30:22.550Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

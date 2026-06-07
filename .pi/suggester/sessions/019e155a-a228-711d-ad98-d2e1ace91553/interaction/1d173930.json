@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "1d173930",
+    "suggestionShownAt": "2026-05-11T05:13:38.866Z",
+    "userPromptSubmittedAt": "2026-05-11T05:42:42.173Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "1d173930",
+      "suggestedPrompt": "Looks good. Proceed with the integration.",
+      "actualUserPrompt": "Looks good. Proceed with the integration. Keep both parakeet and whisper (the fallback).",
+      "classification": "changed_course",
+      "similarity": 0.5678294573643411,
+      "timestamp": "2026-05-11T05:42:42.173Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

@@ -90,3 +90,29 @@ npm's `/opt/homebrew/bin` comes before pnpm's `~/Library/pnpm` in PATH. Uninstal
 ```bash
 npm uninstall -g kimaki
 ```
+
+## Vision Description for Screenshots
+
+Kimaki can now describe images using Ollama models (cloud-first with local fallback), helping debugging when the primary model says it can't see images.
+
+- **Cloud-first**: Tries cloud vision models first if authenticated (`gemma3:27b-cloud`, `gemma3:12b-cloud`, `gemma3:4b-cloud`)
+- **Local fallback**: Falls back to local vision models (`qwen3-vl`, `llava`, `llama3.2-vision`, `gemma3`)
+- **Auto model selection**: Uses `qwen3.5:4b` as final fallback
+- **Graceful fallback**: If all endpoints fail, images are still sent but without descriptions
+- **Debugging-focused prompt**: Describes exact text, error messages, code, UI states
+
+To use:
+1. **Cloud (preferred)**: Run `ollama signin` once, then cloud models will be used automatically
+2. **Local**: Install a vision model: `ollama pull qwen3-vl` or `ollama pull gemma3:4b`
+3. Upload screenshots in Discord as usual
+4. Vision descriptions appear inline in the prompt context
+
+Configuration:
+- **Override model**: `export KIMAKI_VISION_MODEL=gemma3:27b-cloud` or any specific model
+- **Disable vision**: `export KIMAKI_VISION_MODEL=""`
+- **Custom Ollama host**: `export OLLAMA_HOST=http://custom-host:11434`
+
+Priority order:
+1. Cloud vision models (if authenticated)
+2. Local vision models (if installed)
+3. Local text-only fallback models

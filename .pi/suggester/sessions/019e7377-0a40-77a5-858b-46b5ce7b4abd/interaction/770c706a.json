@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "770c706a",
+    "suggestionShownAt": "2026-05-29T12:32:30.166Z",
+    "userPromptSubmittedAt": "2026-05-29T12:48:05.458Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "99146b4b",
+      "suggestedPrompt": "Can you fix the SQL syntax error and these sync failures?",
+      "actualUserPrompt": "Continue",
+      "classification": "changed_course",
+      "similarity": 0.1076923076923077,
+      "timestamp": "2026-05-29T12:30:22.550Z"
+    },
+    {
+      "turnId": "770c706a",
+      "suggestedPrompt": "Test if the model preference saves correctly now",
+      "actualUserPrompt": "Can you modify the error, so that it has this explanation? So that when this is printed to the log we know it is not a bug but instead expected behavior.",
+      "classification": "changed_course",
+      "similarity": 0.16487873134328357,
+      "timestamp": "2026-05-29T12:48:05.458Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

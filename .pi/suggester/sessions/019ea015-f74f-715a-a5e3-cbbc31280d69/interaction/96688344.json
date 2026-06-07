@@ -1,0 +1,23 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "start kimaki and test it",
+    "shownAt": "2026-06-07T03:25:36.663Z",
+    "turnId": "96688344",
+    "sourceLeafId": "96688344",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "2845a5fe",
+      "suggestedPrompt": "Yes check why messages weren't being responded to",
+      "actualUserPrompt": "Do option 1, and restore my fork version to global. checking why messages weren't being responded to",
+      "classification": "changed_course",
+      "similarity": 0.513069586718474,
+      "timestamp": "2026-06-07T03:23:03.381Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

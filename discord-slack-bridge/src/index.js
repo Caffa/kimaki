@@ -1,0 +1,33 @@
+"use strict";
+// Public exports for discord-slack-bridge.
+// Runtime-specific implementations live in dedicated files.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createServer = exports.createBridgeApp = exports.SlackBridge = exports.DEFAULT_TYPING_STATE_CONFIG = exports.deriveTypingIntent = exports.createTypingCoordinator = exports.appendTypingEvent = exports.getTeamIdForWebhookEvent = exports.uploadAttachmentsToSlack = exports.componentsToBlocks = exports.markdownToMrkdwn = exports.mrkdwnToMarkdown = exports.resolveDiscordChannelId = exports.slackTsToIso = exports.resolveSlackTarget = exports.isThreadChannelId = exports.decodeMessageId = exports.encodeMessageId = exports.decodeThreadId = exports.encodeThreadId = void 0;
+var id_converter_js_1 = require("./id-converter.js");
+Object.defineProperty(exports, "encodeThreadId", { enumerable: true, get: function () { return id_converter_js_1.encodeThreadId; } });
+Object.defineProperty(exports, "decodeThreadId", { enumerable: true, get: function () { return id_converter_js_1.decodeThreadId; } });
+Object.defineProperty(exports, "encodeMessageId", { enumerable: true, get: function () { return id_converter_js_1.encodeMessageId; } });
+Object.defineProperty(exports, "decodeMessageId", { enumerable: true, get: function () { return id_converter_js_1.decodeMessageId; } });
+Object.defineProperty(exports, "isThreadChannelId", { enumerable: true, get: function () { return id_converter_js_1.isThreadChannelId; } });
+Object.defineProperty(exports, "resolveSlackTarget", { enumerable: true, get: function () { return id_converter_js_1.resolveSlackTarget; } });
+Object.defineProperty(exports, "slackTsToIso", { enumerable: true, get: function () { return id_converter_js_1.slackTsToIso; } });
+Object.defineProperty(exports, "resolveDiscordChannelId", { enumerable: true, get: function () { return id_converter_js_1.resolveDiscordChannelId; } });
+var format_converter_js_1 = require("./format-converter.js");
+Object.defineProperty(exports, "mrkdwnToMarkdown", { enumerable: true, get: function () { return format_converter_js_1.mrkdwnToMarkdown; } });
+Object.defineProperty(exports, "markdownToMrkdwn", { enumerable: true, get: function () { return format_converter_js_1.markdownToMrkdwn; } });
+var component_converter_js_1 = require("./component-converter.js");
+Object.defineProperty(exports, "componentsToBlocks", { enumerable: true, get: function () { return component_converter_js_1.componentsToBlocks; } });
+var file_upload_js_1 = require("./file-upload.js");
+Object.defineProperty(exports, "uploadAttachmentsToSlack", { enumerable: true, get: function () { return file_upload_js_1.uploadAttachmentsToSlack; } });
+var webhook_team_id_js_1 = require("./webhook-team-id.js");
+Object.defineProperty(exports, "getTeamIdForWebhookEvent", { enumerable: true, get: function () { return webhook_team_id_js_1.getTeamIdForWebhookEvent; } });
+var typing_state_js_1 = require("./typing-state.js");
+Object.defineProperty(exports, "appendTypingEvent", { enumerable: true, get: function () { return typing_state_js_1.appendTypingEvent; } });
+Object.defineProperty(exports, "createTypingCoordinator", { enumerable: true, get: function () { return typing_state_js_1.createTypingCoordinator; } });
+Object.defineProperty(exports, "deriveTypingIntent", { enumerable: true, get: function () { return typing_state_js_1.deriveTypingIntent; } });
+Object.defineProperty(exports, "DEFAULT_TYPING_STATE_CONFIG", { enumerable: true, get: function () { return typing_state_js_1.DEFAULT_TYPING_STATE_CONFIG; } });
+var node_bridge_js_1 = require("./node-bridge.js");
+Object.defineProperty(exports, "SlackBridge", { enumerable: true, get: function () { return node_bridge_js_1.SlackBridge; } });
+var server_js_1 = require("./server.js");
+Object.defineProperty(exports, "createBridgeApp", { enumerable: true, get: function () { return server_js_1.createBridgeApp; } });
+Object.defineProperty(exports, "createServer", { enumerable: true, get: function () { return server_js_1.createServer; } });

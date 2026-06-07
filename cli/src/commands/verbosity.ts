@@ -90,8 +90,10 @@ export async function handleVerbosityCommand({
   command: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  verbosityLogger.log('[VERBOSITY] Command called')
-
+  // Reply as the VERY FIRST action — before any logging.
+  // logger.log uses fs.appendFileSync which blocks the event loop.
+  // This command uses reply() directly (not deferReply) since it builds
+  // a complete response up front, but we still log AFTER acknowledging.
   const channelId = resolveChannelId(command.channel)
   if (!channelId) {
     await command.reply({
@@ -100,6 +102,8 @@ export async function handleVerbosityCommand({
     })
     return
   }
+
+  verbosityLogger.log('[VERBOSITY] Command called')
 
   const override = await getChannelVerbosityOverride(channelId)
   const currentLevel = override || store.getState().defaultVerbosity

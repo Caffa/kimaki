@@ -4022,12 +4022,19 @@ export class ThreadSessionRuntime {
       if (images.length === 0) {
         return input.prompt
       }
+
+      // Build image list with vision descriptions
       const imageList = images
         .map((img) => {
-          return `- ${img.sourceUrl || img.filename}`
+          let entry = `- ${img.sourceUrl || img.filename}`
+          if (img.visionDescription) {
+            entry += `\n  **Vision analysis**: ${img.visionDescription}`
+          }
+          return entry
         })
-        .join('\n')
-      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
+        .join('\n\n')
+
+      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n\n${imageList}`
     })()
 
     // ── Worktree info for per-turn prompt context ─────────────

@@ -1,0 +1,39 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Continue with the upstream integration plan.",
+    "shownAt": "2026-05-11T06:11:53.907Z",
+    "turnId": "0a3d3b8c",
+    "sourceLeafId": "0a3d3b8c",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "1d173930",
+      "suggestedPrompt": "Looks good. Proceed with the integration.",
+      "actualUserPrompt": "Looks good. Proceed with the integration. Keep both parakeet and whisper (the fallback).",
+      "classification": "changed_course",
+      "similarity": 0.5678294573643411,
+      "timestamp": "2026-05-11T05:42:42.173Z"
+    },
+    {
+      "turnId": "e8c358ea",
+      "suggestedPrompt": "Run a final build and verify the parakeet fallback works.",
+      "actualUserPrompt": "Readd the figlet banner.",
+      "classification": "changed_course",
+      "similarity": 0.23599240265906932,
+      "timestamp": "2026-05-11T06:03:38.789Z"
+    },
+    {
+      "turnId": "25dff379",
+      "suggestedPrompt": "Push the branch and open a PR.",
+      "actualUserPrompt": "■  14:08 VOICE    [ASR] Failed to start ASR service: {\n│    name: 'ReferenceError',\n│    message: '__dirname is not defined',\n│    stack: 'ReferenceError: __dirname is not defined\\n' +\n│      '    at getAsrServicePath (file:///Users/caffae/Local-Projects-2026/kimaki/cli/dist/asr-service-manager.js:27:19)\\n' +\n│      '    at startAsrService (file:///Users/caffae/Local-Projects-2026/kimaki/cli/dist/asr-service-manager.js:71:25)\\n' +\n│      '    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\\n' +\n│      '    at async startDiscordBot (file:///Users/caffae/Local-Projects-2026/kimaki/cli/dist/discord-bot.js:972:9)\\n' +\n│      '    at async run (file:///Users/caffae/Local-Projects-2026/kimaki/cli/dist/cli-runner.js:1176:9)\\n' +\n│      '    at async Goke.<anonymous> (file:///Users/caffae/Local-Projects-2026/kimaki/cli/dist/cli.js:170:9)',\n│    cause: undefined\n│  }\n\nthere is an error",
+      "classification": "changed_course",
+      "similarity": 0.029411764705882353,
+      "timestamp": "2026-05-11T06:10:22.708Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

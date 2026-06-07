@@ -1,0 +1,38 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "eec268e7",
+    "suggestionShownAt": "2026-05-12T17:14:14.070Z",
+    "userPromptSubmittedAt": "2026-05-12T18:04:56.321Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "5c6b7914",
+      "suggestedPrompt": "let's test the /model command with the server down",
+      "actualUserPrompt": "I tested /model and still got The application did not respond",
+      "classification": "changed_course",
+      "similarity": 0.31681681681681684,
+      "timestamp": "2026-05-12T16:22:40.558Z"
+    },
+    {
+      "turnId": "40cb7f99",
+      "suggestedPrompt": "Other commands work, it's just /model",
+      "actualUserPrompt": "/agent works but /model does not. I have restarted.",
+      "classification": "changed_course",
+      "similarity": 0.23787878787878788,
+      "timestamp": "2026-05-12T16:51:31.956Z"
+    },
+    {
+      "turnId": "eec268e7",
+      "suggestedPrompt": "test the /model command",
+      "actualUserPrompt": "test the /model command",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-05-12T18:04:56.321Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

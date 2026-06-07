@@ -670,9 +670,19 @@ export async function registerCommands({
   // Discord allows max 100 guild commands. Slice to stay within the limit,
   // trimming lowest-priority dynamic commands (MCP prompts, then skills) first.
   const MAX_DISCORD_COMMANDS = 100
+  const staticCount = 44 // hardcoded static commands defined above
+  const agentCount = primaryAgents.length
+  const userCommandCount = newRegisteredCommands.length
+  const modelCount = recentModels.length
+  const skillCount = userCommands.filter(c => c.source === 'skill').length
+  const mcpCount = userCommands.filter(c => c.source === 'mcp').length
+  
   if (commands.length > MAX_DISCORD_COMMANDS) {
     cliLogger.warn(
       `COMMANDS: ${commands.length} commands exceed Discord limit of ${MAX_DISCORD_COMMANDS}, truncating to ${MAX_DISCORD_COMMANDS}`,
+    )
+    cliLogger.info(
+      `COMMANDS: Breakdown: ${staticCount} static, ${agentCount} agents, ${userCommandCount} user commands (${skillCount} skills, ${mcpCount} MCP), ${modelCount} recent models`,
     )
     commands.length = MAX_DISCORD_COMMANDS
   }

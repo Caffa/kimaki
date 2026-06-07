@@ -55,9 +55,24 @@ export async function handleUnsetModelCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
+  // Defer reply as the VERY FIRST action — before any logging.
+  // logger.log uses fs.appendFileSync which blocks the event loop.
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  } catch (deferError) {
+    unsetModelLogger.error('[UNSET-MODEL] deferReply failed:', deferError)
+    try {
+      await interaction.reply({
+        content: 'Could not process your request. Please try again.',
+        flags: MessageFlags.Ephemeral,
+      })
+    } catch (replyError) {
+      unsetModelLogger.error('[UNSET-MODEL] Both deferReply and reply failed:', replyError)
+      return
+    }
+    return
+  }
   unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const channel = interaction.channel
 

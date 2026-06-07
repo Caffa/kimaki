@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "let me test this",
+    "shownAt": "2026-05-11T06:43:06.428Z",
+    "turnId": "f33cc78c",
+    "sourceLeafId": "f33cc78c",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

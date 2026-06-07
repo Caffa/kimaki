@@ -3,14 +3,24 @@
 // and runs the global upgrade command. Used by both CLI `kimaki upgrade` and
 // the Discord `/upgrade-and-restart` command, plus background auto-upgrade on startup.
 //
-// Background auto-upgrade is DISABLED when running via npm link (local dev fork)
-// to prevent accidentally overwriting local development changes.
+// Background auto-upgrade is DISABLED when:
+// 1. KIMAKI_DISABLE_AUTO_UPGRADE environment variable is set (any value)
+// 2. Running via npm/bun link (local dev fork)
+// 3. Running from a git checkout with a non-official remote (fork detection)
+// This prevents accidentally overwriting local development changes.
 
+import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { createLogger, LogPrefix } from './logger.js'
 import { execAsync } from './worktrees.js'
+
+// Official Kimaki repository URLs. Forks with different remotes will have auto-upgrade disabled.
+const OFFICIAL_REPOS = [
+  'github.com/remorses/kimaki',
+  'github.com/kimaki-ai/kimaki',
+]
 
 const logger = createLogger(LogPrefix.CLI)
 
@@ -113,11 +123,27 @@ export async function upgrade(): Promise<string | null> {
 
 // Fire-and-forget background upgrade check on bot startup.
 // Only upgrades if a newer version is available. Errors are silently ignored.
-// DISABLED when running via npm link (local dev fork).
+// DISABLED when:
+// 1. KIMAKI_DISABLE_AUTO_UPGRADE is set
+// 2. Running via npm/bun link (local dev fork)
+// 3. Running from a git checkout with non-official remotes (fork detection)
 export async function backgroundUpgradeKimaki(): Promise<void> {
-  // Skip auto-upgrade when running via npm link (local dev fork)
+  // Skip auto-upgrade when explicitly disabled via environment variable
+  if (process.env.KIMAKI_DISABLE_AUTO_UPGRADE) {
+    logger.log('Background upgrade disabled: KIMAKI_DISABLE_AUTO_UPGRADE is set')
+    return
+  }
+
+  // Skip auto-upgrade when running via npm/bun link (local dev fork)
   if (isNpmLinked()) {
-    logger.debug('Skipping background upgrade: running via npm link (local dev fork)')
+    logger.debug('Skipping background upgrade: running via npm/bun link (local dev fork)')
+    return
+  }
+
+  // Skip auto-upgrade when running from a fork (detected via git remotes)
+  const forkReason = detectIfFork()
+  if (forkReason) {
+    logger.log(`Background upgrade disabled: ${forkReason}`)
     return
   }
 
@@ -129,17 +155,17 @@ export async function backgroundUpgradeKimaki(): Promise<void> {
     }
 
     const pm = detectPm()
-    logger.debug(`Background kimaki upgrade started: v${current} -> v${latest}`)
+    logger.log(`Background kimaki upgrade started: v${current} -> v${latest}`)
     await execAsync(`${pm} i -g kimaki@latest`, { timeout: 120_000 })
-    logger.debug(`Background kimaki upgrade completed: v${latest}`)
+    logger.log(`Background kimaki upgrade completed: v${latest}`)
   } catch {
     // silently ignored, non-critical
   }
 }
 
 /**
- * Detect if kimaki is running via `npm link` (local dev fork) rather than
- * a regular global install from npm. When running via npm link, the global
+ * Detect if kimaki is running via `npm link` or `bun link` (local dev fork) rather than
+ * a regular global install from npm. When running via link, the global
  * node_modules has a symlink pointing back to the local source tree.
  * We detect this by resolving the real path of the running script and checking
  * for a .git directory nearby, which only exists in development checkouts.
@@ -164,5 +190,96 @@ export function isNpmLinked(): boolean {
     return false
   } catch {
     return false
+  }
+}
+
+/**
+ * Detect if kimaki is running from a fork by checking git remotes.
+ * Returns a string explaining why it's detected as a fork, or null if not a fork.
+ * 
+ * Detection:
+ * 1. Find the package.json directory by walking up from the running script
+ * 2. Check if there's a .git directory in the package directory or parent
+ * 3. Run `git remote get-url origin` to get the origin remote
+ * 4. If origin doesn't point to an official repo URL, it's a fork
+ * 
+ * Note: We check 'origin' specifically, not all remotes. Many developers
+ * use 'upstream' to track the official repo while 'origin' points to their fork.
+ */
+export function detectIfFork(): string | null {
+  try {
+    // Find the package directory (where package.json is)
+    const script = process.argv[1]
+    if (!script) return null
+    
+    let dir = path.dirname(script)
+    while (dir !== path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, 'package.json'))) {
+        break
+      }
+      dir = path.dirname(dir)
+    }
+    
+    // Check if there's a .git directory in this directory or any parent
+    let gitDir = dir
+    let foundGit = false
+    while (gitDir !== path.dirname(gitDir)) {
+      if (fs.existsSync(path.join(gitDir, '.git'))) {
+        foundGit = true
+        break
+      }
+      gitDir = path.dirname(gitDir)
+    }
+    
+    if (!foundGit) {
+      // Not running from a git checkout - likely a normal installed version
+      return null
+    }
+    
+    // Check specifically the 'origin' remote - this is the key indicator
+    // Many forks have 'upstream' pointing to official repo while 'origin' is their fork
+    let originUrl: string | null = null
+    try {
+      originUrl = execSync('git remote get-url origin', {
+        cwd: gitDir,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim()
+    } catch {
+      // 'origin' remote might not exist
+      originUrl = null
+    }
+    
+    // If no origin remote, check all remotes
+    if (!originUrl) {
+      const remotes = execSync('git remote -v', {
+        cwd: gitDir,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim()
+      
+      if (!remotes) {
+        // No remotes configured - could be a local-only repo
+        return 'running from local git repo with no remotes (likely a fork)'
+      }
+      
+      // If there are remotes but no 'origin', it's a non-standard setup
+      // Treat as potential fork to avoid accidentally upgrading
+      return `running from git repo with no 'origin' remote (treating as potential fork)`
+    }
+    
+    // Check if origin points to an official repo
+    const originIsOfficial = OFFICIAL_REPOS.some(
+      officialRepo => originUrl.toLowerCase().includes(officialRepo.toLowerCase())
+    )
+    
+    if (!originIsOfficial) {
+      return `running from fork (origin: ${originUrl}, expected official repo)`
+    }
+    
+    return null
+  } catch {
+    // Git command failed or not in a git repo
+    return null
   }
 }

@@ -316,9 +316,10 @@ async function ensureExternalSessionThread({
   }
 
   const parentChannel = await discordClient.channels.fetch(channelId).catch((error) => {
-    return new Error(`Failed to fetch parent channel ${channelId}`, {
-      cause: error,
-    })
+    return new Error(
+      `Failed to fetch parent channel ${channelId} (channel may have been deleted or bot lacks access)`,
+      { cause: error },
+    )
   })
   if (parentChannel instanceof Error) {
     return parentChannel

@@ -1,0 +1,63 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "rebuild and test",
+    "shownAt": "2026-05-11T16:52:42.671Z",
+    "turnId": "ef9bbb55",
+    "sourceLeafId": "ef9bbb55",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "d248ddf1",
+      "suggestedPrompt": "let me test this real quick",
+      "actualUserPrompt": "I tested and the │  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n│  15:13 SESSION  [LISTENER] Connected to event stream for thread 1503279247735783506\n\nbug is still there. Did we do a local reinstall?",
+      "classification": "changed_course",
+      "similarity": 0.03676470588235294,
+      "timestamp": "2026-05-11T07:13:42.921Z"
+    },
+    {
+      "turnId": "650c3607",
+      "suggestedPrompt": "restarted, still seeing the repeated connected messages",
+      "actualUserPrompt": "restarted. Now there isn't the problem of repeated connections, but instead the bug now is that kimaki is not responding to my messages. I sent, it does not reply\n│\n└  ✨ Bot ready! Listening for messages...\n\n│  16:35 CLI      Background channel sync completed for 2 guild(s)\n│  16:35 CHANNEL  Default kimaki channel already exists: 1502726554852003880\n│  16:35 CHANNEL  Default kimaki channel already exists: 1491674631940210728\n│  16:35 DISCORD  Message in thread I found that the Advanced Custom Pronunciation module isn't well designed. It do (1503273969430823145)\n│  16:35 VOICE    [SESSION] Found session ses_1ea6674f9ffegKiPJRMcc1lXeP for thread 1503273969430823145\n│  16:37 VOICE    [GUILD_TEXT] Message in text channel #kimaki-pie-kimaki-pi (1502726554852003880)\n│  16:37 DISCORD  DIRECTORY: Found kimaki.directory: /Users/caffae/.kimaki/projects/kimaki\n│  16:37 DISCORD  Created thread \"How do I remove kimaki from this channel, because I have another discord server\" (1503315080559984701)",
+      "classification": "changed_course",
+      "similarity": 0.07570300676904307,
+      "timestamp": "2026-05-11T08:38:32.688Z"
+    },
+    {
+      "turnId": "884ebe32",
+      "suggestedPrompt": "restarted, still not responding",
+      "actualUserPrompt": "Did you do a relink?",
+      "classification": "changed_course",
+      "similarity": 0.17647058823529413,
+      "timestamp": "2026-05-11T09:29:54.527Z"
+    },
+    {
+      "turnId": "8e11688e",
+      "suggestedPrompt": "restarted, testing now",
+      "actualUserPrompt": "restarted, testing now. Error:\n\n│  19:22 CHANNEL  Default kimaki channel already exists: 1502726554852003880\n│  19:22 CHANNEL  Default kimaki channel already exists: 1491674631940210728\n■  19:22 OPENCODE ERROR 2026-05-11T11:22:04 +5919ms service=mcp clientName=context7 error=MCP error -32601: Method not found failed to get prompts\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n●  19:22 CLI      COMMANDS: Successfully registered 96 slash commands for 2 guild(s)\n│  19:22 CLI      Slash commands registered!\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:22 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:23 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n▲  19:23 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n│  19:23 VOICE    [GUILD_TEXT] Message in text channel #telegram-to-router (1492380580405317744)\n│  19:23 DISCORD  DIRECTORY: Found kimaki.directory: /Users/caffae/Local-Projects-2026/Simple-Bot-Checker-Listener/Telegram-To-Router\n▲  19:23 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n│  19:23 DISCORD  Created thread \"Evaluate the code for any logic bugs. Give me an outline of the features.\" (1503356804485087282)\n│  19:23 SESSION  [LISTENER] Subscribing to event stream for thread 1503356804485087282 directory=/Users/caffae/Local-Projects-2026/Simple-Bot-Checker-Listener/Telegram-To-Router\n│  19:23 SESSION  [LISTENER] Connected to global event stream for thread 1503356804485087282\n│  19:23 MODEL    [MODEL] Snapshotted session model ollama-cloud/glm-5.1 for session ses_1e9391a29ffeb5isAE5Ke9oM7s\n│  19:23 SESSION  [INGRESS] promptAsync accepted by opencode queue sessionId=ses_1e9391a29ffeb5isAE5Ke9oM7s threadId=1503356804485087282\n│  19:23 SESSION  [SESSION IDLE] session became idle sessionId=ses_1e9391a29ffeb5isAE5Ke9oM7s drainQueue=false phase=idle,assistant=msg_e16c6e8cb001iz4FUxdMkJ6y2B,assistantCount=1\n▲  19:23 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function\n│  19:23 SESSION  [TITLE] Renamed thread 1503356804485087282 to \"Logic review and feature outline\" from OpenCode session title\n▲  19:23 OPENCODE [EXTERNAL_SYNC] Failed syncing session ses_1ed516134ffe2gJNc46o6EGkx2: todos.findIndex is not a function",
+      "classification": "changed_course",
+      "similarity": 0.018426724137931033,
+      "timestamp": "2026-05-11T11:23:34.489Z"
+    },
+    {
+      "turnId": "3501bd45",
+      "suggestedPrompt": "Fix the todos.findIndex error",
+      "actualUserPrompt": "Fix the todos.findIndex error",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-05-11T11:53:00.737Z"
+    },
+    {
+      "turnId": "3501bd45",
+      "suggestedPrompt": "I'll restart and test if it responds now",
+      "actualUserPrompt": "Fix the todos.findIndex error",
+      "classification": "changed_course",
+      "similarity": 0.17391304347826086,
+      "timestamp": "2026-05-11T11:54:35.691Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 1
+}

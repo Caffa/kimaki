@@ -208,9 +208,24 @@ export async function handleLoginCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
+  // Defer reply as the VERY FIRST action — before any logging.
+  // logger.log uses fs.appendFileSync which blocks the event loop.
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  } catch (deferError) {
+    loginLogger.error('[LOGIN] deferReply failed:', deferError)
+    try {
+      await interaction.reply({
+        content: 'Could not start login. Please try again.',
+        flags: MessageFlags.Ephemeral,
+      })
+    } catch (replyError) {
+      loginLogger.error('[LOGIN] Both deferReply and reply failed:', replyError)
+      return
+    }
+    return
+  }
   loginLogger.log('[LOGIN] handleLoginCommand called')
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
   const channel = interaction.channel
   if (!channel) {

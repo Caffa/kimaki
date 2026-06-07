@@ -322,9 +322,11 @@ export async function recordModelUsage({ appId, modelId, variant }: { appId: str
     })
 
   // Keep only last 10 models per app
+  // SQLite requires LIMIT when using OFFSET, so use a large limit
   const staleRows = await db.query.recent_models.findMany({
     where: { app_id: appId },
     orderBy: { last_used_at: 'desc' },
+    limit: 1_000_000,
     offset: 10,
     columns: { id: true },
   })
@@ -340,7 +342,7 @@ export async function getRecentModels(appId: string) {
   return db.query.recent_models.findMany({
     where: { app_id: appId },
     orderBy: { last_used_at: 'desc' },
-    limit: 10,
+    limit: 5,
   })
 }
 
