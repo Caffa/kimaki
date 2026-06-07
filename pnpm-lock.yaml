@@ -97,7 +97,7 @@ importers:
         specifier: workspace:^
         version: link:../errore
       figlet:
-        specifier: 1.11.0
+        specifier: ^1.11.0
         version: 1.11.0
       goke:
         specifier: ^6.9.0
@@ -160,6 +160,9 @@ importers:
       '@types/bun':
         specifier: latest
         version: 1.3.14
+      '@types/figlet':
+        specifier: ^1.7.0
+        version: 1.7.0
       '@types/heic-convert':
         specifier: ^2.1.0
         version: 2.1.0
@@ -2688,6 +2691,9 @@ packages:
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
+  '@types/figlet@1.7.0':
+    resolution: {integrity: sha512-KwrT7p/8Eo3Op/HBSIwGXOsTZKYiM9NpWRBJ5sVjWP/SmlS+oxxRvJht/FNAtliJvja44N3ul1yATgohnVBV0Q==}
 
   '@types/folder-hash@4.0.4':
     resolution: {integrity: sha512-c+PwHm51Dw3fXM8SDK+93PO3oXdk4XNouCCvV67lj4aijRkZz5g67myk+9wqWWnyv3go6q96hT6ywcd3XtoZiQ==}
@@ -8092,6 +8098,8 @@ snapshots:
   '@types/estree@1.0.8': {}
 
   '@types/estree@1.0.9': {}
+
+  '@types/figlet@1.7.0': {}
 
   '@types/folder-hash@4.0.4': {}
 
