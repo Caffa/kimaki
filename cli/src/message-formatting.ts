@@ -8,11 +8,13 @@ import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord
 // Extended FilePartInput with original Discord URL for reference in prompts
 export type DiscordFileAttachment = FilePartInput & {
   sourceUrl?: string
+  visionDescription?: string
 }
 
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
 import { processImage } from './image-utils.js'
+import { describeImage } from './vision-description.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
 
 // Generic message type compatible with both v1 and v2 SDK
@@ -328,6 +330,12 @@ export async function getFileAttachments(
       // Process image (resize if needed, convert to JPEG)
       const { buffer, mime } = await processImage(rawBuffer, originalMime)
 
+      // Generate vision description for debugging (only for images)
+      const visionDescription =
+        mime.startsWith('image/') && !mime.includes('gif')
+          ? await describeImage(buffer, attachment.name)
+          : undefined
+
       const base64 = buffer.toString('base64')
       const dataUrl = `data:${mime};base64,${base64}`
 
@@ -341,6 +349,7 @@ export async function getFileAttachments(
         filename: attachment.name,
         url: dataUrl,
         sourceUrl: attachment.url,
+        visionDescription,
       }
     }),
   )

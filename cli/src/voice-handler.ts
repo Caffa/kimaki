@@ -18,6 +18,9 @@ import * as prism from 'prism-media'
 import dedent from 'string-dedent'
 import {
   Events,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type Client,
   type Message,
   type ThreadChannel,
@@ -31,15 +34,21 @@ import {
   getTranscriptionApiKey,
   findTextChannelByVoiceChannel,
 } from './database.js'
+import { getDb } from './db.js'
+import {
+  startAsrService,
+  stopAsrService,
+  shouldAutoStartAsr,
+} from './asr-service-manager.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
+  SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
-import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
-import { DiscordOperationError, FetchError } from './errors.js'
+import { FetchError } from './errors.js'
 import { store } from './store.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -178,6 +187,71 @@ export async function setupVoiceHandling({
     voiceLogger.log(
       `Voice channel ${channelId} has no associated directory, skipping setup`,
     )
+
+    // Try to notify the user that this voice channel needs configuration
+    let notified = false
+
+    // First try: find a text channel linked to this voice channel
+    const textChannelId = await findTextChannelByVoiceChannel(channelId)
+    if (textChannelId) {
+      try {
+        const textChannel = await discordClient.channels.fetch(textChannelId)
+        if (textChannel?.isTextBased() && 'send' in textChannel) {
+          await textChannel.send({
+            content:
+              '⚠️ This voice channel is not linked to a project directory. Use `/add-project` to link it, or join a configured voice channel.',
+            flags: NOTIFY_MESSAGE_FLAGS,
+          })
+          notified = true
+        }
+      } catch (e) {
+        voiceLogger.error('Failed to send voice channel not configured message:', e)
+      }
+    }
+
+    // Second try: find any kimaki-related text channel in the same guild
+    if (!notified) {
+      try {
+        const voiceChannel = await discordClient.channels.fetch(channelId)
+        if (
+          voiceChannel?.isVoiceBased() &&
+          'guild' in voiceChannel &&
+          voiceChannel.guild
+        ) {
+          const guildId = voiceChannel.guild.id
+          const db = await getDb()
+          const textChannels = await db.query.channel_directories.findMany({
+            where: { channel_type: 'text' },
+            columns: { channel_id: true },
+            limit: 1,
+          })
+          for (const row of textChannels) {
+            try {
+              const ch = await discordClient.channels.fetch(row.channel_id)
+              if (
+                ch?.isTextBased() &&
+                'send' in ch &&
+                'guild' in ch &&
+                ch.guild?.id === guildId
+              ) {
+                await ch.send({
+                  content:
+                    '⚠️ Voice channel not configured. Please use `/add-project` with `--enable-voice` to link a voice channel to a project directory.',
+                  flags: NOTIFY_MESSAGE_FLAGS,
+                })
+                notified = true
+                break
+              }
+            } catch {
+              // Channel may not exist or be in this guild
+            }
+          }
+        }
+      } catch (e) {
+        voiceLogger.error('Failed to send notification to fallback channel:', e)
+      }
+    }
+
     return
   }
 
@@ -264,7 +338,9 @@ export async function setupVoiceHandling({
         if (!params.error) {
           return undefined
         }
-        if (params.error instanceof Error) return params.error.message
+        if (params.error instanceof Error) {
+          return params.error.message
+        }
         return String(params.error)
       })()
 
@@ -312,127 +388,99 @@ export async function setupVoiceHandling({
   let speakingSessionCount = 0
 
   receiver.speaking.on('start', (userId) => {
-    void (async () => {
-      voiceLogger.log(`User ${userId} started speaking`)
+    voiceLogger.log(`User ${userId} started speaking`)
 
-      const guild = discordClient.guilds.cache.get(guildId)
-      if (!guild) {
-        voiceLogger.warn(
-          `[VOICE] Ignoring speaker ${userId}: guild ${guildId} not cached`,
-        )
-        return
-      }
+    speakingSessionCount++
+    const currentSessionCount = speakingSessionCount
+    voiceLogger.log(`Speaking session ${currentSessionCount} started`)
 
-      const member = await guild.members
-        .fetch(userId)
-        .catch((e) => {
-          return new Error('Failed to fetch voice speaker member', { cause: e })
+    const audioStream = receiver.subscribe(userId, {
+      end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
+    })
+
+    const decoder = new prism.opus.Decoder({
+      rate: 48000,
+      channels: 2,
+      frameSize: 960,
+    })
+
+    decoder.on('error', (error) => {
+      voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
+      void notifyError(error, `Opus decoder error for user ${userId}`)
+    })
+
+    const downsampleTransform = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        try {
+          const downsampled = convertToMono16k(chunk)
+          callback(null, downsampled)
+        } catch (error) {
+          callback(error as Error)
+        }
+      },
+    })
+
+    const framer = frameMono16khz()
+
+    const pipeline = audioStream
+      .pipe(decoder)
+      .pipe(downsampleTransform)
+      .pipe(framer)
+
+    pipeline
+      .on('data', (frame: Buffer) => {
+        if (currentSessionCount !== speakingSessionCount) {
+          return
+        }
+
+        if (!voiceData.genAiWorker) {
+          voiceLogger.warn(
+            `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
+          )
+          return
+        }
+
+        voiceData.userAudioStream?.write(frame)
+
+        voiceData.genAiWorker.sendRealtimeInput({
+          audio: {
+            mimeType: 'audio/pcm;rate=16000',
+            data: frame.toString('base64'),
+          },
         })
-      if (member instanceof Error) {
-        voiceLogger.warn(`[VOICE] Ignoring speaker ${userId}: ${member.message}`)
-        return
-      }
-
-      if (!hasKimakiBotPermission(member, guild)) {
-        voiceLogger.log(`[VOICE] Ignoring unauthorized speaker ${userId}`)
-        return
-      }
-
-      speakingSessionCount++
-      const currentSessionCount = speakingSessionCount
-      voiceLogger.log(`Speaking session ${currentSessionCount} started`)
-
-      const audioStream = receiver.subscribe(userId, {
-        end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
       })
-
-      const decoder = new prism.opus.Decoder({
-        rate: 48000,
-        channels: 2,
-        frameSize: 960,
-      })
-
-      decoder.on('error', (error) => {
-        voiceLogger.error(`Opus decoder error for user ${userId}:`, error)
-        void notifyError(error, `Opus decoder error for user ${userId}`)
-      })
-
-      const downsampleTransform = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          try {
-            const downsampled = convertToMono16k(chunk)
-            callback(null, downsampled)
-          } catch (error) {
-            callback(error as Error)
-          }
-        },
-      })
-
-      const framer = frameMono16khz()
-
-      const pipeline = audioStream
-        .pipe(decoder)
-        .pipe(downsampleTransform)
-        .pipe(framer)
-
-      pipeline
-        .on('data', (frame: Buffer) => {
-          if (currentSessionCount !== speakingSessionCount) {
-            return
-          }
-
-          if (!voiceData.genAiWorker) {
-            voiceLogger.warn(
-              `[VOICE] Received audio frame but no GenAI worker active for guild ${guildId}`,
-            )
-            return
-          }
-
-          voiceData.userAudioStream?.write(frame)
-
-          voiceData.genAiWorker.sendRealtimeInput({
-            audio: {
-              mimeType: 'audio/pcm;rate=16000',
-              data: frame.toString('base64'),
-            },
+      .on('end', () => {
+        if (currentSessionCount === speakingSessionCount) {
+          voiceLogger.log(
+            `User ${userId} stopped speaking (session ${currentSessionCount})`,
+          )
+          voiceData.genAiWorker?.sendRealtimeInput({
+            audioStreamEnd: true,
           })
-        })
-        .on('end', () => {
-          if (currentSessionCount === speakingSessionCount) {
-            voiceLogger.log(
-              `User ${userId} stopped speaking (session ${currentSessionCount})`,
-            )
-            voiceData.genAiWorker?.sendRealtimeInput({
-              audioStreamEnd: true,
-            })
-          } else {
-            voiceLogger.log(
-              `User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
-            )
-          }
-        })
-        .on('error', (error) => {
-          voiceLogger.error(`Pipeline error for user ${userId}:`, error)
-          void notifyError(error, `Voice pipeline error for user ${userId}`)
-        })
-
-      audioStream.on('error', (error) => {
-        voiceLogger.error(`Audio stream error for user ${userId}:`, error)
-        void notifyError(error, `Audio stream error for user ${userId}`)
+        } else {
+          voiceLogger.log(
+            `User ${userId} stopped speaking (session ${currentSessionCount}), but skipping audioStreamEnd because newer session ${speakingSessionCount} exists`,
+          )
+        }
+      })
+      .on('error', (error) => {
+        voiceLogger.error(`Pipeline error for user ${userId}:`, error)
+        void notifyError(error, `Voice pipeline error for user ${userId}`)
       })
 
-      downsampleTransform.on('error', (error) => {
-        voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
-        void notifyError(error, `Downsample transform error for user ${userId}`)
-      })
+    audioStream.on('error', (error) => {
+      voiceLogger.error(`Audio stream error for user ${userId}:`, error)
+      void notifyError(error, `Audio stream error for user ${userId}`)
+    })
 
-      framer.on('error', (error) => {
-        voiceLogger.error(`Framer error for user ${userId}:`, error)
-        void notifyError(error, `Framer error for user ${userId}`)
-      })
-    })().catch((error) => {
-      voiceLogger.error(`Error handling voice speaker ${userId}:`, error)
-      void notifyError(error, `Error handling voice speaker ${userId}`)
+    downsampleTransform.on('error', (error) => {
+      voiceLogger.error(`Downsample transform error for user ${userId}:`, error)
+      void notifyError(error, `Downsample transform error for user ${userId}`)
+    })
+
+    framer.on('error', (error) => {
+      voiceLogger.error(`Framer error for user ${userId}:`, error)
+      void notifyError(error, `Framer error for user ${userId}`)
     })
   })
 }
@@ -537,12 +585,13 @@ export async function processVoiceAttachment({
     if (isNewThread) {
       const threadName = result.transcription.replace(/\s+/g, ' ').trim().slice(0, 80)
       if (threadName) {
-        const renameResult = await thread.setName(threadName)
-          .catch((e) =>
+        const renameResult = await errore.tryAsync({
+          try: () => thread.setName(threadName),
+          catch: (e) =>
             new Error('Failed to update thread name from deterministic transcription', {
               cause: e,
             }),
-          )
+        })
         if (renameResult instanceof Error) {
           voiceLogger.log(`Could not update thread name:`, renameResult.message)
         }
@@ -555,8 +604,10 @@ export async function processVoiceAttachment({
     return result
   }
 
-  const audioResponse = await fetch(audioAttachment.url)
-    .catch((e) => new FetchError({ url: audioAttachment.url, cause: e }))
+  const audioResponse = await errore.tryAsync({
+    try: () => fetch(audioAttachment.url),
+    catch: (e) => new FetchError({ url: audioAttachment.url, cause: e }),
+  })
   if (audioResponse instanceof Error) {
     voiceLogger.error(
       `Failed to download audio attachment:`,
@@ -591,47 +642,69 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  // Resolve transcription provider and API key.
+  // On Apple Silicon, parakeet is the default provider (no API key needed).
+  // transcribeAudio() handles this internally when no provider/apiKey is passed.
+  // Only pass cloud provider/key when parakeet is unavailable or explicitly overridden.
+  const asrEnv = process.env.ASR_PROVIDER?.toLowerCase()
+  const parakeetDefault =
+    process.platform === 'darwin' &&
+    process.arch === 'arm64' &&
+    asrEnv !== 'openai' &&
+    asrEnv !== 'gemini' &&
+    asrEnv !== 'vllm'
+
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
-  if (appId) {
-    const stored = await getTranscriptionApiKey(appId)
-    if (stored) {
-      transcriptionApiKey = stored.apiKey
-      transcriptionProvider = stored.provider
-    }
-  }
-  if (!transcriptionApiKey) {
-    if (process.env.OPENAI_API_KEY) {
-      transcriptionApiKey = process.env.OPENAI_API_KEY
-      transcriptionProvider = 'openai'
-    } else if (process.env.GEMINI_API_KEY) {
-      transcriptionApiKey = process.env.GEMINI_API_KEY
-      transcriptionProvider = 'gemini'
-    }
-  }
 
-  if (!transcriptionApiKey) {
+  if (!parakeetDefault) {
     if (appId) {
-      await showApiKeyRequiredButton({
-        thread,
-        appId,
-        message: 'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
-      })
-    } else {
-      await sendThreadMessage(
-        thread,
-        'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
-      )
+      const stored = await getTranscriptionApiKey(appId)
+      if (stored) {
+        transcriptionApiKey = stored.apiKey
+        transcriptionProvider = stored.provider
+      }
     }
-    return null
+    if (!transcriptionApiKey) {
+      if (process.env.OPENAI_API_KEY) {
+        transcriptionApiKey = process.env.OPENAI_API_KEY
+        transcriptionProvider = 'openai'
+      } else if (process.env.GEMINI_API_KEY) {
+        transcriptionApiKey = process.env.GEMINI_API_KEY
+        transcriptionProvider = 'gemini'
+      }
+    }
+
+    if (!transcriptionApiKey) {
+      if (appId) {
+        const button = new ButtonBuilder()
+          .setCustomId(`transcription_apikey:${appId}`)
+          .setLabel('Set Transcription API Key')
+          .setStyle(ButtonStyle.Primary)
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
+
+        await thread.send({
+          content:
+            'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
+          components: [row],
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+      } else {
+        await sendThreadMessage(
+          thread,
+          'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
+        )
+      }
+      return null
+    }
   }
 
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
+    apiKey: parakeetDefault ? undefined : transcriptionApiKey,
+    provider: parakeetDefault ? undefined : transcriptionProvider,
     mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,
@@ -665,8 +738,10 @@ export async function processVoiceAttachment({
     const threadName = text.replace(/\s+/g, ' ').trim().slice(0, 80)
     if (threadName) {
       const renamed = await Promise.race([
-        thread.setName(threadName)
-          .catch((e) => new DiscordOperationError({ operation: 'renameChannel', cause: e })),
+        errore.tryAsync({
+          try: () => thread.setName(threadName),
+          catch: (e) => e,
+        }),
         new Promise<null>((resolve) => {
           setTimeout(() => {
             resolve(null)
