@@ -1,0 +1,47 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "run kimaki and test the local voice transcription works",
+    "shownAt": "2026-06-07T06:20:14.161Z",
+    "turnId": "9f5e7195",
+    "sourceLeafId": "9f5e7195",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "88aa516f",
+      "suggestedPrompt": "I don't remember changing it, probably ran an update command by accident",
+      "actualUserPrompt": "I upgraded it. Can you check the original Kimaki to see how they handled upgrading to a newer version of Open Code SDK? Because I would like to use a newer version of Open Code because I assume that they have done a great deal of changes. So can you check the Open Code GitHub repo too to see what changes there are and whether or not we can upgrade to the new version and just change our code?",
+      "classification": "changed_course",
+      "similarity": 0.13012734820234995,
+      "timestamp": "2026-06-07T04:51:37.771Z"
+    },
+    {
+      "turnId": "54ec2b6a",
+      "suggestedPrompt": "Let's do option 3, the manual changes.",
+      "actualUserPrompt": "Commit so that I can revert back to this stage if necessary and then we can try and cherry pick some of the SDK commits or we could just try to apply the changes that I want from my version to the online Kimaki version. There are a few things I want to do. I want to sync both open code and Pi sessions into my discord just so that I know that these sessions existed for Pi. If I can't send commands to Pi, I still want to know that we have had runs in this directory. But that's only if it's possible. Then most importantly, I want to make sure that we have our audio transcription, the local audio transcription over here and the banner to show that it is the local transcription version of Kimaki on startup. I also have changes to ensure that even if the model is not capable of vision, I will route any pictures given to a local vision model so that it can at least get a description of the picture instead of telling me that it can't see the picture.",
+      "classification": "changed_course",
+      "similarity": 0.05609126456854334,
+      "timestamp": "2026-06-07T05:03:13.244Z"
+    },
+    {
+      "turnId": "5df63d24",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "Sorry, can you just skip the cherry picking approach and instead I want you to get the newest version of Kimaki downloaded and then I want you to add the fixes that I made to my local version. So the local voice banner, the local voice Parakeet server and remove the open AI voice transcription option entirely. At vision routing and just test until it works. Be organised in the way you approach this. Note down what features we must implement and how we should do it. Do a different branch to checkout the newest version of kimaki and add these features.",
+      "classification": "changed_course",
+      "similarity": 0.014184397163120567,
+      "timestamp": "2026-06-07T06:01:09.586Z"
+    },
+    {
+      "turnId": "0929ebdb",
+      "suggestedPrompt": "Yes, copy the ASR service files and verify everything works.",
+      "actualUserPrompt": "The asr-service/ directory with the Python ASR server should be included. Get that. Test. Make sure local asr works",
+      "classification": "changed_course",
+      "similarity": 0.30409937888198757,
+      "timestamp": "2026-06-07T06:18:42.614Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}
