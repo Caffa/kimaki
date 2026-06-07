@@ -413,12 +413,58 @@ function ensureProcessCleanupHandlersRegistered(): void {
   })
 }
 
+/** Kill orphaned .opencode server processes from previous crashed sessions.
+ * When the bot crashes or is SIGKILL'd, the opencode child process is orphaned
+ * (reparented to PID 1) and left running indefinitely. This cleanup runs on
+ * each startup so stale processes from prior sessions don't leak resources.
+ * Only targets processes whose command line matches
+ * `opencode serve --port <num>` and whose parent PID is 1 (launchd). */
+export async function killOrphanedOpencodeServers(): Promise<void> {
+  if (process.platform === 'win32') return
+  const { execSync } = await import('node:child_process')
+  try {
+    // Find .opencode processes with parent PID 1 (reparented orphans)
+    const output = execSync(
+      `pgrep -f '.opencode serve --port' | xargs -I{} ps -o pid=,ppid= -p {} 2>/dev/null`,
+      { encoding: 'utf8', timeout: 5000 },
+    )
+    const pidsToKill: number[] = []
+    for (const line of output.split('\n')) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)$/)
+      if (match) {
+        const pid = parseInt(match[1]!, 10)
+        const ppid = parseInt(match[2]!, 10)
+        if (ppid === 1 && pid !== process.pid) {
+          pidsToKill.push(pid)
+        }
+      }
+    }
+    for (const pid of pidsToKill) {
+      try {
+        process.kill(pid, 'SIGTERM')
+        opencodeLogger.log(`Killed orphaned opencode server (pid: ${pid})`)
+      } catch {
+        // Process may have already exited
+      }
+    }
+  } catch {
+    // pgrep returns non-zero when no processes match — not an error.
+  }
+}
+
 // ── Resolve opencode binary ──────────────────────────────────────
 // Resolve the full path to the opencode binary so we can spawn without
 // shell: true. Using shell: true creates an intermediate sh process — when
 // cleanup sends SIGTERM it only kills the shell, leaving the actual opencode
 // process orphaned (reparented to PID 1). Resolving the path upfront lets
 // us spawn the binary directly and SIGTERM reaches the right process.
+//
+// The npm-installed opencode bin (e.g. /opt/homebrew/bin/opencode) is a
+// Node.js wrapper that uses spawnSync to run the actual native binary
+// (.opencode). Sending SIGTERM to the wrapper kills it but strands the
+// inner process as an orphan (reparented to PID 1). To prevent this, we
+// resolve through the wrapper to the native binary so SIGTERM reaches
+// the right process directly.
 //
 // Resolution order:
 // 1. OPENCODE_PATH env var (explicit user override)
@@ -429,6 +475,60 @@ function ensureProcessCleanupHandlersRegistered(): void {
 // checks for it via ensureCommandAvailable and prompts to install if missing.
 
 let resolvedOpencodeCommand: string | null = null
+
+/**
+ * If the resolved path is the npm opencode wrapper (a Node.js script that
+ * spawns the native .opencode binary via spawnSync), resolve through it to
+ * the actual native binary so we can spawn it directly without the wrapper.
+ * Without this, SIGTERM to the wrapper process orphans the native binary.
+ */
+function resolveNativeBinary(wrapperPath: string): string {
+  // Follow symlinks first (e.g. /opt/homebrew/bin/opencode →
+  // /opt/homebrew/lib/node_modules/opencode-ai/bin/opencode).
+  let realPath: string
+  try {
+    realPath = fs.realpathSync(wrapperPath)
+  } catch {
+    return wrapperPath
+  }
+
+  // Check if this is the npm wrapper by looking for the native binary in the same
+  // directory as the resolved script. The wrapper script does this same lookup
+  // using scriptDir + '/.opencode' (Unix) or the platform-specific binary name,
+  // so we mirror its logic.
+  const dir = path.dirname(realPath)
+  // On Unix the native binary is named '.opencode'; on Windows it's 'opencode.exe'.
+  // The npm wrapper script uses the same naming convention.
+  const nativeBinaryName = process.platform === 'win32' ? 'opencode.exe' : '.opencode'
+  const nativeBinary = path.join(dir, nativeBinaryName)
+  try {
+    if (fs.existsSync(nativeBinary) && fs.statSync(nativeBinary).isFile()) {
+      // Verify it's a native binary (not another script) by reading the
+      // first few bytes. ELF executables start with \x7fELF, Mach-O with
+      // 0xfeedfacf (BE) or 0xcefaedfe (LE), and PE with MZ.
+      const fd = fs.openSync(nativeBinary, 'r')
+      try {
+        const buf = Buffer.alloc(4)
+        fs.readSync(fd, buf, 0, 4, 0)
+        const isNative =
+          (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) || // ELF
+          buf.readUInt32LE(0) === 0xfeedfacf || // Mach-O 64-bit LE (arm64, x86_64)
+          buf.readUInt32BE(0) === 0xfeedfacf || // Mach-O 64-bit BE
+          buf.readUInt32BE(0) === 0xcafebabe || // Mach-O universal/fat binary
+          (buf[0] === 0x4d && buf[1] === 0x5a) // PE (MZ)
+        if (isNative) {
+          return nativeBinary
+        }
+      } finally {
+        fs.closeSync(fd)
+      }
+    }
+  } catch {
+    // Fall through to return wrapperPath
+  }
+
+  return wrapperPath
+}
 
 export function resolveOpencodeCommand(): string {
   if (resolvedOpencodeCommand) {
@@ -442,8 +542,9 @@ export function resolveOpencodeCommand(): string {
       isWindows: process.platform === 'win32',
     })
     if (resolvedFromEnv) {
-      resolvedOpencodeCommand = resolvedFromEnv
-      return resolvedFromEnv
+      const resolved = resolveNativeBinary(resolvedFromEnv)
+      resolvedOpencodeCommand = resolved
+      return resolved
     }
   }
 
@@ -474,10 +575,14 @@ export function resolveOpencodeCommand(): string {
     return 'opencode'
   }
 
-  resolvedOpencodeCommand = result
-  opencodeLogger.log(`Resolved opencode binary: ${result}`)
-  return result
+  // Resolve through the npm wrapper to the native binary so SIGTERM
+  // reaches the actual process directly, preventing orphaned processes.
+  const resolved = resolveNativeBinary(result)
+  resolvedOpencodeCommand = resolved
+  opencodeLogger.log(`Resolved opencode binary: ${resolved}`)
+  return resolved
 }
+
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -573,6 +678,9 @@ async function ensureSingleServer({
   if (startingServer) {
     return startingServer
   }
+
+  // Clean up any opencode servers orphaned by a previous crashed session.
+  await killOrphanedOpencodeServers()
 
   startingServer = startSingleServer({ directory: startupDirectory })
   try {
