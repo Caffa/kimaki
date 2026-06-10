@@ -2999,10 +2999,15 @@ export class ThreadSessionRuntime {
         }
         const imageList = images
           .map((img) => {
-            return `- ${img.sourceUrl || img.filename}`
+            const header = `**${img.sourceUrl || img.filename}**`
+            if (img.visionDescription) {
+              return `${header}\n${img.visionDescription}`
+            }
+            // Fallback: tell model it cannot read the image directly
+            return `${header}\n(Image attached but no vision description available - ask user for details if needed)`
           })
-          .join('\n')
-        return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
+          .join('\n\n')
+        return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n\n${imageList}`
       })()
 
       // ── Worktree + channel topic for per-turn prompt context ──
@@ -3705,10 +3710,15 @@ export class ThreadSessionRuntime {
       }
       const imageList = images
         .map((img) => {
-          return `- ${img.sourceUrl || img.filename}`
+          const header = `**${img.sourceUrl || img.filename}**`
+          if (img.visionDescription) {
+            return `${header}\n${img.visionDescription}`
+          }
+          // Fallback: tell model it cannot read the image directly
+          return `${header}\n(Image attached but no vision description available - ask user for details if needed)`
         })
-        .join('\n')
-      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
+        .join('\n\n')
+      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n\n${imageList}`
     })()
 
     // ── Worktree info for per-turn prompt context ─────────────

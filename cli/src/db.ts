@@ -96,6 +96,7 @@ async function initializeDb(): Promise<KimakiDb> {
     if (isFileMode) {
       await client.execute('PRAGMA journal_mode = WAL')
       await client.execute('PRAGMA busy_timeout = 5000')
+      await client.execute('PRAGMA foreign_keys = ON')
     }
 
     dbLogger.log('Running schema migrations...')

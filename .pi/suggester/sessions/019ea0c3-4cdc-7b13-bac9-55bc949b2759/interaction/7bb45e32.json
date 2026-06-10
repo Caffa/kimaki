@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "force push integrate-upstream-features",
+    "shownAt": "2026-06-07T06:27:34.081Z",
+    "turnId": "7bb45e32",
+    "sourceLeafId": "7bb45e32",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

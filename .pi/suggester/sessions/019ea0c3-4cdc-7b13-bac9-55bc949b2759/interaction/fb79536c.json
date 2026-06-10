@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "fb79536c",
+    "suggestionShownAt": "2026-06-07T06:27:55.467Z",
+    "userPromptSubmittedAt": "2026-06-07T06:30:14.025Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "fb79536c",
+      "suggestedPrompt": "merge integrate-upstream-features",
+      "actualUserPrompt": "Can you merge in the autorestart and the pathfixes? Find the safest route, whether it is just directly coding these features in or merging.",
+      "classification": "changed_course",
+      "similarity": 0.20045500505561173,
+      "timestamp": "2026-06-07T06:30:14.025Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

@@ -1,0 +1,31 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Create a PR for local-voice-features",
+    "shownAt": "2026-06-07T07:16:40.895Z",
+    "turnId": "5bed939e",
+    "sourceLeafId": "5bed939e",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "fb79536c",
+      "suggestedPrompt": "merge integrate-upstream-features",
+      "actualUserPrompt": "Can you merge in the autorestart and the pathfixes? Find the safest route, whether it is just directly coding these features in or merging.",
+      "classification": "changed_course",
+      "similarity": 0.20045500505561173,
+      "timestamp": "2026-06-07T06:30:14.025Z"
+    },
+    {
+      "turnId": "fb9eabcd",
+      "suggestedPrompt": "Yes, verify the build, then push.",
+      "actualUserPrompt": "Yes, verify the build, then push.\n\nWe can also add resolveNativeBinary (and for this specific change, do a git issue on the original kimaki project? is it too complicated?).",
+      "classification": "changed_course",
+      "similarity": 0.2681184668989547,
+      "timestamp": "2026-06-07T07:13:47.315Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}

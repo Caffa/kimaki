@@ -9,3 +9,7 @@ It is very important to me that you make sure we have local Parakeet voice ASR t
 ## 2026-06-07T06:18:42.605Z
 
 The asr-service/ directory with the Python ASR server should be included. Get that. Test. Make sure local asr works
+
+## 2026-06-07T11:17:48.122Z
+
+Yes, add the PRAGMA foreign_keys = ON

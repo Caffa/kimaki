@@ -1,0 +1,22 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "abf1e9cd",
+    "suggestionShownAt": "2026-06-07T07:25:30.682Z",
+    "userPromptSubmittedAt": "2026-06-07T11:15:30.083Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "abf1e9cd",
+      "suggestedPrompt": "continue",
+      "actualUserPrompt": "continue",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-06-07T11:15:30.083Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 5
+}
