@@ -476,11 +476,13 @@ export function getToolSummaryText(part: Part): string {
 
 export function formatTodoList(part: Part): string {
   if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
-  const todos =
-    (part.state.input?.todos as {
-      content: string
-      status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-    }[]) || []
+  const todosRaw = part.state.input?.todos
+  const todos = Array.isArray(todosRaw)
+    ? (todosRaw as {
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      }[])
+    : []
   const activeIndex = todos.findIndex((todo) => {
     return todo.status === 'in_progress'
   })
