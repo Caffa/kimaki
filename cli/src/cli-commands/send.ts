@@ -622,6 +622,7 @@ cli
           botToken,
           embeds: autoStartEmbed,
           rest,
+          splitInsteadOfAttach: notifyOnly,
         })
 
         cliLogger.log('Creating thread...')
