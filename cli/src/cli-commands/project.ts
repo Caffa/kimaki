@@ -22,6 +22,7 @@ import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-e
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
+import { getDefaultGuildId } from '../user-config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
@@ -111,25 +112,65 @@ cli
         }
         guild = foundGuild
       } else {
-        const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
-          where: { channel_type: 'text' },
-          orderBy: { created_at: 'desc' },
-          columns: { channel_id: true },
-        }).then((row) => row?.channel_id)
-
-        if (existingChannelId) {
-          try {
-            const ch = await client.channels.fetch(existingChannelId)
-            if (ch && !ch.isDMBased()) {
-              guild = ch.guild
-            } else {
-              throw new Error('Channel has no guild')
+        // Check for default guild from config
+        const defaultGuildId = getDefaultGuildId()
+        if (defaultGuildId) {
+          const foundGuild = client.guilds.cache.get(defaultGuildId)
+          if (foundGuild) {
+            guild = foundGuild
+          } else {
+            // Try fetching from API if not in cache
+            try {
+              const fetched = await client.guilds.fetch(defaultGuildId)
+              guild = fetched
+            } catch {
+              cliLogger.log('Default guild not found')
+              cliLogger.error(
+                `Default guild from config not found: ${defaultGuildId}. Run 'kimaki config unset defaultGuildId' to clear it.`,
+              )
+              void client.destroy()
+              process.exit(EXIT_NO_RESTART)
             }
-          } catch (error) {
-            cliLogger.debug(
-              'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.stack : String(error),
-            )
+          }
+        } else {
+          // Fall back to auto-detection
+          const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
+            where: { channel_type: 'text' },
+            orderBy: { created_at: 'desc' },
+            columns: { channel_id: true },
+          }).then((row) => row?.channel_id)
+
+          if (existingChannelId) {
+            try {
+              const ch = await client.channels.fetch(existingChannelId)
+              if (ch && !ch.isDMBased()) {
+                guild = ch.guild
+              } else {
+                throw new Error('Channel has no guild')
+              }
+            } catch (error) {
+              cliLogger.debug(
+                'Failed to fetch existing channel while selecting guild:',
+                error instanceof Error ? error.stack : String(error),
+              )
+              let firstGuild = client.guilds.cache.first()
+              if (!firstGuild) {
+                // Cache might be empty, try fetching guilds from API
+                const fetched = await client.guilds.fetch()
+                const firstOAuth2Guild = fetched.first()
+                if (firstOAuth2Guild) {
+                  firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
+                }
+              }
+              if (!firstGuild) {
+                cliLogger.log('No guild found')
+                cliLogger.error('No guild found. Add the bot to a server first.')
+                void client.destroy()
+                process.exit(EXIT_NO_RESTART)
+              }
+              guild = firstGuild
+            }
+          } else {
             let firstGuild = client.guilds.cache.first()
             if (!firstGuild) {
               // Cache might be empty, try fetching guilds from API
@@ -147,23 +188,6 @@ cli
             }
             guild = firstGuild
           }
-        } else {
-          let firstGuild = client.guilds.cache.first()
-          if (!firstGuild) {
-            // Cache might be empty, try fetching guilds from API
-            const fetched = await client.guilds.fetch()
-            const firstOAuth2Guild = fetched.first()
-            if (firstOAuth2Guild) {
-              firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-            }
-          }
-          if (!firstGuild) {
-            cliLogger.log('No guild found')
-            cliLogger.error('No guild found. Add the bot to a server first.')
-            void client.destroy()
-            process.exit(EXIT_NO_RESTART)
-          }
-          guild = firstGuild
         }
       }
 
@@ -476,13 +500,35 @@ cli
       }
       guild = found
     } else {
-      const first = client.guilds.cache.first()
-      if (!first) {
-        cliLogger.error('No guild found. Add the bot to a server first.')
-        void client.destroy()
-        process.exit(EXIT_NO_RESTART)
+      // Check for default guild from config
+      const defaultGuildId = getDefaultGuildId()
+      if (defaultGuildId) {
+        const found = client.guilds.cache.get(defaultGuildId)
+        if (found) {
+          guild = found
+        } else {
+          // Try fetching from API if not in cache
+          try {
+            const fetched = await client.guilds.fetch(defaultGuildId)
+            guild = fetched
+          } catch {
+            cliLogger.error(
+              `Default guild from config not found: ${defaultGuildId}. Run 'kimaki config unset defaultGuildId' to clear it.`,
+            )
+            void client.destroy()
+            process.exit(EXIT_NO_RESTART)
+          }
+        }
+      } else {
+        // Fall back to first guild
+        const first = client.guilds.cache.first()
+        if (!first) {
+          cliLogger.error('No guild found. Add the bot to a server first.')
+          void client.destroy()
+          process.exit(EXIT_NO_RESTART)
+        }
+        guild = first
       }
-      guild = first
     }
 
     const { textChannelId, channelName } = await createProjectChannels({

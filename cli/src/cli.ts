@@ -19,6 +19,7 @@ import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
+import configCommands from './cli-commands/config.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
 import miscCommands from './cli-commands/misc.js'
 import projectCommands from './cli-commands/project.js'
@@ -345,6 +346,7 @@ cli
   )
 
 cli.use(botCommands)
+cli.use(configCommands)
 cli.use(miscCommands)
 cli.use(sendCommands)
 cli.use(taskCommands)

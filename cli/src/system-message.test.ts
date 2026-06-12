@@ -351,6 +351,46 @@ describe('system-message', () => {
       kimaki project add /path/to/repo
       \`\`\`
 
+      ## config commands
+
+      Manage persistent user preferences. Config values are stored in \`~/.kimaki/config.json\` and persist across restarts.
+
+      \`\`\`bash
+      # Set the default projects directory (persists across restarts)
+      kimaki config set --key projectsDir --value /path/to/projects
+
+      # Get current config value
+      kimaki config get --key projectsDir
+
+      # List all config values
+      kimaki config list
+
+      # Remove a config value (revert to default)
+      kimaki config unset --key projectsDir
+      \`\`\`
+
+      The \`projectsDir\` config key controls where \`kimaki project create\` creates new project folders. Priority order:
+      1. CLI flag \`--projects-dir\` (temporary, current session only)
+      2. Config file \`~/.kimaki/config.json\` (persistent)
+      3. \`~/Local-Projects-2026/\` if it exists (default for this user)
+      4. \`<dataDir>/projects\` (legacy fallback)
+
+      The \`defaultGuildId\` config key controls which Discord server (guild) \`kimaki project add\` and \`kimaki project create\` use by default. When set, new projects are added to this guild without requiring \`--guild\`. Priority order:
+      1. CLI flag \`--guild\` (temporary, current command only)
+      2. Config file \`~/.kimaki/config.json\` \`defaultGuildId\` (persistent)
+      3. Auto-detect from most recent text channel (falls back to first guild the bot is in)
+
+      \`\`\`bash
+      # Set default guild
+      kimaki config set --key defaultGuildId --value "1486966847810043924"
+
+      # List all config values
+      kimaki config list
+
+      # Clear default guild (revert to auto-detection)
+      kimaki config unset --key defaultGuildId
+      \`\`\`
+
       To send a task to another project:
 
       \`\`\`bash
