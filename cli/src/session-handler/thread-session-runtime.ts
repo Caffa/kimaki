@@ -4032,21 +4032,31 @@ export class ThreadSessionRuntime {
     let createdNewSession = false
 
     if (sessionId) {
+      logger.log(
+        `[SESSION] Checking existing session sessionId=${sessionId} threadId=${this.threadId}`,
+      )
       const sessionResponse = await getClient().session.get({
         sessionID: sessionId,
         directory: this.sdkDirectory,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
       if (sessionResponse instanceof Error) {
         logger.warn(
-          `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
+          `[SESSION] Existing session not found sessionId=${sessionId} threadId=${this.threadId} error=${sessionResponse.message}`,
         )
       } else if (sessionResponse.data) {
         session = sessionResponse.data
+        logger.log(
+          `[SESSION] Reusing existing session sessionId=${sessionId} threadId=${this.threadId}`,
+        )
       } else {
         logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
+          `[SESSION] session.get returned no data for sessionId=${sessionId} threadId=${this.threadId}`,
         )
       }
+    } else {
+      logger.log(
+        `[SESSION] No existing session, will create new threadId=${this.threadId}`,
+      )
     }
 
     if (!session) {
@@ -4081,13 +4091,16 @@ export class ThreadSessionRuntime {
       session = createResult.data
       if (!session) {
         logger.warn(
-          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
+          `[SESSION] session.create returned no data threadId=${this.thread.id}`,
         )
       }
       // Insert DB row immediately so the external-sync poller sees
       // source='kimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
       if (session) {
+        logger.log(
+          `[SESSION] Created new session sessionId=${session.id} threadId=${this.threadId}`,
+        )
         await setThreadSession(this.thread.id, session.id)
         if (injectionGuardPatterns?.length) {
           writeInjectionGuardConfig({
@@ -4106,6 +4119,18 @@ export class ThreadSessionRuntime {
     }
 
     // Store session in DB and thread state
+    const previousSessionId = this.state?.sessionId
+    if (previousSessionId && previousSessionId !== session.id) {
+      logger.log(
+        `[SESSION] Session transition: ${previousSessionId} -> ${session.id} threadId=${this.threadId}`,
+      )
+      // Clear event buffer when transitioning to a new session.
+      // This prevents events from the previous session from accumulating
+      // unbounded and ensures hydration from the database works correctly
+      // for the new session.
+      this.eventBuffer = []
+      this.nextEventIndex = 0
+    }
     await setThreadSession(this.thread.id, session.id)
     threadState.setSessionId(this.threadId, session.id)
     await this.hydrateSessionEventsFromDatabase({ sessionId: session.id })
