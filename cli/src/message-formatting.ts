@@ -380,7 +380,11 @@ export function formatBashToolTitle({
 }): string {
   if (!command && !description && !stateTitle) return ''
 
-  const firstLine = command.split('\n')[0] || ''
+  const firstMeaningfulLine =
+    command
+      .split('\n')
+      .find((line) => line.trim().length > 0)
+      ?.trimStart() ?? ''
   const isSingleLine = !command.includes('\n')
 
   if (command && isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
@@ -389,12 +393,13 @@ export function formatBashToolTitle({
   if (description) {
     return ` _${escapeInlineMarkdown(description)}_`
   }
-  if (firstLine.length > 0) {
-    const truncated =
-      firstLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
-        ? firstLine.slice(0, MAX_BASH_COMMAND_INLINE_LENGTH) + '…'
-        : firstLine
-    return ` _${escapeInlineMarkdown(truncated)}_`
+  if (firstMeaningfulLine.length > 0) {
+    const needsTruncation = firstMeaningfulLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
+    const base = needsTruncation
+      ? firstMeaningfulLine.slice(0, MAX_BASH_COMMAND_INLINE_LENGTH)
+      : firstMeaningfulLine
+    // Always add ellipsis when showing a partial command (multiline or length-truncated)
+    return ` _${escapeInlineMarkdown(base)}…_`
   }
   if (stateTitle) {
     return ` _${escapeInlineMarkdown(stateTitle)}_`
