@@ -3,16 +3,17 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
-import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
+import type { Message, TextChannel } from 'discord.js'
 
-// Extended FilePartInput with original Discord URL for reference in prompts
+// Extended FilePartInput with original Discord URL and vision description
 export type DiscordFileAttachment = FilePartInput & {
   sourceUrl?: string
   visionDescription?: string
 }
-
+import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
+import { extractNonXmlContent } from './xml.js'
 import { processImage } from './image-utils.js'
 import { describeImage } from './vision-description.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
@@ -26,89 +27,8 @@ type GenericSessionMessage = {
 const logger = createLogger(LogPrefix.FORMATTING)
 
 /**
- * Serialize Discord embeds into plain text so the AI model can read them.
- * Each embed becomes an <embed> XML block with title, author, description,
- * fields, footer, and URL when present.
- */
-export function serializeEmbeds(embeds: Embed[]): string {
-  if (embeds.length === 0) return ''
-  const parts: string[] = []
-  for (const embed of embeds) {
-    const lines: string[] = []
-    if (embed.author?.name) {
-      lines.push(`Author: ${embed.author.name}`)
-    }
-    if (embed.title) {
-      lines.push(`Title: ${embed.title}`)
-    }
-    if (embed.url) {
-      lines.push(`URL: ${embed.url}`)
-    }
-    if (embed.description) {
-      lines.push(embed.description)
-    }
-    for (const field of embed.fields) {
-      lines.push(`${field.name}: ${field.value}`)
-    }
-    if (embed.footer?.text) {
-      lines.push(`Footer: ${embed.footer.text}`)
-    }
-    if (lines.length > 0) {
-      parts.push(`<embed>\n${lines.join('\n')}\n</embed>`)
-    }
-  }
-  return parts.join('\n\n')
-}
-
-/**
- * Serialize a Discord poll into plain text so the AI model can read the
- * question and answer options.
- */
-export function serializePoll(poll: Poll | null): string {
-  if (!poll) return ''
-  const lines: string[] = []
-  if (poll.question.text) {
-    lines.push(`Question: ${poll.question.text}`)
-  }
-  for (const [, answer] of poll.answers) {
-    if (answer.text) {
-      lines.push(`- ${answer.text}`)
-    }
-  }
-  if (lines.length === 0) return ''
-  return `<poll>\n${lines.join('\n')}\n</poll>`
-}
-
-/**
- * Serialize forwarded message snapshots into plain text. Each snapshot is a
- * partial Message with content and embeds.
- */
-export function serializeMessageSnapshots(
-  snapshots: Message['messageSnapshots'],
-): string {
-  if (snapshots.size === 0) return ''
-  const parts: string[] = []
-  for (const [, snapshot] of snapshots) {
-    const lines: string[] = []
-    if (snapshot.content) {
-      lines.push(snapshot.content)
-    }
-    if (snapshot.embeds.length > 0) {
-      const embedText = serializeEmbeds(snapshot.embeds)
-      if (embedText) lines.push(embedText)
-    }
-    if (lines.length > 0) {
-      parts.push(`<forwarded-message>\n${lines.join('\n\n')}\n</forwarded-message>`)
-    }
-  }
-  return parts.join('\n\n')
-}
-
-/**
  * Resolves Discord mentions in message content to human-readable names.
  * Replaces <@userId> with @displayName, <@&roleId> with @roleName, <#channelId> with #channelName.
- * Appends serialized embeds, polls, and forwarded message snapshots so the AI
- * model can see all user-visible content.
  */
 export function resolveMentions(message: Message): string {
   let content = message.content || ''
@@ -132,17 +52,6 @@ export function resolveMentions(message: Message): string {
   for (const [channelId, channel] of message.mentions.channels) {
     const name = 'name' in channel ? (channel as TextChannel).name : channelId
     content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
-  }
-
-  // Append non-text content so the model can see it
-  const extras = [
-    serializeEmbeds(message.embeds),
-    serializePoll(message.poll),
-    serializeMessageSnapshots(message.messageSnapshots),
-  ].filter(Boolean)
-  if (extras.length > 0) {
-    const joined = extras.join('\n\n')
-    content = content ? `${content}\n\n${joined}` : joined
   }
 
   return content
@@ -274,8 +183,10 @@ export async function getTextAttachments(message: Message): Promise<string> {
 
   const textContents = await Promise.all(
     textAttachments.map(async (attachment) => {
-      const response = await fetch(attachment.url)
-        .catch((e) => new FetchError({ url: attachment.url, cause: e }))
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
       if (response instanceof Error) {
         return `<attachment filename="${attachment.name}" error="${response.message}" />`
       }
@@ -308,8 +219,10 @@ export async function getFileAttachments(
 
   const results = await Promise.all(
     fileAttachments.map(async (attachment) => {
-      const response = await fetch(attachment.url)
-        .catch((e) => new FetchError({ url: attachment.url, cause: e }))
+      const response = await errore.tryAsync({
+        try: () => fetch(attachment.url),
+        catch: (e) => new FetchError({ url: attachment.url, cause: e }),
+      })
       if (response instanceof Error) {
         logger.error(
           `Error downloading attachment ${attachment.name}:`,
@@ -524,13 +437,12 @@ export function getToolSummaryText(part: Part): string {
 
 export function formatTodoList(part: Part): string {
   if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
-  const todosRaw = part.state.input?.todos
-  const todos = Array.isArray(todosRaw)
-    ? (todosRaw as {
-        content: string
-        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-      }[])
-    : []
+  const rawTodos = part.state.input?.todos
+  const todos =
+    (Array.isArray(rawTodos) ? rawTodos : []) as {
+      content: string
+      status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+    }[]
   const activeIndex = todos.findIndex((todo) => {
     return todo.status === 'in_progress'
   })
@@ -546,11 +458,128 @@ export function formatTodoList(part: Part): string {
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
+/**
+ * Transform tool-call XML tags from assistant text output into readable formats.
+ *
+ * Models sometimes emit tool invocations as raw XML in text parts instead of
+ * structured tool-call parts. Instead of just stripping these, we transform
+ * known tool-call XML into Discord-friendly callout formatting:
+ *
+ *   <todowrite> → callout with todo list (✅ ⏳ ☐ ✘)
+ *   <skill name="…" /> → callout with skill name
+ *   <thinking>/antan2:thinking → silently stripped (internal reasoning)
+ *   Other tool XML → stripped cleanly
+ *
+ * Preserves intentional formatting tags like <callout> and <details>.
+ */
+
+// Self-closing tool tags: <skill name="…" />
+const SELF_CLOSING_TOOL_RE =
+  /<skill\s+name\s*=\s*["']([^"']*?)["']\s*\/>/gi
+
+// Paired tags we want to transform (not just strip)
+// todowrite block with nested todo items
+const TODOWRITE_BLOCK_RE =
+  /<todowrite>\s*<todos>\s*((?:<todo\s+[^>]*>\s*<\/todo>\s*)*)<\/todos>\s*<\/todowrite>/gi
+const TODO_ITEM_RE =
+  /<todo\s+content\s*=\s*["']([^"']*?)["']\s+status\s*=\s*["']([^"']*?)["'][^>]*>/gi
+
+// Internal reasoning tags — always stripped with no visual output
+const THINKING_TAG_RE =
+  /<\/?(?:think|thought|thinking|reasoning)[^>]*>/gi
+const THINKING_BLOCK_RE =
+  /<(?:think|thought|thinking|reasoning)[^>]*>[\s\S]*?<\/(?:think|thought|thinking|reasoning)>/gi
+
+// Other tool-call tags — stripped cleanly
+const OTHER_TOOL_XML_RE =
+  /<\/?(?:invoke|function_call|tool_call|tool_result|function_results|antml|attribution|todowrite|todos|todo)[^>]*>/gi
+
+const STATUS_ICONS: Record<string, string> = {
+  completed: '✅',
+  in_progress: '⏳',
+  pending: '☐',
+  cancelled: '✘',
+}
+
+function formatTodoItems(todosBlock: string): string {
+  const items: string[] = []
+  let match: RegExpExecArray | null
+  const re = new RegExp(TODO_ITEM_RE.source, 'gi')
+  while ((match = re.exec(todosBlock)) !== null) {
+    const content = match[1]!
+    const status = match[2]!
+    const icon = STATUS_ICONS[status] ?? '☐'
+    const lowerContent =
+      content.charAt(0).toLowerCase() + content.slice(1)
+    items.push(`${icon} ${lowerContent}`)
+  }
+  return items.join('\n')
+}
+
+export function stripToolCallXml(text: string): string {
+  // Fast path: if there are no '<' characters, nothing to transform
+  if (!text.includes('<')) return text
+
+  const fragments: Array<{ text: string; isTransformed: boolean }> = []
+  let remaining = text
+
+  // 1. Transform todowrite blocks into callout-formatted todo lists
+  remaining = remaining.replace(TODOWRITE_BLOCK_RE, (_match, todosContent: string) => {
+    const formatted = formatTodoItems(todosContent)
+    if (!formatted) return ''
+    const callout = `<callout accent="#3b82f6">\n## Todo\n${formatted}\n</callout>`
+    fragments.push({ text: callout, isTransformed: true })
+    // Use a placeholder that won't conflict with other regexes
+    return `\x00TODOWRITE_${fragments.length - 1}\x00`
+  })
+
+  // 2. Transform self-closing skill tags into callout
+  remaining = remaining.replace(SELF_CLOSING_TOOL_RE, (_match, name: string) => {
+    const callout = `<callout accent="#8b5cf6">\nLoaded skill: **${escapeInlineMarkdown(name)}**\n</callout>`
+    fragments.push({ text: callout, isTransformed: true })
+    return `\x00SKILL_${fragments.length - 1}\x00`
+  })
+
+  // 3. Remove thinking blocks entirely (internal reasoning, never shown)
+  remaining = remaining.replace(THINKING_BLOCK_RE, '')
+
+  // 4. Remove remaining thinking tags (unpaired / self-closing)
+  remaining = remaining.replace(THINKING_TAG_RE, '')
+
+  // 5. Remove other tool-call XML tags
+  remaining = remaining.replace(OTHER_TOOL_XML_RE, '')
+
+  // 6. If the result still has XML-like tags and no <callout>,
+  // strip all remaining XML so raw tags don't leak to Discord.
+  // Preserve <callout>, <details>, <summary>, and HTML formatting tags.
+  if (remaining.includes('<') && !remaining.includes('<callout')) {
+    const nonXmlText = extractNonXmlContent(remaining).trim()
+    if (nonXmlText) {
+      remaining = nonXmlText
+    }
+  }
+
+  // 7. Restore transformed fragments
+  remaining = remaining.replace(/\x00(TODOWRITE|SKILL)_\d+\x00/g, (placeholder) => {
+    const idxMatch = placeholder.match(/_(\d+)/)
+    if (!idxMatch) return ''
+    const idx = Number.parseInt(idxMatch[1]!, 10)
+    return fragments[idx]?.text ?? ''
+  })
+
+  // 8. Collapse multiple spaces and excessive blank lines
+  remaining = remaining.replace(/  +/g, ' ')
+  remaining = remaining.replace(/\n{3,}/g, '\n\n')
+  return remaining.trim()
+}
+
 export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
-    const text = part.text?.trim()
+    const rawText = part.text?.trim()
+    if (!rawText) return ''
+    const text = stripToolCallXml(rawText)
     if (!text) return ''
     // For subtask text, always use bullet with prefix
     if (prefix) {

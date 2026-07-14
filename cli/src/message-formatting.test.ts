@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import { formatBashToolTitle, formatPart, formatTodoList, stripToolCallXml, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -253,6 +253,104 @@ describe('formatTodoList', () => {
     }
 
     expect(formatTodoList(part)).toBe('')
+  })
+})
+
+describe('stripToolCallXml', () => {
+  test('returns text unchanged when no XML present', () => {
+    expect(stripToolCallXml('hello world')).toBe('hello world')
+  })
+
+  test('handles empty string', () => {
+    expect(stripToolCallXml('')).toBe('')
+  })
+
+  test('transforms todowrite with todo items into callout', () => {
+    const xml = '<todowrite><todos><todo content="Fix the bug" status="in_progress"></todo></todos></todowrite>'
+    const result = stripToolCallXml(xml)
+    expect(result).toContain('callout')
+    expect(result).toContain('⏳')
+    expect(result).toContain('fix the bug')
+  })
+
+  test('transforms full todowrite block into callout with status icons', () => {
+    const xml = `<todowrite><todos><todo content="Research issue" status="completed"></todo><todo content="Fix the bug" status="in_progress"></todo><todo content="Add tests" status="pending"></todo></todos></todowrite>`
+    const result = stripToolCallXml(xml)
+    expect(result).toContain('✅')
+    expect(result).toContain('⏳')
+    expect(result).toContain('☐')
+    expect(result).toContain('research issue')
+    expect(result).toContain('fix the bug')
+    expect(result).toContain('add tests')
+  })
+
+  test('handles cancelled todo status', () => {
+    const xml = '<todowrite><todos><todo content="Old approach" status="cancelled"></todo><todo content="New approach" status="in_progress"></todo></todos></todowrite>'
+    const result = stripToolCallXml(xml)
+    expect(result).toContain('✘')
+    expect(result).toContain('⏳')
+  })
+
+  test('todowrite with only completed items still renders callout', () => {
+    const xml = '<todowrite><todos><todo content="Done task" status="completed"></todo></todos></todowrite>'
+    const result = stripToolCallXml(xml)
+    expect(result).toContain('callout')
+    expect(result).toContain('✅')
+  })
+
+  test('strips todowrite tags with no content', () => {
+    const xml = '<todowrite><todos></todos></todowrite>'
+    expect(stripToolCallXml(xml)).toBe('')
+  })
+
+  test('strips standalone todo/todo tags not inside todowrite', () => {
+    expect(stripToolCallXml('<todo content="task" status="pending">')).toBe('')
+    expect(stripToolCallXml('<todos>')).toBe('')
+    expect(stripToolCallXml('</todos>')).toBe('')
+  })
+
+  test('transforms self-closing skill tag into callout', () => {
+    const xml = '<skill name="obsidian-plugin" />'
+    const result = stripToolCallXml(xml)
+    expect(result).toContain('callout')
+    expect(result).toContain('obsidian-plugin')
+    expect(result).toContain('Loaded skill')
+  })
+
+  test('transforms skill tag mixed with text', () => {
+    const input = 'Here is what I found. <skill name="web-perf" /> Now continuing...'
+    const result = stripToolCallXml(input)
+    expect(result).toContain('Here is what I found.')
+    expect(result).toContain('web-perf')
+    expect(result).toContain('Now continuing...')
+  })
+
+  test('strips think tags entirely (including content)', () => {
+    expect(stripToolCallXml('<think>internal reasoning here</think>')).toBe('')
+    expect(stripToolCallXml('<thinking>deep thoughts</thinking>')).toBe('')
+    expect(stripToolCallXml('Before<think>secret</think>After')).toBe('BeforeAfter')
+  })
+
+  test('strips thinking block tags entirely', () => {
+    const xml = '<thinking>\nLet me reason about this...\nStep 1: Analyze\n</thinking>'
+    expect(stripToolCallXml(xml)).toBe('')
+  })
+
+  test('strips function_call tags', () => {
+    expect(stripToolCallXml('<function_call>test</function_call>')).toBe('test')
+  })
+
+  test('preserves callout tags', () => {
+    const input = '<callout accent="#3b82f6">\n## Note\nImportant info\n</callout>'
+    expect(stripToolCallXml(input)).toBe(input)
+  })
+
+  test('collapses excessive blank lines after stripping', () => {
+    const xml = '<think>removed</think>\n\n\n\n<thinking>also removed</thinking>\n\n\nText here'
+    const result = stripToolCallXml(xml)
+    // At most one blank line between elements
+    expect(result).not.toContain('\n\n\n')
+    expect(result).toContain('Text here')
   })
 })
 
