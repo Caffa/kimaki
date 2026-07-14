@@ -72,7 +72,7 @@ export async function forkSessionToBtwThread({
   await thread.members.add(userId)
 
   logger.log(
-    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from ${sessionId}`,
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
 
   const sourceThreadLink = `<#${sourceThread.id}>`
@@ -84,7 +84,12 @@ export async function forkSessionToBtwThread({
   const wrappedPrompt = [
     `The user asked a side question while you were working on another task.`,
     `This is a forked session whose ONLY goal is to answer this question.`,
-    `Do NOT continue, resume, or reference the previous task. Only answer the question below.\n`,
+    `Do NOT continue, resume, or reference the previous task. Only answer the question below.`,
+    ``,
+    `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
+    `If the user asks you to send a message or follow-up to the parent session, use:`,
+    `  kimaki send --session ${sessionId} --prompt 'your message here'`,
+    ``,
     prompt,
   ].join('\n')
 
