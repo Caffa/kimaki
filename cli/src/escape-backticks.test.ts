@@ -409,6 +409,68 @@ test('splitMarkdownForDiscord handles very long line inside code block', () => {
   `)
 })
 
+test('splitMarkdownForDiscord preserves inline code spans when splitting long lines', () => {
+  // Build a line long enough to trigger splitting at maxLength=80
+  const prefix = 'Here is a command: '
+  const codeSpan = '`npm install some-really-long-package-name-that-exceeds-limit`'
+  const suffix = ' to install the dependency'
+  const content = prefix + codeSpan + suffix
+
+  // Verify the line actually exceeds maxLength
+  expect(content.length).toBeGreaterThan(80)
+
+  const result = splitMarkdownForDiscord({ content, maxLength: 80 })
+
+  // Every chunk must have balanced backticks (even count)
+  for (const chunk of result) {
+    const backtickCount = (chunk.match(/`/g) || []).length
+    expect(backtickCount % 2).toBe(0)
+  }
+
+  // Joining all chunks must preserve the original text
+  expect(result.join('')).toBe(content)
+})
+
+test('splitMarkdownForDiscord handles multiple inline code spans across split points', () => {
+  const prefix = 'Run '
+  const code1 = '`npm run build`'
+  const mid = ' then '
+  const code2 = '`npm test`'
+  const mid2 = ' followed by '
+  const code3 = '`npm publish`'
+  const suffix = ' to ship the release to production'
+  const content = prefix + code1 + mid + code2 + mid2 + code3 + suffix
+
+  // Force splitting — use a maxLength that cuts through the code spans
+  expect(content.length).toBeGreaterThan(70)
+  const result = splitMarkdownForDiscord({ content, maxLength: 70 })
+
+  // All chunks must have balanced backticks
+  for (const chunk of result) {
+    const backtickCount = (chunk.match(/`/g) || []).length
+    expect(backtickCount % 2).toBe(0)
+  }
+
+  expect(result.join('')).toBe(content)
+})
+
+test('splitMarkdownForDiscord inline code span with no safe split point falls back gracefully', () => {
+  // A line with one very long inline code span that contains no spaces before the midpoint
+  const prefix = 'Use: '
+  const longCode = '`' + 'a'.repeat(90) + '`'
+  const suffix = ' end'
+  const content = prefix + longCode + suffix
+
+  expect(content.length).toBeGreaterThan(60)
+  const result = splitMarkdownForDiscord({ content, maxLength: 60 })
+
+  // Text must be preserved even in degraded fallback
+  expect(result.join('')).toBe(content)
+
+  // At minimum we should get multiple chunks (the content exceeds maxLength)
+  expect(result.length).toBeGreaterThan(1)
+})
+
 test('splitMarkdownForDiscord handles realistic long markdown with code block', () => {
   const content = `Here is some explanation text before the code.
 

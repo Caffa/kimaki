@@ -413,6 +413,38 @@ export function splitMarkdownForDiscord({
         if (lastSpace > available * 0.5) {
           splitAt = lastSpace + 1
         }
+
+        // Check if splitting here would break an inline code span
+        const backticksBeforeSplit = (remaining.slice(0, splitAt).match(/`/g) || []).length
+        if (backticksBeforeSplit % 2 !== 0) {
+          // Scan backwards to find a safe split point with balanced backticks
+          let safeSplit = -1
+          for (let i = splitAt - 1; i > available * 0.5; i--) {
+            if (remaining[i] === ' ') {
+              const backticksUpToHere = (remaining.slice(0, i).match(/`/g) || []).length
+              if (backticksUpToHere % 2 === 0) {
+                safeSplit = i + 1
+                break
+              }
+            }
+          }
+          // If no backward safe point, scan forward past the inline code span
+          if (safeSplit <= 0) {
+            for (let i = splitAt; i < remaining.length; i++) {
+              if (remaining[i] === ' ') {
+                const backticksUpToHere = (remaining.slice(0, i).match(/`/g) || []).length
+                if (backticksUpToHere % 2 === 0) {
+                  safeSplit = i + 1
+                  break
+                }
+              }
+            }
+          }
+          if (safeSplit > 0) {
+            splitAt = safeSplit
+          }
+          // If no safe point found anywhere, keep the original splitAt (degraded but avoids infinite loop)
+        }
       }
       pieces.push(remaining.slice(0, splitAt))
       remaining = remaining.slice(splitAt)
