@@ -49,13 +49,23 @@ export function setDataDir(dir: string): void {
 
 /**
  * Get the projects directory path (for /create-new-project command).
- * Returns the custom --projects-dir if set, otherwise <dataDir>/projects.
+ * Priority:
+ * 1. CLI flag --projects-dir (store.projectsDir)
+ * 2. ~/Local-Projects-2026/ if it exists
+ * 3. <dataDir>/projects (legacy fallback)
  */
 export function getProjectsDir(): string {
   const custom = store.getState().projectsDir
   if (custom) {
     return custom
   }
+
+  // Check for ~/Local-Projects-2026 directory (local customization)
+  const localProjectsDir = path.join(os.homedir(), 'Local-Projects-2026')
+  if (fs.existsSync(localProjectsDir)) {
+    return localProjectsDir
+  }
+
   return path.join(getDataDir(), 'projects')
 }
 
