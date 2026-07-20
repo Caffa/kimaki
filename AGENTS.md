@@ -1,12 +1,79 @@
+<!-- This AGENTS.md file is generated. Look for an agents.md package.json script to see what files to update instead. -->
+
 after every change always run tsc inside cli to validate your changes. try to never use as any
 
-always load the `changesets` skill before fixing bugs or adding features. User-facing fixes and features usually need a `.changeset/*.md` entry, and the skill explains package selection, issue references, descriptive filenames, and `.changeset/readme.md` expectations.
+always load the `add-changeset` skill before fixing bugs or adding features. User-facing fixes and features usually need a `.changeset/*.md` entry, and the skill explains package selection, issue references, descriptive filenames, and `.changeset/readme.md` expectations.
 
 do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
 the important package in this repo is cli. it contains the discord bot code.
 
 after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+
+# ⚠️ FORK: local dev install — no auto-upgrade
+
+This is a **local fork** of kimaki, installed via `npm link` from `cli/` rather than
+`npm i -g kimaki` from the npm registry. This means:
+
+- **Background auto-upgrade is DISABLED.** The `backgroundUpgradeKimaki()` function in
+  `cli/src/upgrade.ts` detects `npm link` via `isNpmLinked()` and skips the upgrade.
+  Running `npm i -g kimaki@latest` would replace the symlink with the upstream npm package,
+  destroying all local customizations (ASR services, figlet banner, Pi agent sessions, etc).
+
+- **The `/upgrade-and-restart` Discord command is BLOCKED when running via npm link.**
+  It displays a warning advising to update via `git merge upstream/main` + `pnpm build` +
+  `npm link` instead.
+
+- **To update from upstream:**
+  ```bash
+  git fetch upstream
+  git merge upstream/main    # resolve conflicts, preserve local customizations
+  cd cli
+  pnpm install
+  pnpm build
+  npm link                   # re-symlink if needed
+  ```
+
+- **Key local customizations to preserve during merges:**
+  - `asr-service/` — local Parakeet MLX ASR server
+  - `cli/src/asr-service-manager.ts` — auto-start/stop parakeet service
+  - `cli/src/vllm-service-manager.ts` — vLLM Whisper service manager
+  - `cli/src/voice.ts` — extended TranscriptionProvider type (`parakeet | vllm`)
+  - `cli/src/voice-handler.ts` — parakeet default on Apple Silicon, voice channel notifications
+  - `cli/src/cli-runner.ts` — figlet "LOCAL VOICE" banner on startup
+  - `cli/src/pi-agent-sessions.ts` — Pi agent session discovery for /add-project
+  - `cli/src/commands/add-project.ts` — Pi project directory auto-discovery
+  - `cli/src/commands/improvement-approval.ts` — improvement approval button handler
+  - `cli/src/commands/memory-snapshot.ts` — memory snapshot command
+  - `cli/src/discord-utils.ts` — withRetry/isTransientError for transient Discord API errors
+  - `cli/src/external-opencode-sync.ts` — isPermanentDiscordError, stale channel self-healing
+  - `cli/src/opencode.ts` — killOrphanedOpencodeServers() pre-startup cleanup
+
+## 📁 Local Code References (outside repo)
+
+A comprehensive reference folder documenting all local customizations lives at:
+`/Users/caffae/Local-Projects-2026/Local-Code-References/kimaki/`
+
+This folder is **outside the git repo** so it survives clean upstream checkouts.
+
+**Contents:**
+- `features/` — one folder per local feature (parakeet ASR, vLLM Whisper, figlet banner, project dir override, todos guard, install scripts). Each contains:
+  - `README.md` — feature description, commits, files affected
+  - `SNIPPETS.md` — exact code snippets added, where they go in the file, and how they work
+  - `<file>.LOCAL.ts` / `<file>.UPSTREAM.ts` — full local vs upstream versions for diffing
+  - New files copied in full (e.g. `asr-service-manager.ts`, `asr-service/`)
+- `tests/` — all test files covering local features (voice, vLLM, message-formatting)
+- `docs/` — local documentation (MEMORY.md, DEVELOP.md, PARAKEET_SETUP_COMPLETE.md, etc.)
+- `snippets/ALL_SNIPPETS_INDEX.md` — master index of every snippet in re-application order
+
+**When to check and update the reference folder:**
+- **After any change to a local feature** (voice.ts, voice-handler.ts, cli.ts, config.ts, message-formatting.ts, asr-service-manager.ts, vllm-service-manager.ts): update the corresponding `features/NN-<name>/SNIPPETS.md` and the LOCAL file copy.
+- **After adding a new local feature**: create a new `features/NN-<name>/` folder with README.md, SNIPPETS.md, and file copies. Update `snippets/ALL_SNIPPETS_INDEX.md`.
+- **Before doing a clean upstream checkout / port-forward sync**: read `snippets/ALL_SNIPPETS_INDEX.md` to know exactly what to re-apply and in what order.
+- **After completing a port-forward sync**: verify every feature folder's snippets were re-applied, run the tests from `tests/`, and update `UPSTREAM_SYNC_PLAN.md` maintenance log.
+- **Weekly**: the scheduled job `kimaki-upstream-sync-check` (Sundays 14:00 local) reads `UPSTREAM_SYNC_PLAN.md` and reports upstream changes. It updates the plan's maintenance log.
+
+**Never delete or move the reference folder** — it is the source of truth for re-applying local features after a clean upstream checkout.
 
 # repo architecture
 
@@ -223,45 +290,6 @@ do NOT add simple prisma query wrappers to database.ts. if a query is a straight
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
-## pre-publish checklist
-
-before publishing to npm, always sync skills as the first step:
-
-```bash
-cd cli && pnpm sync-skills
-```
-
-this ensures the npm package ships the latest synced skills from their source repos. commit any skill changes before proceeding with the publish.
-
-## post-publish release notification
-
-after every publish, once the `gh release create` step is done:
-
-1. write the gh release body content to `/tmp/kimaki-release.md` so it can be reused quickly without regenerating it
-2. send a notification to the **#changelog** channel (`1514563453493313548`) in the Kimaki Discord Server with a markdown summary of the release.
-
-the #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. the kimaki sigillo project (org: npm) has a `KIMAKI_BOT_TOKEN` secret in the `dev` environment containing the demo bot's `clientId:clientSecret`.
-
-```bash
-sigillo run -c dev -- kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
-```
-
-run this from the kimakivoice repo root (where sigillo is set up). the `KIMAKI_BOT_TOKEN` env var takes priority over local DB credentials when set, so the send command will authenticate as the demo bot through the gateway proxy.
-
-the notification message should use the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons, etc. keep it detailed and user-facing, identical quality to a gh release body.
-
-when `--notify-only` targets a non-project channel, the message is posted directly without creating a thread. for project channels, a thread is still created so users can reply to start a session.
-
-## deploy website after publish
-
-after every kimaki publish, once the changelog is generated and the gh release is created, deploy the website to production:
-
-```bash
-cd website && pnpm deployment:production
-```
-
-the website shows the changelog and install instructions, so it must be updated right after each release so users see the latest version.
-
 ## github issues
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
@@ -270,25 +298,11 @@ never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`).
 
 when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
 
-## git submodules
-
-this repo has git submodules (`errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`). their configured branches are in `.gitmodules`.
-
-**never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
-
-workflow when changing a submodule:
-
-1. commit and **push** the submodule branch first so GitHub has the objects
-2. only then bump the gitlink in kimaki (`git add gateway-proxy` etc.) and commit that pointer update
-3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/remorses/gateway-proxy/commits/<sha> --jq .sha` (must not 422)
-
-when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
-
-if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" kimaki by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
-
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
+
+when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 
 it is a package for using errors as values in ts.
 
