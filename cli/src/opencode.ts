@@ -696,6 +696,9 @@ async function startSingleServer({
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
+    // Use a local ollama model for lightweight tasks (session title generation)
+    // instead of falling back to the opencode cloud provider (which requires billing).
+    small_model: 'ollama/qwen3.5:2b',
     plugin: [
       new URL(
         isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',

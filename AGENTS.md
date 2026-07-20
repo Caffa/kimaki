@@ -39,15 +39,13 @@ This is a **local fork** of kimaki, installed via `npm link` from `cli/` rather 
   - `cli/src/asr-service-manager.ts` — auto-start/stop parakeet service
   - `cli/src/vllm-service-manager.ts` — vLLM Whisper service manager
   - `cli/src/voice.ts` — extended TranscriptionProvider type (`parakeet | vllm`)
-  - `cli/src/voice-handler.ts` — parakeet default on Apple Silicon, voice channel notifications
+  - `cli/src/voice-handler.ts` — parakeet default on Apple Silicon
   - `cli/src/cli-runner.ts` — figlet "LOCAL VOICE" banner on startup
-  - `cli/src/pi-agent-sessions.ts` — Pi agent session discovery for /add-project
-  - `cli/src/commands/add-project.ts` — Pi project directory auto-discovery
-  - `cli/src/commands/improvement-approval.ts` — improvement approval button handler
-  - `cli/src/commands/memory-snapshot.ts` — memory snapshot command
-  - `cli/src/discord-utils.ts` — withRetry/isTransientError for transient Discord API errors
-  - `cli/src/external-opencode-sync.ts` — isPermanentDiscordError, stale channel self-healing
-  - `cli/src/opencode.ts` — killOrphanedOpencodeServers() pre-startup cleanup
+  - `cli/src/config.ts` — `~/Local-Projects-2026/` default projects dir
+  - `cli/src/message-formatting.ts` — `Array.isArray` guard on todos
+  - `cli/src/discord-utils.ts` — inline code span backtick balancing in splitMarkdownForDiscord
+  - `cli/src/opencode.ts` — local ollama `small_model` for session titles
+  - `cli/scripts/sync-skills.ts` — `agent-changesets` skill source
 
 ## 📁 Local Code References (outside repo)
 
