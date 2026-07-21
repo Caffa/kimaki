@@ -139,6 +139,10 @@ helpers exist: `formatWorktreeName` (verbatim, for user-provided names) and
 names from thread titles/prompts). Worktrees now live under
 `<kimakiDataDir>/worktrees/<8charProjectHash>/<basename>`.
 
+## Subtask session errors must check getSubtaskInfoForSession
+
+`handleSessionError` and `handleSessionStatus` only checked `sessionID === mainSessionId`, silently dropping errors/retry notifications from subagent sessions. Other handlers (`handleSessionIdle`, `handlePermissionAsked`) correctly use `getSubtaskInfoForSession()` to allow subtask events. The fix pattern: check both `isMainSession` and `isSubtaskSession`, then include `subtaskInfo.label` in the user-facing message.
+
 ## v1 SDK plugin Event types are stale
 
 The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Cast `event.type as string` and compare against the actual runtime type. Also, `getEventSessionId()` won't handle unknown event types and returns `undefined`, so any code for stale-typed events must run before the `getEventSessionId()` early return.

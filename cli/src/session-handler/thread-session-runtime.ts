@@ -2343,9 +2343,19 @@ export class ThreadSessionRuntime {
     }
   }): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (!properties.sessionID || properties.sessionID !== sessionId) {
+    const errorSessionId = properties.sessionID
+    const subtaskInfo = this.getSubtaskInfoForSession(errorSessionId ?? '')
+    const isMainSession = errorSessionId === sessionId
+    const isSubtaskSession = Boolean(subtaskInfo)
+
+    if (!errorSessionId) {
+      logger.log('Ignoring error event with no sessionID')
+      return
+    }
+
+    if (!isMainSession && !isSubtaskSession) {
       logger.log(
-        `Ignoring error for different session (expected: ${sessionId}, got: ${properties.sessionID})`,
+        `Ignoring error for unknown session (expected: ${sessionId}, got: ${errorSessionId})`,
       )
       return
     }
@@ -2353,7 +2363,7 @@ export class ThreadSessionRuntime {
     // Skip abort errors — they are expected when operations are cancelled
     if (properties.error?.name === 'MessageAbortedError') {
       logger.log(
-        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+        `[SESSION ERROR] Operation aborted (expected) sessionId=${errorSessionId} ${this.formatRunStateForLog()}`,
       )
       await this.persistEventBufferDebounced.flush()
       return
@@ -2362,10 +2372,11 @@ export class ThreadSessionRuntime {
     const errorMessage = truncateSessionErrorMessage(
       formatSessionErrorFromProps(properties.error),
     )
+    const label = subtaskInfo ? ` (${subtaskInfo.label})` : ''
     logger.error(`Sending error to thread: ${errorMessage}`)
     await sendThreadMessage(
       this.thread,
-      `✗ opencode session error: ${errorMessage}`,
+      `✗ opencode session error${label}: ${errorMessage}`,
       { flags: NOTIFY_MESSAGE_FLAGS },
     )
     await this.persistEventBufferDebounced.flush()
@@ -2374,7 +2385,7 @@ export class ThreadSessionRuntime {
     // messages can drain. Without this, a session error leaves the event
     // buffer in a "busy" state forever (no session.idle follows the error),
     // causing local-queue items to be stuck indefinitely. See #74.
-    this.markQueueDispatchIdle(sessionId)
+    this.markQueueDispatchIdle(errorSessionId)
     await this.tryDrainQueue({ showIndicator: true })
   }
 
@@ -2643,7 +2654,11 @@ export class ThreadSessionRuntime {
       | { type: 'busy' }
   }): Promise<void> {
     const sessionId = this.state?.sessionId
-    if (properties.sessionID !== sessionId) {
+    const statusSessionId = properties.sessionID
+    const isMainSession = statusSessionId === sessionId
+    const subtaskInfo = this.getSubtaskInfoForSession(statusSessionId)
+
+    if (!isMainSession && !subtaskInfo) {
       return
     }
 
@@ -2680,7 +2695,8 @@ export class ThreadSessionRuntime {
       return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
     })()
 
-    const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
+    const label = subtaskInfo ? ` (${subtaskInfo.label})` : ''
+    const chunk = `⬦ ${message}${label} - retrying in ${duration} (attempt #${attempt})`
     const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (retryResult instanceof Error) {
