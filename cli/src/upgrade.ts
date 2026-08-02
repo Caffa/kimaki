@@ -28,25 +28,53 @@ type Pm = 'bun' | 'pnpm' | 'npm'
  * Heuristic: check if the resolved package directory (or its immediate parent,
  * for monorepo layouts) contains a `.git` folder. Published npm packages never
  * ship `.git`; local forks always have it in the package dir or the repo root.
+ *
+ * Resolution is tried two ways so a future `package.json` `exports` change
+ * cannot silently disable the guard: (1) by self-package name, and (2) by a
+ * relative resolve that does not depend on `exports`. Returning `false` only
+ * when BOTH fail is the safe direction for the local fork — and for a real
+ * npm install both resolve to the same published dir with no `.git`.
  */
 export function isNpmLinked(): boolean {
+  return hasGitInPackageTree(resolveKimakiPackageDir())
+}
+
+/**
+ * Resolve the kimaki package directory. Returns null only if both resolution
+ * strategies throw (extremely unlikely). Strategy (1) relies on the
+ * `exports["./package.json"]` field; strategy (2) is a relative resolve that
+ * always works regardless of `exports`.
+ */
+function resolveKimakiPackageDir(): string | null {
+  const require = createRequire(import.meta.url)
   try {
-    const require = createRequire(import.meta.url)
-    const pkgJsonPath = require.resolve('kimaki/package.json')
-    const pkgDir = path.dirname(pkgJsonPath)
-    for (const dir of [pkgDir, path.dirname(pkgDir)]) {
-      try {
-        fs.accessSync(path.join(dir, '.git'))
-        return true
-      } catch {
-        // No .git here, try next
-      }
-    }
-    return false
+    return path.dirname(require.resolve('kimaki/package.json'))
   } catch {
-    // If we can't resolve the package, assume not linked (safe default)
+    try {
+      return path.dirname(require.resolve('../package.json'))
+    } catch {
+      return null
+    }
+  }
+}
+
+/**
+ * Pure helper: returns true if `pkgDir` or its immediate parent contains a
+ * `.git` entry. Exported for unit testing. `null`/empty input returns false.
+ */
+export function hasGitInPackageTree(pkgDir: string | null): boolean {
+  if (!pkgDir) {
     return false
   }
+  for (const dir of [pkgDir, path.dirname(pkgDir)]) {
+    try {
+      fs.accessSync(path.join(dir, '.git'))
+      return true
+    } catch {
+      // No .git here, try next
+    }
+  }
+  return false
 }
 
 // Detects which package manager globally installed kimaki, used to run the
