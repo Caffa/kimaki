@@ -1,10 +1,13 @@
 // /upgrade-and-restart command - Upgrade kimaki to the latest version and restart the bot.
 // Checks npm for a newer version, installs it globally, then spawns a new kimaki process.
 // The new process kills the old one on startup (kimaki's single-instance lock).
+//
+// BLOCKED when running via npm link — global upgrade would replace the symlink
+// with the published npm package, destroying local customizations.
 
 import type { CommandContext } from './types.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getCurrentVersion, upgrade } from '../upgrade.js'
+import { getCurrentVersion, upgrade, isNpmLinked } from '../upgrade.js'
 import { spawn } from 'node:child_process'
 
 const logger = createLogger(LogPrefix.CLI)
@@ -17,6 +20,18 @@ export async function handleUpgradeAndRestartCommand({
   logger.log('[UPGRADE] /upgrade-and-restart triggered')
 
   try {
+    if (isNpmLinked()) {
+      await command.editReply({
+        content:
+          '⚠️ **Upgrade blocked:** Kimaki is running via `npm link` (local dev fork). ' +
+          'A global npm upgrade would replace the symlink and destroy local customizations ' +
+          '(ASR services, banner, Pi agent sessions). ' +
+          'To update, run `git fetch upstream && git merge upstream/main` from the source repo, ' +
+          'then `pnpm build && npm link` from the `cli/` directory.',
+      })
+      return
+    }
+
     const currentVersion = getCurrentVersion()
     const newVersion = await upgrade()
 
