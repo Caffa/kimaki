@@ -254,6 +254,67 @@ describe('formatTodoList', () => {
 
     expect(formatTodoList(part)).toBe('')
   })
+
+  test('returns empty string when in_progress todo has missing content', () => {
+    // Regression test: orchestrator variants can emit a todo with
+    // status='in_progress' but no content field. Without the per-todo
+    // guard, `activeTodo.content.charAt(0)` throws TypeError, which
+    // bubbles up as an unhandled rejection via dispatchAction.
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          todos: [
+            // Runtime shape differs from the TS cast: content is absent.
+            { status: 'in_progress' },
+          ],
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    // Should not throw "Cannot read properties of undefined (reading 'charAt')"
+    expect(formatTodoList(part)).toBe('')
+  })
+
+  test('skips in_progress todo with missing content and shows next valid one', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          todos: [
+            { status: 'completed' },
+            // malformed: status in_progress but no content -> skip
+            { status: 'in_progress' },
+            // this should NOT be picked because it's not in_progress
+            { content: 'Should not show', status: 'pending' },
+          ],
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    // No valid in_progress todo with content -> empty
+    expect(formatTodoList(part)).toBe('')
+  })
 })
 
 describe('serializeEmbeds', () => {

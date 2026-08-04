@@ -524,18 +524,30 @@ export function formatTodoList(part: Part): string {
         status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       }[])
     : []
-  const activeIndex = todos.findIndex((todo) => {
-    return todo.status === 'in_progress'
-  })
-  const activeTodo = todos[activeIndex]
-  if (activeIndex === -1 || !activeTodo) return ''
+  // Find the active todo, skipping any entry whose `content` is missing or
+  // not a string. The opencode todowrite tool (and orchestrator variants)
+  // can emit todos with status='in_progress' but no content field; without
+  // this guard, calling `.charAt` on undefined throws and bubbles up as an
+  // unhandled rejection via the per-event dispatchAction wrapper.
+  let activeIndex = -1
+  let activeContent = ''
+  for (let i = 0; i < todos.length; i++) {
+    const todo = todos[i]
+    if (todo?.status !== 'in_progress') continue
+    const text = typeof todo.content === 'string' ? todo.content : ''
+    if (!text) continue
+    activeIndex = i
+    activeContent = text
+    break
+  }
+  if (activeIndex === -1 || !activeContent) return ''
   // digit-with-period ⒈-⒛ for 1-20, fallback to regular number for 21+
   const digitWithPeriod = '⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛'
   const todoNumber = activeIndex + 1
   const num =
     todoNumber <= 20 ? digitWithPeriod[todoNumber - 1] : `${todoNumber}.`
   const content =
-    activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
+    activeContent.charAt(0).toLowerCase() + activeContent.slice(1)
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 

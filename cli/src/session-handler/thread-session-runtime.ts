@@ -717,9 +717,19 @@ export class ThreadSessionRuntime {
     // directory are demuxed and dispatched through our action queue.
     registerEventListener(this.threadId, (event) => {
       if (this.disposed) return
+      // fire-and-forget: wrap with .catch so any throw inside handleEvent /
+      // part formatting (e.g. a malformed tool part) is logged once instead of
+      // becoming an unhandled promise rejection that floods the bot log with
+      // `OpenCodeSdkError: dispatchAction` stack traces. Awaited callers of
+      // dispatchAction keep their normal rejection semantics.
       void this.dispatchAction(async () => {
         await this.sentPartIdsBootstrap
         await this.handleEvent(event)
+      }).catch((error) => {
+        logger.error(
+          `[LISTENER] Unhandled error processing opencode event in thread ${this.threadId}:`,
+          error,
+        )
       })
     })
     this.persistEventBufferDebounced = createDebouncedProcessFlush({
@@ -1513,6 +1523,11 @@ export class ThreadSessionRuntime {
     this.ensureTypingNow()
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
+    }).catch((error) => {
+      logger.error(
+        `[DRAIN] Unhandled error in interactive-ui queue drain for thread ${this.threadId}:`,
+        error,
+      )
     })
   }
 
@@ -3443,6 +3458,11 @@ export class ThreadSessionRuntime {
     // Drain local queued messages after explicit abort.
     void this.dispatchAction(() => {
       return this.tryDrainQueue({ showIndicator: true })
+    }).catch((error) => {
+      logger.error(
+        `[DRAIN] Unhandled error in post-abort queue drain for thread ${this.threadId}:`,
+        error,
+      )
     })
   }
 
@@ -3616,6 +3636,11 @@ export class ThreadSessionRuntime {
     }).finally(() => {
       void this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
+      }).catch((error) => {
+        logger.error(
+          `[DRAIN] Unhandled error in post-dispatch queue drain for thread ${this.threadId}:`,
+          error,
+        )
       })
     })
   }
