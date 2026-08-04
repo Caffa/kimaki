@@ -113,6 +113,8 @@ import {
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  getStuckSubtasks,
+  type StuckSubtaskInfo,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -244,6 +246,20 @@ export function disposeRuntimesForDirectory({
 /** Returns number of active runtimes (useful for diagnostics). */
 export function getRuntimeCount(): number {
   return runtimes.size
+}
+
+/** Iterate over every live runtime. Used by the periodic stuck-subtask
+ * watchdog so it can call `checkStuckSubtasks()` on each one without the
+ * watchdog module needing direct access to the internal runtime map. */
+export async function forEachRuntime(
+  callback: (runtime: ThreadSessionRuntime) => Promise<void>,
+): Promise<void> {
+  // Snapshot to avoid mutation-during-iteration if a runtime is disposed
+  // during the sweep. The dispose path mutates the map, so we iterate a copy.
+  for (const runtime of [...runtimes.values()]) {
+    if (runtime.isDisposed) continue
+    await callback(runtime)
+  }
 }
 
 export function disposeInactiveRuntimes({
@@ -638,6 +654,11 @@ export class ThreadSessionRuntime {
   // Set to true by dispose(). Guards against queued work running after cleanup.
   private disposed = false
 
+  /** Exposed for sweepers/iterators that need to skip disposed runtimes. */
+  get isDisposed(): boolean {
+    return this.disposed
+  }
+
   // Typing indicator scheduler handles.
   // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
   // `typingRepulseDebounce` collapses clustered immediate re-pulses after bot
@@ -691,6 +712,16 @@ export class ThreadSessionRuntime {
   // deterministic and avoid interleaving shared mutable structures.
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
+
+  // Re-entrancy guard for the stuck-subtask watchdog. Set while a
+  // checkStuckSubtasks() invocation is awaiting Discord send / child abort;
+  // overlapping sweeper ticks return early instead of stacking.
+  private stuckSubtaskCheckInFlight = false
+
+  // Per-runtime dedupe set for stuck-subtask warnings: a child session id is
+  // added when we first post a warning for it and cleared once it no longer
+  // has a running task (so a later re-spawn can warn again).
+  private warnedStuckSubtaskChildSessionIds = new Set<string>()
 
   // Lightweight promise chain for serializing preprocess callbacks.
   // Runs OUTSIDE dispatchAction so heavy work (voice transcription, context
@@ -841,6 +872,140 @@ export class ThreadSessionRuntime {
       return false
     }
     return snapshot.inactiveForMs >= idleMs
+  }
+
+  // ── Stuck Subtask Watchdog ────────────────────────────────────
+  // Called periodically by the stuck-subtask sweeper. Detects `task` tool
+  // parts that are still `running` while their child subagent session has
+  // emitted no events to this runtime's in-memory buffer for `stuckMs`
+  // (the "suddenly stops, type continue" symptom — the subagent hangs on
+  // the opencode/LLM side and kimaki has nothing to render). When detected,
+  // posts a single Discord warning per child session (deduped via
+  // warnedStuckSubtaskChildSessionIds) and, if KIMAKI_STUCK_SUBTASK_ABORT=1,
+  // aborts the child session to unstick the parent.
+  async checkStuckSubtasks({
+    nowMs = Date.now(),
+    stuckMs = getStuckSubtaskTimeoutMs(),
+  }: {
+    nowMs?: number
+    stuckMs?: number
+  } = {}): Promise<void> {
+    if (this.disposed) return
+    if (this.stuckSubtaskCheckInFlight) return
+    const sessionId = this.state?.sessionId
+    if (!sessionId) return
+    if (stuckMs <= 0) return
+    // Only check while the main session is actually busy — a stuck subtask
+    // implies the orchestrator is waiting, so the main run must still be
+    // active. Skipping the idle case avoids false positives after a run ends
+    // with a never-completed task part still in the buffer.
+    if (!this.isMainSessionBusy()) return
+
+    const stuck = getStuckSubtasks({
+      events: this.eventBuffer,
+      mainSessionId: sessionId,
+      nowMs,
+      stuckMs,
+    })
+    if (stuck.length === 0) {
+      // Still prune the dedupe set when nothing is currently stuck.
+      for (const warnedId of [...this.warnedStuckSubtaskChildSessionIds]) {
+        // Drop ids no longer running (task completed/errored since last check)
+        const stillRunning = this.eventBuffer.some((entry) => {
+          if (entry.event.type !== 'message.part.updated') return false
+          const part = entry.event.properties.part
+          if (part.type !== 'tool' || part.tool !== 'task' || part.state.status !== 'running') {
+            return false
+          }
+          if (part.sessionID !== sessionId) return false
+          const metadataValue = (part.state as { metadata?: unknown }).metadata
+          const sid =
+            metadataValue && typeof metadataValue === 'object'
+              ? (metadataValue as { sessionId?: unknown }).sessionId
+              : undefined
+          return sid === warnedId
+        })
+        if (!stillRunning) {
+          this.warnedStuckSubtaskChildSessionIds.delete(warnedId)
+        }
+      }
+      return
+    }
+
+    this.stuckSubtaskCheckInFlight = true
+    try {
+      // Prune dedupe set: drop ids that no longer have a running task so we
+      // can re-warn if the same child session is spawned and stalls again.
+      const stillRunningChildIds = new Set(stuck.map((s) => s.childSessionId))
+      for (const warnedId of [...this.warnedStuckSubtaskChildSessionIds]) {
+        if (!stillRunningChildIds.has(warnedId)) {
+          this.warnedStuckSubtaskChildSessionIds.delete(warnedId)
+        }
+      }
+
+      for (const info of stuck) {
+        if (this.warnedStuckSubtaskChildSessionIds.has(info.childSessionId)) {
+          continue
+        }
+        this.warnedStuckSubtaskChildSessionIds.add(info.childSessionId)
+
+        const label = buildStuckSubtaskLabel(info)
+        const ageMin = Math.max(
+          1,
+          Math.round(
+            (nowMs - (info.lastChildEventAt ?? info.taskRunningAt)) / 60_000,
+          ),
+        )
+        const silentForDesc =
+          info.lastChildEventAt === undefined
+            ? 'has not emitted any events since it started'
+            : `has been silent for ~${ageMin}min`
+        const abortEnabled = getStuckSubtaskAbortEnabled()
+        const actionDesc = abortEnabled
+          ? 'Aborting the subagent session to unstick the orchestrator.'
+          : 'To resume, send a message (the interrupt plugin will abort + replay it).'
+        const warning =
+          `⬦ stuck subagent ${label} ${silentForDesc}. ` +
+          `The orchestrator is waiting on it. ${actionDesc}`
+
+        logger.warn(
+          `[STUCK SUBTASK] threadId=${this.threadId} childSessionId=${info.childSessionId} ${silentForDesc} partId=${info.partId}`,
+        )
+        const sendResult = await sendThreadMessage(this.thread, warning, {
+          flags: NOTIFY_MESSAGE_FLAGS,
+        })
+          .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+        if (sendResult instanceof Error) {
+          discordLogger.error(
+            `[STUCK SUBTASK] Failed to post warning for ${info.childSessionId}:`,
+            sendResult,
+          )
+        }
+
+        if (abortEnabled) {
+          await this.abortSubtaskSession({
+            childSessionId: info.childSessionId,
+            reason: `stuck-subtask-watchdog (${info.childSessionId})`,
+          })
+        }
+      }
+    } finally {
+      this.stuckSubtaskCheckInFlight = false
+    }
+  }
+
+  // Abort a child subagent session (not the main orchestrator). Aborting the
+  // child resolves the parent's `background.wait` in the task tool, which
+  // surfaces as a tool error and lets the orchestrator continue.
+  private async abortSubtaskSession({
+    childSessionId,
+    reason,
+  }: {
+    childSessionId: string
+    reason: string
+  }): Promise<void> {
+    const abortId = this.nextAbortId(reason)
+    await this.abortSessionViaApi({ abortId, reason, sessionId: childSessionId })
   }
 
   private async hydrateSessionEventsFromDatabase({
@@ -1171,13 +1336,20 @@ export class ThreadSessionRuntime {
     }
 
     const state = part.state
-    // Preserve subagent_type for task tools so derivation can build labels
-    // like "explore-1" instead of generic "task-1" after compaction strips input
+    // Preserve subagent_type and description for task tools so derivation can
+    // build labels like "explore-1" instead of generic "task-1" after
+    // compaction strips input. Also lets the stuck-subtask watchdog surface
+    // the human-readable task description in its Discord warning.
     const taskSubagentType =
       part.tool === 'task' ? state.input?.subagent_type : undefined
+    const taskDescription =
+      part.tool === 'task' ? state.input?.description : undefined
     state.input = {}
     if (typeof taskSubagentType === 'string') {
       state.input.subagent_type = taskSubagentType
+    }
+    if (typeof taskDescription === 'string') {
+      state.input.description = taskDescription
     }
 
     if (state.status === 'pending') {
@@ -4583,4 +4755,41 @@ function truncateSessionErrorMessage(message: string): string {
     return message
   }
   return `${message.slice(0, maxLength - 1)}…`
+}
+
+// ── Stuck-subtask watchdog config ───────────────────────────────
+// KIMAKI_STUCK_SUBTASK_TIMEOUT_MS: silence window before a running subagent
+//   with no events is flagged stuck. Default 5 min. Set to 0 to disable.
+// KIMAKI_STUCK_SUBTASK_ABORT: when '1'/'true', the watchdog aborts the child
+//   session after warning so the orchestrator can continue. Default off (warn
+//   only); the user can still type a message to trigger the interrupt plugin.
+export const STUCK_SUBTASK_DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
+
+export function getStuckSubtaskTimeoutMs(): number {
+  const raw = process.env['KIMAKI_STUCK_SUBTASK_TIMEOUT_MS']
+  if (!raw) return STUCK_SUBTASK_DEFAULT_TIMEOUT_MS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) return STUCK_SUBTASK_DEFAULT_TIMEOUT_MS
+  return parsed
+}
+
+export function getStuckSubtaskAbortEnabled(): boolean {
+  const raw = process.env['KIMAKI_STUCK_SUBTASK_ABORT']
+  if (!raw) return false
+  return raw === '1' || raw.toLowerCase() === 'true'
+}
+
+function buildStuckSubtaskLabel(info: StuckSubtaskInfo): string {
+  const agent = info.subagentType && info.subagentType.length > 0
+    ? info.subagentType
+    : 'task'
+  const shortId = info.childSessionId.length > 12
+    ? info.childSessionId.slice(0, 12)
+    : info.childSessionId
+  // Include a short task description when available so the user can tell at
+  // a glance what the stuck subagent was supposed to be doing.
+  const desc = info.description && info.description.length > 0
+    ? ` \"${info.description.slice(0, 80)}${info.description.length > 80 ? '…' : ''}\"`
+    : ''
+  return `${agent}${desc} (${shortId})`
 }

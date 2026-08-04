@@ -735,3 +735,146 @@ export function getDerivedSubagentSessions({
 
   return sessions
 }
+
+/**
+ * A `task` tool part that is still `running` and whose child subagent session
+ * has not emitted any event (message.part.updated, session.status, session.idle,
+ * message.updated, session.error, …) for at least `stuckMs`.
+ *
+ * This scans the in-memory event buffer (which contains child-session events,
+ * unlike the persisted DB — child events are dropped before persistence, see
+ * `persistSessionEventsToDatabase`). So the absence of child events here means
+ * the subagent genuinely produced nothing to kimaki's listener, exactly the
+ * "suddenly stops, type continue" symptom.
+ *
+ * See `getOpencodeEventSessionId` for the event-to-session mapping.
+ */
+export type StuckSubtaskInfo = {
+  /** The child subagent session id (`task` part metadata.sessionId). */
+  childSessionId: string
+  /** The part id of the running `task` tool part. */
+  partId: string
+  /** The assistant message id owning the `task` tool part. */
+  assistantMessageId: string
+  subagentType?: string
+  description?: string
+  /** Timestamp of the running `task` part itself (ms since epoch). */
+  taskRunningAt: number
+  /** Timestamp of the most recent event emitted BY the child session, or
+   * `undefined` when the child has emitted nothing in the buffer. */
+  lastChildEventAt: number | undefined
+}
+
+export function getStuckSubtasks({
+  events,
+  mainSessionId,
+  nowMs,
+  stuckMs,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  nowMs: number
+  stuckMs: number
+  upToIndex?: number
+}): StuckSubtaskInfo[] {
+  if (stuckMs <= 0) return []
+  const end = upToIndex ?? events.length - 1
+
+  // Collect the most recent "running" task part per child session id.
+  // Iterate newest-first so the first hit wins (most recent running part).
+  type RunningTaskRecord = {
+    part: Extract<Part, { type: 'tool' }>
+    taskRunningAt: number
+  }
+  const runningByChild = new Map<string, RunningTaskRecord>()
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) continue
+    if (entry.event.type !== 'message.part.updated') continue
+    const part = entry.event.properties.part
+    if (
+      part.type !== 'tool' ||
+      part.tool !== 'task' ||
+      part.state.status !== 'running' ||
+      part.sessionID !== mainSessionId
+    ) {
+      continue
+    }
+    const childSessionId = getTaskChildSessionIdFromPart(part)
+    if (!childSessionId) continue
+    if (runningByChild.has(childSessionId)) continue
+    runningByChild.set(childSessionId, { part, taskRunningAt: entry.timestamp })
+  }
+
+  if (runningByChild.size === 0) return []
+
+  // For each running child, find the most recent event in the buffer whose
+  // event sessionID === childSessionId (any event type). None → child emitted
+  // nothing since the task was spawned.
+  const stuck: StuckSubtaskInfo[] = []
+  for (const [childSessionId, record] of runningByChild.entries()) {
+    const part = record.part
+    let lastChildEventAt: number | undefined
+    for (let j = end; j >= 0; j--) {
+      const candidate = events[j]
+      if (!candidate) continue
+      const sid = getEventBufferSessionId(candidate.event)
+      if (sid === childSessionId) {
+        lastChildEventAt = candidate.timestamp
+        break
+      }
+    }
+
+    // Staleness baseline: neither the task part itself counts as a child
+    // event (it belongs to the main session), so use the task part's own
+    // timestamp when the child has never emitted. This matches the user
+    // expectation: "warn after N minutes of silence since the subtask began."
+    const effectiveLastAt =
+      lastChildEventAt !== undefined ? lastChildEventAt : record.taskRunningAt
+    if (nowMs - effectiveLastAt < stuckMs) continue
+
+    // `subagent_type` and `description` live on `state.input`, which the
+    // runtime compactor preserves for task tools (see compactEventForEventBuffer).
+    // `metadata` only carries sessionId/parentSessionId/model.
+    const inputValue = (part.state as { input?: unknown }).input
+    const subagentType =
+      inputValue && typeof inputValue === 'object'
+        ? (inputValue as { subagent_type?: unknown }).subagent_type
+        : undefined
+    const description =
+      inputValue && typeof inputValue === 'object'
+        ? (inputValue as { description?: unknown }).description
+        : undefined
+    stuck.push({
+      childSessionId,
+      partId: part.id,
+      assistantMessageId: part.messageID,
+      subagentType:
+        typeof subagentType === 'string' ? subagentType : undefined,
+      description: typeof description === 'string' ? description : undefined,
+      taskRunningAt: record.taskRunningAt,
+      lastChildEventAt,
+    })
+  }
+
+  return stuck
+}
+
+// Keep getTaskChildSessionIdFromPart local to event-stream-state to avoid the
+// runtime importing from the forward-only `getTaskChildSessionId` reserved for
+// the thread-session-runtime module. Mirrors its extraction logic.
+function getTaskChildSessionIdFromPart(
+  part: Extract<Part, { type: 'tool' }>,
+): string | undefined {
+  if (part.type !== 'tool') return undefined
+  const metadataValue = (part.state as { metadata?: unknown }).metadata
+  const metadataSessionId =
+    metadataValue && typeof metadataValue === 'object'
+      ? (metadataValue as { sessionId?: unknown }).sessionId
+      : undefined
+  if (typeof metadataSessionId === 'string' && metadataSessionId.length > 0) {
+    return metadataSessionId
+  }
+  return undefined
+}

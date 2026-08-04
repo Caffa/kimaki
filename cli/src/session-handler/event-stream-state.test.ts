@@ -15,6 +15,7 @@ import {
   getDerivedSubtaskIndex,
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
+  getStuckSubtasks,
   hasAssistantMessageCompletedBefore,
   doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
@@ -832,5 +833,258 @@ describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
       sessionId,
       messageId: latestAssistantId,
     })).toBe(true)
+  })
+})
+describe('getStuckSubtasks', () => {
+  const sessionId = 'ses_main'
+
+  function taskPartEvent({
+    partId,
+    status,
+    childSessionId,
+    subagentType = 'task',
+    description,
+    eventSessionId = sessionId,
+    assistantMessageId = 'msg_assistant',
+  }: {
+    partId: string
+    status: 'pending' | 'running' | 'completed' | 'error'
+    childSessionId: string
+    subagentType?: string
+    description?: string
+    eventSessionId?: string
+    assistantMessageId?: string
+  }): EventBufferEntry['event'] {
+    const part = {
+      id: partId,
+      type: 'tool',
+      tool: 'task',
+      sessionID: eventSessionId,
+      messageID: assistantMessageId,
+      callID: `call_${partId}`,
+      state: {
+        status,
+        input: { subagent_type: subagentType, description },
+        output: '',
+        title: description ?? 'task',
+        metadata: { sessionId: childSessionId },
+        time: { start: 0, end: 0 },
+      },
+    }
+    return {
+      id: `evt_${partId}_${status}`,
+      type: 'message.part.updated',
+      properties: { part, time: 0 },
+    } as unknown as EventBufferEntry['event']
+  }
+
+  function childPartEvent({
+    eventSessionId,
+    partId,
+  }: {
+    eventSessionId: string
+    partId: string
+  }): EventBufferEntry['event'] {
+    const part = {
+      id: partId,
+      type: 'text',
+      sessionID: eventSessionId,
+      messageID: 'msg_child_assistant',
+      text: 'child progress',
+      time: { start: 0, end: 0 },
+    }
+    return {
+      id: `evt_child_${partId}`,
+      type: 'message.part.updated',
+      properties: { part, time: 0 },
+    } as unknown as EventBufferEntry['event']
+  }
+
+  function childIdleEvent({
+    eventSessionId,
+  }: {
+    eventSessionId: string
+  }): EventBufferEntry['event'] {
+    return {
+      id: `evt_idle_${eventSessionId}`,
+      type: 'session.idle',
+      properties: { sessionID: eventSessionId },
+    } as unknown as EventBufferEntry['event']
+  }
+
+  test('flags a running task whose child emitted nothing within the window', () => {
+    // task running at t=0; now is 10 minutes later; child never emitted anything
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child', subagentType: 'explore', description: 'find the race condition' }), timestamp: 0 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 10 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0]?.childSessionId).toBe('ses_child')
+    expect(result[0]?.lastChildEventAt).toBeUndefined()
+    // subagent_type and description are read from state.input (where the
+    // runtime compactor preserves them), not from metadata.
+    expect(result[0]?.subagentType).toBe('explore')
+    expect(result[0]?.description).toBe('find the race condition')
+    expect(result[0]?.partId).toBe('p1')
+    expect(result[0]?.assistantMessageId).toBe('msg_assistant')
+    expect(result[0]?.taskRunningAt).toBe(0)
+  })
+
+  test('falls back to undefined subagentType/description when not present in input', () => {
+    // Build inline so the helper's `subagentType = 'task'` default doesn't mask
+    // the missing-field case.
+    const part = {
+      id: 'p1',
+      type: 'tool',
+      tool: 'task',
+      sessionID: sessionId,
+      messageID: 'msg_assistant',
+      callID: 'call_p1',
+      state: {
+        status: 'running',
+        // No subagent_type, no description
+        input: {},
+        output: '',
+        title: 'task',
+        metadata: { sessionId: 'ses_child' },
+        time: { start: 0, end: 0 },
+      },
+    }
+    const events: EventBufferEntry[] = [
+      {
+        event: {
+          id: 'evt_p1',
+          type: 'message.part.updated',
+          properties: { part, time: 0 },
+        } as unknown as EventBufferEntry['event'],
+        timestamp: 0,
+      },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 10 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0]?.subagentType).toBeUndefined()
+    expect(result[0]?.description).toBeUndefined()
+  })
+
+  test('does not flag a running task whose child emitted recently', () => {
+    // task running at t=0; child emitted a text part at t=30s; now is t=2min
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child' }), timestamp: 0 },
+      { event: childPartEvent({ eventSessionId: 'ses_child', partId: 'cp1' }), timestamp: 30 * 1000 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 2 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(0)
+  })
+
+  test('does not flag a completed task part', () => {
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'completed', childSessionId: 'ses_child' }), timestamp: 0 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 10 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(0)
+  })
+
+  test('flags a child that emitted long ago then went silent', () => {
+    // child emitted a part at t=1min, then nothing; now is t=10min; stuckMs=5min
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child' }), timestamp: 0 },
+      { event: childPartEvent({ eventSessionId: 'ses_child', partId: 'cp1' }), timestamp: 60 * 1000 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 10 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0]?.lastChildEventAt).toBe(60 * 1000)
+  })
+
+  test('does not flag when child just sent session.idle (natural completion settling)', () => {
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child' }), timestamp: 0 },
+      // task completed will arrive next, but session.idle already arrived at t=5s
+      { event: childIdleEvent({ eventSessionId: 'ses_child' }), timestamp: 5 * 1000 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 2 * 1000, // only 2s after idle → not stale
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(0)
+  })
+
+  test('ignores events from other directories / sessions', () => {
+    const events: EventBufferEntry[] = [
+      // task part whose part.sessionID belongs to a different main session
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child', eventSessionId: 'ses_other' }), timestamp: 0 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 10 * 60 * 1000,
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(0)
+  })
+
+  test('handles multiple parallel running subtasks independently', () => {
+    // child_a: running since t=0, emitted at t=200s → staleness 200s (<300s, fresh)
+    // child_b: running since t=100s, emitted nothing → staleness 300s (>=300s, stuck)
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child_a' }), timestamp: 0 },
+      { event: taskPartEvent({ partId: 'p2', status: 'running', childSessionId: 'ses_child_b' }), timestamp: 100 * 1000 },
+      { event: childPartEvent({ eventSessionId: 'ses_child_a', partId: 'cp1' }), timestamp: 200 * 1000 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 400 * 1000,
+      stuckMs: 300 * 1000,
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0]?.childSessionId).toBe('ses_child_b')
+  })
+
+  test('disables when stuckMs <= 0', () => {
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child' }), timestamp: 0 },
+    ]
+    expect(getStuckSubtasks({ events, mainSessionId: sessionId, nowMs: 999_999_999, stuckMs: 0 })).toHaveLength(0)
+    expect(getStuckSubtasks({ events, mainSessionId: sessionId, nowMs: 999_999_999, stuckMs: -1 })).toHaveLength(0)
+  })
+
+  test('does not flag a running task within the stuckMs grace window', () => {
+    const events: EventBufferEntry[] = [
+      { event: taskPartEvent({ partId: 'p1', status: 'running', childSessionId: 'ses_child' }), timestamp: 0 },
+    ]
+    const result = getStuckSubtasks({
+      events,
+      mainSessionId: sessionId,
+      nowMs: 4 * 60 * 1000, // 4min < 5min window
+      stuckMs: 5 * 60 * 1000,
+    })
+    expect(result).toHaveLength(0)
   })
 })
