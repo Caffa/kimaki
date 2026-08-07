@@ -1,8 +1,11 @@
 // Global SSE event listener.
 // One persistent connection to /global/event that broadcasts events to all
-// registered thread runtimes. Each runtime's handleEvent() filters by
-// sessionId internally. Replaces per-thread SSE listeners that each opened
-// their own connection, causing reconnect churn with many idle threads.
+// registered thread runtimes. Each callback receives the event and the
+// source directory from the GlobalEvent envelope so runtimes can skip events
+// from other opencode projects. Session-level demux (sessionId filtering)
+// happens inside each runtime's handleEvent().
+// Replaces per-thread SSE listeners that each opened their own connection,
+// causing reconnect churn with many idle threads.
 //
 // Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
 // which uses a single global.event() SSE stream for all directories.
@@ -28,7 +31,7 @@ function delay(ms: number): Promise<void> {
 
 // ── Types ──────────────────────────────────────────────────────
 
-type EventCallback = (event: OpenCodeEvent) => void
+type EventCallback = (event: OpenCodeEvent, directory?: string) => void
 
 // ── State ──────────────────────────────────────────────────────
 
@@ -41,8 +44,9 @@ let controller: AbortController | null = null
 
 /**
  * Register a thread runtime to receive global events. Every event from the
- * global SSE stream is broadcast to every callback; the runtime's own
- * handleEvent() filters by sessionId.
+ * global SSE stream is broadcast to every callback along with the source
+ * directory; the runtime's own handleEvent() filters by sessionId and
+ * projectDirectory.
  */
 export function registerEventListener(
   threadId: string,
@@ -136,8 +140,9 @@ function createGlobalClient(baseUrl: string): OpencodeClient {
 
 function dispatchEvent(globalEvent: GlobalEvent): void {
   const payload = globalEvent.payload as OpenCodeEvent
+  const directory = globalEvent.directory
   for (const callback of callbacks.values()) {
-    callback(payload)
+    callback(payload, directory)
   }
 }
 

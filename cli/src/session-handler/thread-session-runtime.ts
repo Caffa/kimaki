@@ -42,9 +42,10 @@ import {
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
-import { formatPart } from '../message-formatting.js'
+import { formatPart, formatTokenCount, shortenModelId } from '../message-formatting.js'
 import {
   getChannelVerbosity,
+  getChannelFooterStatsMode,
   getPartMessageIds,
   getDb,
   setPartMessage,
@@ -107,6 +108,7 @@ import {
   getCurrentTurnStartTime,
   isSessionBusy,
   getLatestRunInfo,
+  getPerModelUsage,
   getDerivedSubtaskIndex,
   getDerivedSubtaskAgentType,
   getLatestAssistantMessageIdForLatestUserTurn,
@@ -723,6 +725,17 @@ export class ThreadSessionRuntime {
   // has a running task (so a later re-spawn can warn again).
   private warnedStuckSubtaskChildSessionIds = new Set<string>()
 
+  // ── Orphan subtask event replay ──────────────────────────────────
+  //
+  // When a child subagent session starts emitting events before the
+  // orchestrator's `task` tool part arrives (which carries the child session
+  // ID in metadata.sessionId), those early events have no subtask association
+  // and would be dropped by the session demux guard. We buffer them here so
+  // they can be replayed once the task part establishes the association.
+  private orphanEventsBySession = new Map<string, OpenCodeEvent[]>()
+  private static readonly ORPHAN_EVENTS_MAX_PER_SESSION = 50
+  private static readonly ORPHAN_EVENTS_MAX_SESSIONS = 10
+
   // Lightweight promise chain for serializing preprocess callbacks.
   // Runs OUTSIDE dispatchAction so heavy work (voice transcription, context
   // fetch, attachment download) doesn't block SSE event handling, permission
@@ -744,10 +757,18 @@ export class ThreadSessionRuntime {
         error,
       )
     })
-    // Register with the single global SSE listener. Events for this
-    // directory are demuxed and dispatched through our action queue.
-    registerEventListener(this.threadId, (event) => {
+    // Register with the single global SSE listener. The directory filter
+    // skips events from other opencode projects early, before buffering or
+    // processing. Session-level demux (subtask discovery, orphan replay)
+    // happens inside handleEvent().
+    registerEventListener(this.threadId, (event, directory) => {
       if (this.disposed) return
+      // Drop events from other opencode projects. Events without a directory
+      // (e.g. server heartbeats) are let through — the session demux guard
+      // inside handleEvent() will drop them if they don't belong here.
+      if (directory && directory !== this.projectDirectory) {
+        return
+      }
       // fire-and-forget: wrap with .catch so any throw inside handleEvent /
       // part formatting (e.g. a malformed tool part) is logged once instead of
       // becoming an unhandled promise rejection that floods the bot log with
@@ -1173,6 +1194,56 @@ export class ThreadSessionRuntime {
     return { label, assistantMessageId }
   }
 
+  // ── Orphan subtask event replay ────────────────────────────────
+  //
+  // When a child subagent session starts emitting events before the
+  // orchestrator's `task` tool part arrives (which carries the child session
+  // ID in metadata.sessionId), those early events have no subtask association
+  // and would be dropped by the session demux guard. Instead of dropping
+  // them, we buffer them here and replay once the task part establishes the
+  // link. This prevents lost early subtask output (e.g. initial assistant
+  // messages, early tool calls) that would otherwise be silently discarded.
+
+  private storeOrphanEvent(eventSessionId: string, event: OpenCodeEvent): void {
+    const orphans = this.orphanEventsBySession.get(eventSessionId)
+    if (orphans) {
+      if (orphans.length >= ThreadSessionRuntime.ORPHAN_EVENTS_MAX_PER_SESSION) {
+        return
+      }
+      orphans.push(event)
+    } else {
+      if (this.orphanEventsBySession.size >= ThreadSessionRuntime.ORPHAN_EVENTS_MAX_SESSIONS) {
+        return
+      }
+      this.orphanEventsBySession.set(eventSessionId, [event])
+    }
+  }
+
+  private replayOrphanEvents(childSessionId: string): void {
+    const orphans = this.orphanEventsBySession.get(childSessionId)
+    if (!orphans || orphans.length === 0) return
+    this.orphanEventsBySession.delete(childSessionId)
+    logger.log(
+      `[ORPHAN REPLAY] Replaying ${orphans.length} orphaned events for session ${childSessionId}`,
+    )
+    for (const event of orphans) {
+      // Re-queue through dispatchAction to maintain serialization with
+      // other event processing. These events were stored as orphans rather
+      // than buffered, so handleEvent will buffer them for the first time
+      // when they pass the demux guard (the subtask association is now
+      // established, so getSubtaskInfoForSession will recognize the session).
+      void this.dispatchAction(async () => {
+        await this.sentPartIdsBootstrap
+        await this.handleEvent(event)
+      }).catch((error) => {
+        logger.error(
+          `[ORPHAN REPLAY] Error replaying orphaned event for session ${childSessionId}:`,
+          error,
+        )
+      })
+    }
+  }
+
   // ── Lifecycle ────────────────────────────────────────────────
 
   dispose(): void {
@@ -1184,6 +1255,7 @@ export class ThreadSessionRuntime {
     // Release large internal buffers so GC can reclaim memory immediately
     // instead of waiting for the runtime object itself to become unreachable.
     this.eventBuffer = []
+    this.orphanEventsBySession.clear()
     this.nextEventIndex = 0
     this.partBuffer.clear()
     this.preprocessChain = Promise.resolve()
@@ -1493,17 +1565,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Skip message.part.delta from the event buffer — no derivation function
-    // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
-    // etc.) uses them. During long streaming responses they flood the 1000-slot
-    // buffer, evicting session.status busy events that isSessionBusy needs,
-    // causing tryDrainQueue to drain the local queue while the session is
-    // actually still busy. This was the root cause of "? queue" messages
-    // interrupting instead of queuing.
-    if (event.type !== 'message.part.delta') {
-      this.appendEventToBuffer(event)
-    }
-
     const sessionId = this.state?.sessionId
 
     const eventSessionId = getOpencodeEventSessionId(event)
@@ -1543,16 +1604,63 @@ export class ThreadSessionRuntime {
     const isGlobalEvent = event.type === 'tui.toast.show'
     const isScopedToastEvent = Boolean(toastSessionId)
 
-    // Drop events that don't match current session (stale events from
-    // previous sessions), unless it's a global event or a subtask session.
+    // Drop or buffer events that don't match current session:
+    //  • Global events (tui.toast.show) always pass through.
+    //  • Events from known subtask sessions pass through.
+    //  • Events from an unknown session are stored as orphans — they may
+    //    belong to a child subagent that hasn't been discovered yet (the
+    //    task tool part with metadata.sessionId hasn't arrived). Once the
+    //    task part is processed and getSubtaskInfoForSession recognizes the
+    //    session, orphans are replayed through handleEvent.
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
       if (!this.getSubtaskInfoForSession(eventSessionId)) {
-        return // stale event from previous session
+        this.storeOrphanEvent(eventSessionId, event)
+        return
       }
     }
     if (isScopedToastEvent && toastSessionId !== sessionId) {
       if (!this.getSubtaskInfoForSession(toastSessionId!)) {
         return
+      }
+    }
+
+    // ── Buffer & orphan replay ────────────────────────────────────
+    // Events that pass the demux guard (main session, known subtask, global)
+    // are buffered for derivation functions (isSessionBusy, getStuckSubtasks,
+    // etc.). Events from unknown sessions were stored as orphans above and
+    // returned before reaching this point — they are NOT buffered until
+    // replayed, which avoids duplicates.
+    if (event.type !== 'message.part.delta') {
+      this.appendEventToBuffer(event)
+    }
+
+    // When a `task` tool part arrives with metadata.sessionId pointing to a
+    // child session, it establishes the subtask association. If we have
+    // orphaned events for that child session (arrived before the task part),
+    // replay them now so they're processed by the handlers.
+    if (
+      event.type === 'message.part.updated'
+      && event.properties.part.type === 'tool'
+      && event.properties.part.tool === 'task'
+    ) {
+      const part = event.properties.part
+      // Extract child session ID from metadata (same extraction pattern as
+      // getTaskChildSessionIdFromPart in event-stream-state.ts). Metadata is
+      // present on running/completed task parts but not on pending ones.
+      const metadata =
+        part.state && typeof part.state === 'object'
+          ? (part.state as { metadata?: unknown }).metadata
+          : undefined
+      const childSessionId =
+        metadata && typeof metadata === 'object' && 'sessionId' in metadata
+          ? (metadata as { sessionId?: unknown }).sessionId
+          : undefined
+      if (
+        typeof childSessionId === 'string' &&
+        childSessionId.length > 0 &&
+        this.orphanEventsBySession.has(childSessionId)
+      ) {
+        this.replayOrphanEvents(childSessionId)
       }
     }
 
@@ -4456,7 +4564,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const modelLabel = `${model.providerID}/${model.modelID}`
+    const modelLabel = shortenModelId(`${model.providerID}/${model.modelID}`)
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
@@ -4496,7 +4604,48 @@ export class ThreadSessionRuntime {
       elapsedMs < 1000
         ? '<1s'
         : prettyMilliseconds(elapsedMs, { secondsDecimalDigits: 0 })
-    const modelInfo = runInfo.model ? ` ⋅ ${runInfo.model}` : ''
+
+    const footerStatsMode = await getChannelFooterStatsMode(
+      this.getVerbosityChannelId(),
+    )
+    const perModelUsage = getPerModelUsage({ events: this.eventBuffer })
+
+    // Default: the run model name only. Depending on the channel footer-stats
+    // mode this is replaced by a per-model token breakdown.
+    let modelInfo = runInfo.model ? ` ⋅ ${shortenModelId(runInfo.model)}` : ''
+    if (footerStatsMode !== 'off' && perModelUsage.length > 0) {
+      const modelsWithTokens = perModelUsage.filter((usage) => {
+        return usage.totalTokens > 0
+      })
+      if (footerStatsMode === 'tokens') {
+        if (modelsWithTokens.length > 0) {
+          const shown = modelsWithTokens.slice(0, 3)
+          const restCount = modelsWithTokens.length - shown.length
+          const parts = shown.map((usage) => {
+            return ` ⋅ ${shortenModelId(usage.modelID)} ${formatTokenCount(usage.totalTokens)}`
+          })
+          if (restCount > 0) {
+            parts.push(` ⋅ +${restCount} more`)
+          }
+          modelInfo = parts.join('')
+        }
+      } else if (modelsWithTokens.length >= 2) {
+        // percentages mode: only meaningful with 2+ distinct models
+        const sumAll = modelsWithTokens.reduce((sum, usage) => {
+          return sum + usage.totalTokens
+        }, 0)
+        if (sumAll > 0) {
+          modelInfo = modelsWithTokens
+            .map((usage) => {
+              const percentage = Math.round(
+                (usage.totalTokens / sumAll) * 100,
+              )
+              return ` ⋅ ${shortenModelId(usage.modelID)} ${percentage}%`
+            })
+            .join('')
+        }
+      }
+    }
     const agentInfo =
       runInfo.agent && runInfo.agent.toLowerCase() !== 'build'
         ? ` ⋅ **${runInfo.agent}**`
