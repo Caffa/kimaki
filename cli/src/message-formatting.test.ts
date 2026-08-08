@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import { formatBashToolTitle, formatPart, formatTodoList, formatTokenCount, serializeEmbeds, serializePoll, serializeMessageSnapshots, shortenModelId, stripThinkingTags } from './message-formatting.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -559,5 +559,160 @@ describe('serializeMessageSnapshots', () => {
       Second forwarded
       </forwarded-message>"
     `)
+  })
+})
+
+describe('stripThinkingTags', () => {
+  test('strips complete thinking block', () => {
+    expect(stripThinkingTags('Hello <thinking>secret thoughts</thinking> world')).toBe('Hello  world')
+  })
+
+  test('strips orphaned closing tag', () => {
+    // This is the main bug: SDK splits thinking content into a reasoning part,
+    // leaving the closing tag as raw text in a text part
+    expect(stripThinkingTags('Some response</thinking>')).toBe('Some response')
+  })
+
+  test('strips orphaned opening tag', () => {
+    expect(stripThinkingTags('<thinking>Some response')).toBe('Some response')
+  })
+
+  test('strips multiline thinking block', () => {
+    expect(stripThinkingTags('Before\n<thinking>line1\nline2</thinking>\nAfter')).toBe('Before\n\nAfter')
+  })
+
+  test('strips case-insensitively', () => {
+    expect(stripThinkingTags('<Thinking>content</THINKING>')).toBe('')
+  })
+
+  test('strips multiple thinking blocks', () => {
+    expect(stripThinkingTags('A <thinking>1</thinking> B <thinking>2</thinking> C')).toBe('A  B  C')
+  })
+
+  test('leaves normal text unchanged', () => {
+    expect(stripThinkingTags('Hello world')).toBe('Hello world')
+  })
+
+  test('handles empty string', () => {
+    expect(stripThinkingTags('')).toBe('')
+  })
+
+  test('handles only thinking tags', () => {
+    expect(stripThinkingTags('<thinking>internal monologue</thinking>')).toBe('')
+  })
+
+  test('handles just a closing tag (the common leak case)', () => {
+    expect(stripThinkingTags('</thinking>')).toBe('')
+  })
+
+  test('strips short think tags', () => {
+    expect(stripThinkingTags('Hello <think>secret</think> world')).toBe('Hello  world')
+  })
+
+  test('strips orphaned short think closing tag', () => {
+    expect(stripThinkingTags('Some response</think>')).toBe('Some response')
+  })
+
+  test('strips orphaned short think opening tag', () => {
+    expect(stripThinkingTags('<think>Some response')).toBe('Some response')
+  })
+
+  test('strips just short think closing tag', () => {
+    expect(stripThinkingTags('</think>')).toBe('')
+  })
+
+  test('strips complete short think block', () => {
+    expect(stripThinkingTags('<think>internal monologue</think>')).toBe('')
+  })
+})
+
+describe('formatPart with thinking tags', () => {
+  test('strips thinking tags from text parts', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: 'Hello</thinking> world',
+    }
+    expect(formatPart(part)).toBe('⬥ Hello world')
+  })
+
+  test('strips complete thinking block from text parts', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '<thinking>internal thoughts</thinking>Here is my answer',
+    }
+    expect(formatPart(part)).toBe('⬥ Here is my answer')
+  })
+
+  test('returns empty string when text is only thinking tags', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '</thinking>',
+    }
+    expect(formatPart(part)).toBe('')
+  })
+
+  test('returns empty string when thinking block is entire content', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '<thinking>secret thoughts</thinking>',
+    }
+    expect(formatPart(part)).toBe('')
+  })
+
+  test('strips short think closing tag from text parts', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: 'Hello</think> world',
+    }
+    expect(formatPart(part)).toBe('⬥ Hello world')
+  })
+})
+
+describe('stripThinkingTags <think> variant', () => {
+  test('strips complete think block', () => {
+    expect(stripThinkingTags('Hello <think>secret thoughts</think> world')).toBe('Hello  world')
+  })
+
+  test('strips orphaned </think> closing tag', () => {
+    expect(stripThinkingTags('Some response</think>')).toBe('Some response')
+  })
+
+  test('strips orphaned <think> opening tag', () => {
+    expect(stripThinkingTags('<think>Some response')).toBe('Some response')
+  })
+
+  test('strips multiline think block', () => {
+    expect(stripThinkingTags('Before\n<think>line1\nline2</think>\nAfter')).toBe('Before\n\nAfter')
+  })
+
+  test('strips think tags case-insensitively', () => {
+    expect(stripThinkingTags('<Think>content</THINK>')).toBe('')
+  })
+
+  test('handles mixed thinking and think tags', () => {
+    expect(stripThinkingTags('A <thinking>1</thinking> B <think>2</think> C')).toBe('A  B  C')
+  })
+
+  test('handles just a </think> closing tag', () => {
+    expect(stripThinkingTags('</think>')).toBe('')
+  })
+
+  test('handles just a <think> opening tag', () => {
+    expect(stripThinkingTags('<think>')).toBe('')
   })
 })

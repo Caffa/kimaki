@@ -8,6 +8,7 @@ import * as errore from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
+import { stripThinkingTags } from './message-formatting.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
 
@@ -173,8 +174,11 @@ export class ShareMarkdown {
     switch (part.type) {
       case 'text':
         if (part.text) {
-          lines.push(part.text)
-          lines.push('')
+          const cleanedText = stripThinkingTags(part.text)
+          if (cleanedText.trim()) {
+            lines.push(cleanedText)
+            lines.push('')
+          }
         }
         break
 
@@ -393,7 +397,7 @@ export async function getCompactSessionContext({
         .filter(
           (p) => p.type === 'text' && !p.synthetic && p.text,
         )
-        .map((p) => (p.type === 'text' ? p.text : ''))
+        .map((p) => (p.type === 'text' ? stripThinkingTags(p.text) : ''))
         .filter(Boolean)
       if (textParts.length > 0) {
         lines.push(`[Assistant]: ${textParts.join(' ').slice(0, 1000)}`)

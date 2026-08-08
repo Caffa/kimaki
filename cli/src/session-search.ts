@@ -2,6 +2,7 @@
 // Parses string/regex queries and builds readable snippets from matched content.
 
 import type { Part } from '@opencode-ai/sdk/v2'
+import { stripThinkingTags } from './message-formatting.js'
 
 export type SessionSearchPattern =
   | {
@@ -122,8 +123,10 @@ function stringifyUnknown(value: unknown): string {
 
 export function getPartSearchTexts(part: Part): string[] {
   switch (part.type) {
-    case 'text':
-      return part.text ? [part.text] : []
+    case 'text': {
+      const cleanedText = stripThinkingTags(part.text || '')
+      return cleanedText ? [cleanedText] : []
+    }
     case 'reasoning':
       return part.text ? [part.text] : []
     case 'tool': {

@@ -3,6 +3,29 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
+
+/**
+ * Strip <thinking>...</thinking> (and <think>...</think>) blocks and orphaned
+ * closing/opening tags from model output text. When the OpenCode SDK splits
+ * extended-thinking content into a dedicated `reasoning` part, leftover tags can
+ * appear as raw text in `text` parts. This removes them so they don't leak
+ * into Discord.
+ */
+export function stripThinkingTags(text: string): string {
+  // Remove complete <thinking>...</thinking> blocks (including content)
+  let result = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+  // Remove complete <think>...</think> blocks (shorter variant used by some models)
+  result = result.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  // Remove orphaned </thinking> closing tags
+  result = result.replace(/<\/thinking>/gi, '')
+  // Remove orphaned </think> closing tags
+  result = result.replace(/<\/think>/gi, '')
+  // Remove orphaned <thinking> opening tags
+  result = result.replace(/<thinking>/gi, '')
+  // Remove orphaned <think> opening tags
+  result = result.replace(/<think>/gi, '')
+  return result
+}
 import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
@@ -555,7 +578,11 @@ export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
-    const text = part.text?.trim()
+    const rawText = part.text?.trim()
+    if (!rawText) return ''
+    // Strip leftover thinking tags that leak from model output when the SDK
+    // splits extended-thinking content into separate `reasoning` parts.
+    const text = stripThinkingTags(rawText)
     if (!text) return ''
     // For subtask text, always use bullet with prefix
     if (prefix) {
@@ -679,4 +706,36 @@ export function formatPart(part: Part, prefix?: string): string {
 
   logger.warn('Unknown part type:', part)
   return ''
+}
+
+const MAX_MODEL_ID_CHARS = 30
+
+// Shorten a model id for display in compact surfaces like the run footer.
+// Strips everything up to and including the last '/' (e.g. "openai/gpt-5.3"
+// becomes "gpt-5.3"), falls back to the original id when the remainder is
+// empty, and caps the result length.
+export function shortenModelId(modelId: string): string {
+  if (!modelId) {
+    return modelId
+  }
+  const lastSlashIndex = modelId.lastIndexOf('/')
+  const short = lastSlashIndex >= 0 ? modelId.slice(lastSlashIndex + 1) : modelId
+  const result = short.length > 0 ? short : modelId
+  return result.length > MAX_MODEL_ID_CHARS
+    ? `${result.slice(0, MAX_MODEL_ID_CHARS - 1)}…`
+    : result
+}
+
+// Format a token count compactly for the run footer:
+// < 1000 → raw number, < 1M → "X.Xk", otherwise → "X.XM".
+export function formatTokenCount(count: number): string {
+  if (count < 1000) {
+    return String(Math.round(count))
+  }
+  if (count < 1_000_000) {
+    const thousands = count / 1000
+    return `${thousands.toFixed(1)}k`
+  }
+  const millions = count / 1_000_000
+  return `${millions.toFixed(1)}M`
 }
