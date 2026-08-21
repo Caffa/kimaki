@@ -20,7 +20,7 @@ const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Route
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
-import { splitTablesFromMarkdown } from './format-tables.js'
+import { splitTablesFromMarkdown, type ContentSegment } from './format-tables.js'
 import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
 import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
@@ -668,6 +668,84 @@ export async function sendThreadMessage(
   }
 
   return firstMessage!
+}
+
+/**
+ * Send content segments (text + Discord Components V2) via REST API.
+ * Mirrors sendThreadMessage but uses REST instead of discord.js channel methods,
+ * for CLI/headless environments that don't have a gateway connection.
+ *
+ * Text segments are split for Discord's 2000-char limit.
+ * Component segments (tables, callouts) are sent with IsComponentsV2 flag.
+ * Returns the first message ID, or undefined if no messages were sent.
+ */
+export async function sendRestContentSegments({
+  channelId,
+  segments,
+  rest,
+  flags,
+}: {
+  channelId: string
+  segments: ContentSegment[]
+  rest: RESTType
+  flags?: number
+}): Promise<{ id: string } | undefined> {
+  const baseFlags = flags ?? SILENT_MESSAGE_FLAGS
+  let firstMessageId: string | undefined
+
+  for (const segment of segments) {
+    if (segment.type === 'components') {
+      const response = (await rest.post(Routes.channelMessages(channelId), {
+        body: {
+          components: segment.components,
+          flags: MessageFlags.IsComponentsV2 | baseFlags,
+          allowed_mentions: { parse: store.getState().allowedMentions },
+        },
+      })) as { id: string }
+      if (!firstMessageId) {
+        firstMessageId = response.id
+      }
+      continue
+    }
+
+    // Text segment
+    let text = segment.text
+    text = unnestCodeBlocksFromLists(text)
+    text = limitHeadingDepth(text)
+    text = escapeBackticksInCodeBlocks(text)
+
+    if (!text.trim()) {
+      continue
+    }
+
+    const sendFlags = baseFlags
+    const chunks = splitMarkdownForDiscord({
+      content: text,
+      maxLength: 2000,
+    })
+
+    for (let chunk of chunks) {
+      if (!chunk?.trim()) {
+        continue
+      }
+      // Safety net: hard-truncate if splitting still produced an oversized chunk
+      if (chunk.length > 2000) {
+        chunk = chunk.slice(0, 1996) + '...'
+      }
+      const response = (await rest.post(Routes.channelMessages(channelId), {
+        body: {
+          content: chunk,
+          flags: sendFlags,
+          allowed_mentions: { parse: store.getState().allowedMentions },
+        },
+      })) as { id: string }
+      if (!firstMessageId) {
+        firstMessageId = response.id
+      }
+    }
+  }
+
+  return firstMessageId ? { id: firstMessageId } : undefined
 }
 
 export async function resolveTextChannel(

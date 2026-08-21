@@ -62,7 +62,8 @@ import { spawn } from 'node:child_process'
 import { createLogger, LogPrefix } from './logger.js'
 import figlet from 'figlet'
 import { notifyError } from './sentry.js'
-import { uploadFilesToDiscord, stripMentions } from './discord-utils.js'
+import { uploadFilesToDiscord, stripMentions, sendRestContentSegments } from './discord-utils.js'
+import { splitTablesFromMarkdown, type ContentSegment } from './format-tables.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeKimaki } from './upgrade.js'
@@ -228,8 +229,27 @@ export async function sendDiscordMessageWithOptionalAttachment({
   splitInsteadOfAttach?: boolean
   /** Local file paths to attach to the message (images, text files, etc.). */
   files?: string[]
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; componentSegments: ContentSegment[] }> {
   const discordMaxLength = 2000
+
+  // Process <callout> and table markup into Discord Components V2.
+  // Text segments are sent as the main message content; component segments
+  // (callouts, tables) are returned for the caller to send separately
+  // (e.g. into the thread after creation).
+  const segments = splitTablesFromMarkdown(prompt)
+  const componentSegments = segments.filter((s) => s.type === 'components')
+  const textPrompt = segments
+    .filter((s) => s.type === 'text')
+    .map((s) => s.text)
+    .join('')
+    .trim()
+  // When callout/table extraction removes all visible text, fall back to the
+  // original prompt. This prevents an empty Discord message (Discord requires
+  // at least one of content, embeds, or attachments). When component segments
+  // will render the callout content as styled containers, showing raw tags in
+  // the main message is a minor UX trade-off vs. sending an empty message that
+  // Discord may reject (particularly in --notify-only mode without embeds).
+  const effectivePrompt = textPrompt || prompt
 
   // When files are provided, always use multipart FormData upload
   if (files?.length) {
@@ -247,12 +267,12 @@ export async function sendDiscordMessageWithOptionalAttachment({
       }
     }
 
-    // When prompt exceeds Discord's limit, attach it as prompt.md alongside
+    // When effectivePrompt exceeds Discord's limit, attach it as prompt.md alongside
     // user files so nothing is silently lost.
-    const isLongPrompt = prompt.length > discordMaxLength
+    const isLongPrompt = effectivePrompt.length > discordMaxLength
     const content = isLongPrompt
-      ? `Prompt attached as file (${prompt.length} chars)\n\n> ${prompt.slice(0, 100).replace(/\n/g, ' ')}...`
-      : prompt
+      ? `Prompt attached as file (${effectivePrompt.length} chars)\n\n> ${effectivePrompt.slice(0, 100).replace(/\n/g, ' ')}...`
+      : effectivePrompt
 
     // Build attachment metadata: user files + optional prompt.md
     const allFiles: Array<{ filePath: string; filename: string; mimeType: string }> = files.map((file) => ({
@@ -264,6 +284,8 @@ export async function sendDiscordMessageWithOptionalAttachment({
     if (isLongPrompt) {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-prompt-'))
       const tmpFile = path.join(tmpDir, 'prompt.md')
+      // Attach the full original prompt (including callout tags) so the
+      // raw text is preserved in the file.
       fs.writeFileSync(tmpFile, prompt)
       allFiles.push({ filePath: tmpFile, filename: 'prompt.md', mimeType: 'text/markdown' })
     }
@@ -305,23 +327,23 @@ export async function sendDiscordMessageWithOptionalAttachment({
       const error = await response.text()
       throw new Error(`Discord API error: ${response.status} - ${error}`)
     }
-    return (await response.json()) as { id: string }
+    return { ...(await response.json() as { id: string }), componentSegments }
   }
 
-  if (prompt.length <= discordMaxLength) {
+  if (effectivePrompt.length <= discordMaxLength) {
     return (await rest.post(Routes.channelMessages(channelId), {
       body: {
-        content: prompt,
+        content: effectivePrompt,
         embeds,
         allowed_mentions: { parse: store.getState().allowedMentions },
       },
-    })) as { id: string }
+    })) as { id: string; componentSegments: ContentSegment[] }
   }
 
   if (splitInsteadOfAttach) {
     const { splitMarkdownForDiscord } = await import('./discord-utils.js')
     const chunks = splitMarkdownForDiscord({
-      content: prompt,
+      content: effectivePrompt,
       maxLength: discordMaxLength,
     })
     let firstMessage: { id: string } | undefined
@@ -341,16 +363,18 @@ export async function sendDiscordMessageWithOptionalAttachment({
       })) as { id: string }
       if (!firstMessage) firstMessage = message
     }
-    return firstMessage!
+    return { ...firstMessage!, componentSegments }
   }
 
-  const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
-  const summaryContent = `Prompt attached as file (${prompt.length} chars)\n\n> ${preview}...`
+  const preview = effectivePrompt.slice(0, 100).replace(/\n/g, ' ')
+  const summaryContent = `Prompt attached as file (${effectivePrompt.length} chars)\n\n> ${preview}...`
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-prompt-'))
   const tmpFile = path.join(tmpDir, 'prompt.md')
   // Wrap long lines so the file is readable in Discord's preview
   // (Discord doesn't wrap text in file attachments)
+  // Attach the full original prompt (including callout tags) so the
+  // raw text is preserved in the file.
   const wrappedPrompt = prompt
     .split('\n')
     .flatMap((line) => {
@@ -417,7 +441,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
       )
     }
 
-    return (await starterMessageResponse.json()) as { id: string }
+    return { ...(await starterMessageResponse.json() as { id: string }), componentSegments }
   } finally {
     fs.unlinkSync(tmpFile)
     fs.rmdirSync(tmpDir)
@@ -521,55 +545,11 @@ function readErrorField(error: object | null, key: string): unknown {
   return undefined
 }
 
-/** Transient network errors that may resolve on retry (DNS down, gateway unreachable, TLS blips). */
-const TRANSIENT_ERROR_CODES = new Set([
-  'ENOTFOUND',
-  'ECONNREFUSED',
-  'ETIMEDOUT',
-  'ECONNRESET',
-  'EAI_AGAIN',
-  'EPIPE',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  // TLS/cert errors can be transient (intermediate CA blip, MITM proxy, cert rotation).
-  // Without these, Discord login failure exits EXIT_NO_RESTART and the bin wrapper
-  // never restarts — the bot dies permanently on "unable to verify the first certificate".
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-  'UNABLE_TO_GET_ISSUER_CERT',
-  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-  'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY',
-  'CERT_SIGNATURE_FAILURE',
-  'CERT_NOT_YET_VALID',
-  'CERT_HAS_EXPIRED',
-  'CRL_HAS_EXPIRED',
-  'DEPTH_ZERO_SELF_SIGNED_CERT',
-  'SELF_SIGNED_CERT_IN_CHAIN',
-  'ERR_TLS_CERT_ALTNAME_INVALID',
-])
-
-const TRANSIENT_ERROR_MESSAGE_PATTERNS = [
-  /unable to verify the first certificate/i,
-  /certificate has expired/i,
-  /self[- ]signed certificate/i,
-  /unable to get local issuer certificate/i,
-]
-
-export function isTransientNetworkError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  const code = (error as NodeJS.ErrnoException).code
-  if (code && TRANSIENT_ERROR_CODES.has(code)) return true
-  // Fallback when code is stripped by wrappers (discord.js sometimes rethrows by message only).
-  if (
-    TRANSIENT_ERROR_MESSAGE_PATTERNS.some((pattern) =>
-      pattern.test(error.message),
-    )
-  ) {
-    return true
-  }
-  // discord.js wraps errors in cause chains
-  if (error.cause instanceof Error) return isTransientNetworkError(error.cause)
-  return false
-}
+// The canonical transient-error classifier lives in ./network-retry.js (no heavy deps).
+// The broad list (incl. mid-stream resets ECONNRESET/EPIPE and TLS/cert blips) is used to
+// decide whether to restart the bot on login/connection failure.
+import { isTransientNetworkError } from './network-retry.js'
+export { isTransientNetworkError }
 
 export function isDiscordMemberLookupUnavailable(error: Error): boolean {
   const status = readErrorField(error, 'status')

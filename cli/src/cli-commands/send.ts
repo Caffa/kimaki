@@ -42,6 +42,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { sendRestContentSegments } from '../discord-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -517,7 +518,7 @@ cli
           // detection can find the command on its own line.
           const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
 
-          await sendDiscordMessageWithOptionalAttachment({
+          const { id: _threadMsgId, componentSegments: threadComponentSegments } = await sendDiscordMessageWithOptionalAttachment({
             channelId: targetThreadId,
             prompt: prefixedPrompt,
             botToken,
@@ -525,6 +526,21 @@ cli
             rest,
             files: filePaths,
           })
+
+          // Send any callout/table component segments into the thread.
+          // Errors here are non-fatal: the main message is already posted,
+          // so a failed component render should not abort the command.
+          if (threadComponentSegments.length > 0) {
+            try {
+              await sendRestContentSegments({
+                channelId: targetThreadId,
+                segments: threadComponentSegments,
+                rest,
+              })
+            } catch (err) {
+              cliLogger.warn('Failed to send callout/table components to thread:', err instanceof Error ? err.message : String(err))
+            }
+          }
 
           const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
           const existingSessionId = sessionId || await getThreadSession(targetThreadId)
@@ -697,7 +713,7 @@ cli
           ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } }]
           : undefined
 
-        const starterMessage = await sendDiscordMessageWithOptionalAttachment({
+        const { id: starterMessageId, componentSegments } = await sendDiscordMessageWithOptionalAttachment({
           channelId,
           prompt,
           botToken,
@@ -710,7 +726,20 @@ cli
         // For notify-only on non-project channels, just post the message without
         // creating a thread. There's no session to start, so a thread is unnecessary.
         if (notifyOnly && !channelConfig) {
-          const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessage.id}`
+          // Send component segments directly to the channel (no thread).
+          // Errors here are non-fatal: the main message is already posted.
+          if (componentSegments.length > 0) {
+            try {
+              await sendRestContentSegments({
+                channelId,
+                segments: componentSegments,
+                rest,
+              })
+            } catch (err) {
+              cliLogger.warn('Failed to send callout/table components to channel:', err instanceof Error ? err.message : String(err))
+            }
+          }
+          const messageUrl = `https://discord.com/channels/${channelData.guild_id}/${channelId}/${starterMessageId}`
           note(
             `Channel: #${channelData.name}\n\nMessage sent.\n\nURL: ${messageUrl}`,
             '✅ Message Sent',
@@ -722,7 +751,7 @@ cli
         cliLogger.log('Creating thread...')
 
         const threadData = (await rest.post(
-          Routes.threads(channelId, starterMessage.id),
+          Routes.threads(channelId, starterMessageId),
           {
             body: {
               name: threadName.slice(0, 100),
@@ -732,6 +761,22 @@ cli
         )) as { id: string; name: string }
 
         cliLogger.log('Thread created!')
+
+        // Send any callout/table component segments into the thread.
+        // They can't go in the starter message because Discord Components V2
+        // messages can't carry the embed marker needed for thread auto-start.
+        // Errors here are non-fatal: the thread is already created.
+        if (componentSegments.length > 0) {
+          try {
+            await sendRestContentSegments({
+              channelId: threadData.id,
+              segments: componentSegments,
+              rest,
+            })
+          } catch (err) {
+            cliLogger.warn('Failed to send callout/table components to thread:', err instanceof Error ? err.message : String(err))
+          }
+        }
 
         // Add user to thread if specified
         if (resolvedUser) {

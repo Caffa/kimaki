@@ -78,10 +78,23 @@ async function executeThreadScheduledTask({
   // find the command on its own line.
   const prefixedPrompt = `» **kimaki-cli:**\n${payload.prompt}`
 
+  // Process <callout> and table markup into Discord Components V2.
+  // Text segments go in the main message (with embed); component segments
+  // are sent as follow-up messages into the same thread.
+  const { splitTablesFromMarkdown } = await import('./format-tables.js')
+  const segments = splitTablesFromMarkdown(prefixedPrompt)
+  const componentSegments = segments.filter((s) => s.type === 'components')
+  const textPrompt = segments
+    .filter((s) => s.type === 'text')
+    .map((s) => s.text)
+    .join('')
+    .trim()
+  const effectivePrompt = textPrompt || prefixedPrompt
+
   const postResult = await rest
     .post(Routes.channelMessages(payload.threadId), {
       body: {
-        content: prefixedPrompt,
+        content: effectivePrompt,
         embeds: embed,
       },
     })
@@ -92,6 +105,21 @@ async function executeThreadScheduledTask({
     })
 
   if (postResult instanceof Error) return postResult
+
+  // Send callout/table component segments into the thread.
+  // Errors here are non-fatal: the main message is already posted.
+  if (componentSegments.length > 0) {
+    try {
+      const { sendRestContentSegments } = await import('./discord-utils.js')
+      await sendRestContentSegments({
+        channelId: payload.threadId,
+        segments: componentSegments,
+        rest,
+      })
+    } catch (err) {
+      taskLogger.warn(`Failed to send callout/table components for task ${task.id}:`, err instanceof Error ? err.message : String(err))
+    }
+  }
 }
 
 async function executeChannelScheduledTask({
@@ -126,10 +154,23 @@ async function executeChannelScheduledTask({
     ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
     : undefined
 
+  // Process <callout> and table markup into Discord Components V2.
+  // Text segments go in the main message (with embed); component segments
+  // are sent into the thread after creation.
+  const { splitTablesFromMarkdown } = await import('./format-tables.js')
+  const segments = splitTablesFromMarkdown(payload.prompt)
+  const componentSegments = segments.filter((s) => s.type === 'components')
+  const textPrompt = segments
+    .filter((s) => s.type === 'text')
+    .map((s) => s.text)
+    .join('')
+    .trim()
+  const effectivePrompt = textPrompt || payload.prompt
+
   const starterResult = await rest
     .post(Routes.channelMessages(payload.channelId), {
       body: {
-        content: payload.prompt,
+        content: effectivePrompt,
         embeds,
       },
     })
@@ -167,11 +208,26 @@ async function executeChannelScheduledTask({
 
   if (threadResult instanceof Error) return threadResult
 
+  // Send callout/table component segments into the newly created thread.
+  // Errors here are non-fatal: the thread is already created.
+  const threadIdResult = parseMessageId(threadResult)
+  if (componentSegments.length > 0 && !(threadIdResult instanceof Error)) {
+    try {
+      const { sendRestContentSegments } = await import('./discord-utils.js')
+      await sendRestContentSegments({
+        channelId: threadIdResult,
+        segments: componentSegments,
+        rest,
+      })
+    } catch (err) {
+      taskLogger.warn(`Failed to send callout/table components for task ${task.id}:`, err instanceof Error ? err.message : String(err))
+    }
+  }
+
   if (!payload.userId) {
     return
   }
 
-  const threadIdResult = parseMessageId(threadResult)
   if (threadIdResult instanceof Error) {
     return new Error(`Invalid thread response for task ${task.id}`, {
       cause: threadIdResult,
