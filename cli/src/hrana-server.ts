@@ -290,11 +290,49 @@ export async function evictExistingInstance({ port }: { port: number }) {
 
     // Verify it's gone. Some shutdown paths need a few seconds to run cleanup,
     // so we avoid SIGKILL and just poll for up to 10 seconds.
+    // fetch throws when the connection is refused (port freed = old process dead).
     const secondProbe = await fetch(url, {
       signal: AbortSignal.timeout(2000),
     }).catch((e) => new FetchError({ url, cause: e }))
+    // FetchError = connection refused → old process is gone, eviction succeeded.
+    // Successful response = old process still alive, keep polling.
     if (secondProbe instanceof Error) return
   }
 
-  hranaLogger.log(`PID ${targetPid} still alive after 10s SIGTERM grace period`)
+  // Graceful shutdown didn't work — escalate to SIGKILL.
+  hranaLogger.log(
+    `PID ${targetPid} still alive after 10s SIGTERM grace period, sending SIGKILL`,
+  )
+  // ESRCH = process already gone (raced between poll and kill). Safe to continue.
+  const sigkillResult = errore.try(
+    () => {
+      process.kill(targetPid, 'SIGKILL')
+    },
+    (e) =>
+      new Error('Failed to send SIGKILL to existing kimaki process', {
+        cause: e,
+      }),
+  )
+  if (sigkillResult instanceof Error) {
+    hranaLogger.log(`SIGKILL failed for PID ${targetPid}: ${sigkillResult.message}`)
+    return
+  }
+
+  // Poll for up to 5 seconds to verify the port is actually freed.
+  // SIGKILL is uncatchable but the OS may need a moment to release the socket.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000)
+    })
+
+    const postKillProbe = await fetch(url, {
+      signal: AbortSignal.timeout(2000),
+    }).catch((e) => new FetchError({ url, cause: e }))
+    // FetchError = connection refused → process is gone, port is freed.
+    if (postKillProbe instanceof Error) return
+  }
+
+  hranaLogger.log(
+    `Port ${port} still in use after SIGKILL of PID ${targetPid} — giving up`,
+  )
 }
