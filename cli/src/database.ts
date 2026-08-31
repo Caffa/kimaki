@@ -753,6 +753,25 @@ export async function setOpenAIApiKey(appId: string, apiKey: string) {
     .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { openai_api_key: apiKey } })
 }
 
+export async function getOllamaCloudApiKey(appId: string) {
+  const db = await getDb()
+  return (await db.query.bot_api_keys.findFirst({ where: { app_id: appId } }))?.ollama_cloud_api_key ?? null
+}
+
+export async function setOllamaCloudApiKey(appId: string, apiKey: string) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, ollama_cloud_api_key: apiKey })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { ollama_cloud_api_key: apiKey } })
+}
+
+export async function clearOllamaCloudApiKey(appId: string) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, ollama_cloud_api_key: '' })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { ollama_cloud_api_key: '' } })
+}
+
 export async function getTranscriptionApiKey(appId: string): Promise<{ provider: 'openai' | 'gemini'; apiKey: string } | null> {
   const db = await getDb()
   const row = await db.query.bot_api_keys.findFirst({ where: { app_id: appId } })

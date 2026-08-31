@@ -5,6 +5,7 @@
 import {
   Events,
   MessageFlags,
+  type ChatInputCommandInteraction,
   type Client,
   type Interaction,
 } from 'discord.js'
@@ -75,6 +76,10 @@ import {
   handleTranscriptionApiKeyCommand,
   handleTranscriptionApiKeyModalSubmit,
 } from './commands/gemini-apikey.js'
+import {
+  handleConnectOllamaCommand,
+  handleConnectOllamaModalSubmit,
+} from './commands/connect-ollama.js'
 import {
   handleAgentCommand,
   handleAgentSelectMenu,
@@ -456,6 +461,20 @@ export function registerInteractionHandler({
               })
               return
 
+            case 'connect-ollama':
+              if (!hasKimakiAdminPermission(interaction.member, interaction.guild)) {
+                await interaction.reply({
+                  content: `Only server admins or users with the **Kimaki** role can configure Ollama Cloud.`,
+                  flags: MessageFlags.Ephemeral,
+                })
+                return
+              }
+              await handleConnectOllamaCommand({
+                interaction: interaction as ChatInputCommandInteraction,
+                appId,
+              })
+              return
+
             case 'mcp':
               await handleMcpCommand({ command: interaction, appId })
               return
@@ -724,6 +743,18 @@ export function registerInteractionHandler({
               return
             }
             await handleTranscriptionApiKeyModalSubmit(interaction)
+            return
+          }
+
+          if (customId.startsWith('connect_ollama_modal:')) {
+            if (!hasKimakiAdminPermission(interaction.member, interaction.guild)) {
+              await interaction.reply({
+                content: `Only server admins or users with the **Kimaki** role can configure Ollama Cloud.`,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+            await handleConnectOllamaModalSubmit(interaction)
             return
           }
 

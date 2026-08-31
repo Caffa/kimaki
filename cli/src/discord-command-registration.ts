@@ -472,6 +472,13 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('connect-ollama')
+      .setDescription(
+        truncateCommandDescription('Add your Ollama Cloud API key and switch to a cloud model'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('mcp')
       .setDescription(truncateCommandDescription('List and manage MCP servers for this project'))
       .setDMPermission(false)
