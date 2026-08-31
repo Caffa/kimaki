@@ -405,6 +405,23 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('footer-stats')
+      .setDescription(truncateCommandDescription('Set per-model token breakdown mode for the run footer'))
+      .addStringOption((option) => {
+        option
+          .setName('mode')
+          .setDescription(truncateCommandDescription('Footer stats mode'))
+          .setRequired(true)
+          .addChoices(
+            { name: 'Tokens', value: 'tokens' },
+            { name: 'Percentages', value: 'percentages' },
+            { name: 'Off', value: 'off' },
+          )
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('restart-opencode-server')
       .setDescription(
         truncateCommandDescription('Restart opencode server and re-register slash commands'),

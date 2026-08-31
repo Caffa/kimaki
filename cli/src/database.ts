@@ -11,6 +11,7 @@ import * as schema from './schema.js'
 import type {
   BotMode,
   ChannelType,
+  FooterStatsMode,
   IpcRequestType,
   SessionEvent,
   ThreadSessionSource,
@@ -33,6 +34,7 @@ export async function initDatabase() {
 export const closeDatabase = closeDb
 
 export type { VerbosityLevel }
+export type { FooterStatsMode }
 export type { WorktreeStatus }
 export type DatabaseChannelType = ChannelType
 
@@ -486,6 +488,21 @@ export async function setChannelVerbosity(channelId: string, verbosity: Verbosit
     .onConflictDoUpdate({ target: schema.channel_verbosity.channel_id, set: { verbosity, updated_at: new Date() } })
 }
 
+export const DEFAULT_FOOTER_STATS_MODE: FooterStatsMode = 'tokens'
+
+export async function getChannelFooterStatsMode(channelId: string): Promise<FooterStatsMode> {
+  const db = await getDb()
+  const row = await db.query.channel_footer_stats.findFirst({ where: { channel_id: channelId } })
+  return row?.mode ?? DEFAULT_FOOTER_STATS_MODE
+}
+
+export async function setChannelFooterStatsMode(channelId: string, mode: FooterStatsMode) {
+  const db = await getDb()
+  await db.insert(schema.channel_footer_stats)
+    .values({ channel_id: channelId, mode })
+    .onConflictDoUpdate({ target: schema.channel_footer_stats.channel_id, set: { mode, updated_at: new Date() } })
+}
+
 export async function getChannelMentionMode(channelId: string) {
   const db = await getDb()
   const row = await db.query.channel_mention_mode.findFirst({ where: { channel_id: channelId } })
@@ -814,6 +831,7 @@ export async function deleteChannelDirectoryById(channelId: string) {
     db.delete(schema.channel_worktrees).where(orm.eq(schema.channel_worktrees.channel_id, channelId)),
     db.delete(schema.channel_verbosity).where(orm.eq(schema.channel_verbosity.channel_id, channelId)),
     db.delete(schema.channel_mention_mode).where(orm.eq(schema.channel_mention_mode.channel_id, channelId)),
+    db.delete(schema.channel_footer_stats).where(orm.eq(schema.channel_footer_stats.channel_id, channelId)),
   ] as const)
   const rows = await db.delete(schema.channel_directories)
     .where(orm.eq(schema.channel_directories.channel_id, channelId))

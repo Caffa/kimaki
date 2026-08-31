@@ -307,6 +307,83 @@ function getTokenTotal(tokens: {
   return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
 }
 
+export type PerModelUsage = {
+  providerID: string
+  modelID: string
+  tokensInput: number
+  tokensOutput: number
+  tokensReasoning: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  totalTokens: number
+  cost: number
+  messageCount: number
+}
+
+// Aggregates token/cost usage of every assistant message in the buffer,
+// grouped by (providerID, modelID). Deliberately does NOT filter by sessionId:
+// appendEventToBuffer runs before the session demux guard in
+// thread-session-runtime.ts, so the buffer also contains subtask (child
+// session) message.updated events whose model usage is part of the same run
+// and should be counted in the per-model breakdown.
+export function getPerModelUsage({
+  events,
+}: {
+  events: EventBufferEntry[]
+}): PerModelUsage[] {
+  const usageByKey = new Map<string, PerModelUsage>()
+
+  for (const entry of events) {
+    const event = entry.event
+    if (event.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.role !== 'assistant') {
+      continue
+    }
+    // Defensive guard: some providers/aborted runs can emit assistant
+    // messages without token accounting.
+    if (!info.tokens) {
+      continue
+    }
+
+    const key = `${info.providerID}:${info.modelID}`
+    const existing = usageByKey.get(key)
+    const messageTokens = getTokenTotal(info.tokens)
+    const messageCost = info.cost || 0
+
+    if (!existing) {
+      usageByKey.set(key, {
+        providerID: info.providerID,
+        modelID: info.modelID,
+        tokensInput: info.tokens.input,
+        tokensOutput: info.tokens.output,
+        tokensReasoning: info.tokens.reasoning,
+        tokensCacheRead: info.tokens.cache.read,
+        tokensCacheWrite: info.tokens.cache.write,
+        totalTokens: messageTokens,
+        cost: messageCost,
+        messageCount: 1,
+      })
+      continue
+    }
+
+    existing.tokensInput += info.tokens.input
+    existing.tokensOutput += info.tokens.output
+    existing.tokensReasoning += info.tokens.reasoning
+    existing.tokensCacheRead += info.tokens.cache.read
+    existing.tokensCacheWrite += info.tokens.cache.write
+    existing.totalTokens += messageTokens
+    existing.cost += messageCost
+    existing.messageCount += 1
+  }
+
+  return [...usageByKey.values()].sort((a, b) => {
+    return b.totalTokens - a.totalTokens
+  })
+}
+
 // Scans backward for most recent message.updated with role=assistant for sessionId.
 // Extracts model, providerID, agent, tokensUsed.
 export function getLatestRunInfo({

@@ -15,6 +15,7 @@ import {
   getDerivedSubtaskIndex,
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
+  getPerModelUsage,
   getStuckSubtasks,
   hasAssistantMessageCompletedBefore,
   doesLatestUserTurnHaveNaturalCompletion,
@@ -835,6 +836,48 @@ describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
     })).toBe(true)
   })
 })
+
+describe('multi-model-subagents per-model usage', () => {
+  const events = loadFixture('multi-model-subagents.jsonl')
+
+  test('aggregates usage across main and subtask sessions, sorted by total tokens', () => {
+    expect(getPerModelUsage({ events })).toMatchInlineSnapshot(`
+      [
+        {
+          "cost": 0.014,
+          "messageCount": 2,
+          "modelID": "gpt-5.3-codex",
+          "providerID": "openai",
+          "tokensCacheRead": 8000,
+          "tokensCacheWrite": 100,
+          "tokensInput": 1500,
+          "tokensOutput": 300,
+          "tokensReasoning": 50,
+          "totalTokens": 9950,
+        },
+        {
+          "cost": 0.007,
+          "messageCount": 2,
+          "modelID": "claude-opus-4-6",
+          "providerID": "anthropic",
+          "tokensCacheRead": 3000,
+          "tokensCacheWrite": 0,
+          "tokensInput": 450,
+          "tokensOutput": 120,
+          "tokensReasoning": 10,
+          "totalTokens": 3580,
+        },
+      ]
+    `)
+  })
+
+  test('ignores user messages even when they carry model info', () => {
+    const usage = getPerModelUsage({ events })
+    const gpt5 = usage.find((u) => u.modelID === 'gpt-5.3-codex')
+    expect(gpt5?.messageCount).toBe(2)
+  })
+})
+
 describe('getStuckSubtasks', () => {
   const sessionId = 'ses_main'
 

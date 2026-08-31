@@ -143,6 +143,12 @@ export const channel_verbosity = sqliteCore.sqliteTable('channel_verbosity', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+export const channel_footer_stats = sqliteCore.sqliteTable('channel_footer_stats', {
+  channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
+  mode: sqliteCore.text('mode', { enum: ['tokens', 'percentages', 'off'] }).notNull().default('tokens'),
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const channel_mention_mode = sqliteCore.sqliteTable('channel_mention_mode', {
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   enabled: sqliteCore.integer('enabled', { mode: 'number' }).notNull().default(0),
@@ -236,6 +242,7 @@ export const relations = defineRelations({
   channel_worktrees,
   channel_verbosity,
   channel_mention_mode,
+  channel_footer_stats,
   global_models,
   scheduled_tasks,
   session_start_sources,
@@ -276,6 +283,7 @@ export const relations = defineRelations({
     channel_worktree: r.one.channel_worktrees({ from: r.channel_directories.channel_id, to: r.channel_worktrees.channel_id }),
     channel_verbosity: r.one.channel_verbosity({ from: r.channel_directories.channel_id, to: r.channel_verbosity.channel_id }),
     channel_mention_mode: r.one.channel_mention_mode({ from: r.channel_directories.channel_id, to: r.channel_mention_mode.channel_id }),
+    channel_footer_stats: r.one.channel_footer_stats({ from: r.channel_directories.channel_id, to: r.channel_footer_stats.channel_id }),
     scheduled_tasks: r.many.scheduled_tasks(),
   },
   channel_models: {
@@ -294,6 +302,9 @@ export const relations = defineRelations({
   },
   channel_mention_mode: {
     channel: r.one.channel_directories({ from: r.channel_mention_mode.channel_id, to: r.channel_directories.channel_id }),
+  },
+  channel_footer_stats: {
+    channel: r.one.channel_directories({ from: r.channel_footer_stats.channel_id, to: r.channel_directories.channel_id }),
   },
   global_models: {
     bot: r.one.bot_tokens({ from: r.global_models.app_id, to: r.bot_tokens.app_id }),
@@ -320,5 +331,6 @@ export type IpcRequestType = typeof ipc_requests.$inferSelect.type
 export type SessionEvent = typeof session_events.$inferSelect
 export type ThreadSessionSource = typeof thread_sessions.$inferSelect.source
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity
+export type FooterStatsMode = typeof channel_footer_stats.$inferSelect.mode
 export type WorktreeStatus = typeof thread_worktrees.$inferSelect.status
 export type WorkspaceStatus = typeof thread_workspaces.$inferSelect.status

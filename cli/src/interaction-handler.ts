@@ -102,6 +102,7 @@ import {
 import { handleRestartOpencodeServerCommand } from './commands/restart-opencode-server.js'
 import { handleRunCommand } from './commands/run-command.js'
 import { handleContextUsageCommand } from './commands/context-usage.js'
+import { handleFooterStatsCommand } from './commands/footer-stats.js'
 import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
@@ -407,6 +408,10 @@ export function registerInteractionHandler({
 
             case 'verbosity':
               await handleVerbosityCommand({ command: interaction, appId })
+              return
+
+            case 'footer-stats':
+              await handleFooterStatsCommand({ command: interaction, appId })
               return
 
             case 'restart-opencode-server':
