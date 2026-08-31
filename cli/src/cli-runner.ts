@@ -331,13 +331,14 @@ export async function sendDiscordMessageWithOptionalAttachment({
   }
 
   if (effectivePrompt.length <= discordMaxLength) {
-    return (await rest.post(Routes.channelMessages(channelId), {
+    const response = (await rest.post(Routes.channelMessages(channelId), {
       body: {
         content: effectivePrompt,
         embeds,
         allowed_mentions: { parse: store.getState().allowedMentions },
       },
-    })) as { id: string; componentSegments: ContentSegment[] }
+    })) as { id: string }
+    return { ...response, componentSegments }
   }
 
   if (splitInsteadOfAttach) {

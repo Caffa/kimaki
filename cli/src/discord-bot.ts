@@ -45,6 +45,7 @@ import {
   hasNoKimakiRole,
   resolveGuildMessageMember,
 } from './discord-utils.js'
+import { withNetworkRetry, formatFriendlyErrorMessage } from './network-retry.js'
 import {
   getOpencodeSystemMessage,
   isInjectedPromptMarker,
@@ -288,6 +289,36 @@ export async function createDiscordClient() {
     rest: { api: restApiUrl },
     allowedMentions: { parse: allowedMentions },
   })
+}
+
+/**
+ * Creates the session thread for a starter message, retrying automatically
+ * when Discord REST fails with a "request never reached the server" error
+ * (DNS down, no route to host, connection refused). These retries are safe
+ * for the non-idempotent startThread call because the original request could
+ * not have been applied server-side.
+ *
+ * Extracted from the MessageCreate handler so the retry behavior is unit-testable
+ * with a stub message without booting the full handler (which closes over many
+ * module-level stores).
+ */
+export async function createSessionThread({
+  message,
+  threadName,
+  logger,
+}: {
+  message: Pick<Message, 'startThread'>
+  threadName: string
+  logger?: { warn?: (msg: string) => unknown; log?: (msg: string) => unknown }
+}): Promise<ThreadChannel> {
+  logger?.log?.(`Creating session thread "${threadName.slice(0, 80)}"`)
+  return withNetworkRetry(() =>
+    message.startThread({
+      name: threadName.slice(0, 80),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      reason: 'Start Claude session',
+    }),
+  )
 }
 
 export async function startDiscordBot({
@@ -1001,14 +1032,14 @@ export async function startDiscordBot({
           ? `${WORKTREE_PREFIX}${baseThreadName}`
           : baseThreadName
 
-        const thread = await message.startThread({
-          name: threadName.slice(0, 80),
-          autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-          reason: 'Start Claude session',
+        const thread = await createSessionThread({
+          message,
+          threadName,
+          logger: discordLogger,
         })
 
         // Add user to thread so it appears in their sidebar
-        await thread.members.add(message.author.id)
+        await withNetworkRetry(() => thread.members.add(message.author.id))
 
         discordLogger.log(`Created thread "${thread.name}" (${thread.id})`)
 
@@ -1083,13 +1114,13 @@ export async function startDiscordBot({
       voiceLogger.error('Discord handler error:', error)
       void notifyError(error, 'MessageCreate handler error')
       try {
-        const errMsg = (
-          error instanceof Error ? error.message : String(error)
-        ).slice(0, 1900)
-        await message.reply({
-          content: `Error: ${errMsg}`,
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        const content = formatFriendlyErrorMessage(error)
+        await withNetworkRetry(() =>
+          message.reply({
+            content,
+            flags: NOTIFY_MESSAGE_FLAGS,
+          }),
+        )
       } catch (sendError) {
         voiceLogger.error(
           'Discord handler error (fallback):',
@@ -1451,13 +1482,13 @@ export async function startDiscordBot({
       )
       void notifyError(error, 'ThreadCreate handler error')
       try {
-        const errMsg = (
-          error instanceof Error ? error.message : String(error)
-        ).slice(0, 1900)
-        await thread.send({
-          content: `Error: ${errMsg}`,
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
+        const content = formatFriendlyErrorMessage(error)
+        await withNetworkRetry(() =>
+          thread.send({
+            content,
+            flags: NOTIFY_MESSAGE_FLAGS,
+          }),
+        )
       } catch (sendError) {
         voiceLogger.error(
           '[BOT_SESSION] Failed to send error message:',
