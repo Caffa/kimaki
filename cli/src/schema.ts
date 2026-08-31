@@ -77,6 +77,7 @@ export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   gemini_api_key: sqliteCore.text('gemini_api_key'),
   openai_api_key: sqliteCore.text('openai_api_key'),
   xai_api_key: sqliteCore.text('xai_api_key'),
+  ollama_cloud_api_key: sqliteCore.text('ollama_cloud_api_key'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
