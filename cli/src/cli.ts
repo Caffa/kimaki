@@ -17,6 +17,7 @@ import {
 } from './config.js'
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
+import { getDefaultAgent, updateUserConfig, clearUserConfigKeys } from './user-config.js'
 import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
@@ -93,6 +94,14 @@ cli
   .option('--no-sentry', 'Disable Sentry error reporting')
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
+    '--default-agent <name>',
+    'Default agent for sessions when no session or channel preference is set. Saved to config.json so it persists across restarts. (e.g. norm-orchestrator)',
+  )
+  .option(
+    '--no-default-agent',
+    'Clear the persisted default agent from config.json, falling back to OpenCode\'s own default agent',
+  )
+  .option(
     '--gateway',
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
   )
@@ -150,6 +159,8 @@ cli
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
+      defaultAgent?: string
+      noDefaultAgent?: boolean
     }) => {
       // Guard: only one kimaki bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
@@ -262,6 +273,24 @@ cli
           return parsed * 60_000
         })()
 
+        // Resolve default agent: --default-agent flag > --no-default-agent > user config > null.
+        // --default-agent persists to ~/.kimaki/config.json so it survives restarts.
+        // --no-default-agent clears the persisted value and forces null for this run.
+        if (options.noDefaultAgent && options.defaultAgent) {
+          cliLogger.error('Cannot use --default-agent and --no-default-agent at the same time.')
+          process.exit(EXIT_NO_RESTART)
+        }
+        const resolvedDefaultAgent = options.noDefaultAgent
+          ? null // Explicitly clear: don't read config, don't set in store
+          : options.defaultAgent || getDefaultAgent()
+        if (options.noDefaultAgent) {
+          // Remove defaultAgent from config file
+          clearUserConfigKeys(['defaultAgent'])
+        } else if (options.defaultAgent) {
+          // Persist CLI flag value to config file
+          updateUserConfig({ defaultAgent: options.defaultAgent })
+        }
+
         store.setState({
           ...(defaultVerbosity && {
             defaultVerbosity,
@@ -275,6 +304,7 @@ cli
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
+          ...(resolvedDefaultAgent && { defaultAgent: resolvedDefaultAgent }),
         })
 
         if (enabledSkills.length > 0) {
@@ -319,6 +349,15 @@ cli
           cliLogger.log(
             'Background sync disabled: external OpenCode sessions will not appear in Discord',
           )
+        }
+        if (options.noDefaultAgent) {
+          cliLogger.log('Default agent: cleared (removed from config)')
+        } else if (resolvedDefaultAgent) {
+          if (options.defaultAgent) {
+            cliLogger.log(`Default agent: ${options.defaultAgent} (saved to config)`,)
+          } else {
+            cliLogger.log(`Default agent: ${resolvedDefaultAgent} (from config)`)
+          }
         }
         if (options.noSentry) {
           process.env.KIMAKI_SENTRY_DISABLED = '1'

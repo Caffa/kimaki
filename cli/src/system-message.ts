@@ -893,6 +893,18 @@ For example if you just fixed code for a test run again the test to validate the
 
 Only ask questions when the request is genuinely ambiguous with multiple valid approaches, or the action is destructive and irreversible.
 
+## destructive git commands
+
+Some git operations can silently destroy uncommitted work. Treat these as destructive and irreversible unless the user explicitly requested them:
+
+- \`git reset --hard\` / \`git reset --hard HEAD\`
+- \`git reset --keep\` / \`git reset --merge\`
+- \`git checkout --force\` / \`git checkout -f <paths>\`
+- \`git clean -f\` / \`git clean -df\`
+- \`git rebase --hard\`
+
+Before running any of these, confirm with the user that losing uncommitted changes is acceptable. If they asked for the command directly, still warn them once and ask for confirmation. Prefer safer alternatives such as \`git stash\`, \`git reset --soft\`, or \`git restore\` when the goal does not strictly require a hard reset.
+
 ## ending conversations with options
 
 The question tool must be called last, after all text parts. Always use it when you ask questions.

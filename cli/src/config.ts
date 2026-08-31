@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { store } from './store.js'
+import { getDefaultProjectsDir, updateUserConfig } from './user-config.js'
 
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.kimaki')
 
@@ -51,8 +52,9 @@ export function setDataDir(dir: string): void {
  * Get the projects directory path (for /create-new-project command).
  * Priority:
  * 1. CLI flag --projects-dir (store.projectsDir)
- * 2. ~/Local-Projects-2026/ if it exists
- * 3. <dataDir>/projects (legacy fallback)
+ * 2. User config file ~/.kimaki/config.json
+ * 3. ~/Local-Projects-2026/ if it exists
+ * 4. <dataDir>/projects (legacy fallback)
  */
 export function getProjectsDir(): string {
   const custom = store.getState().projectsDir
@@ -60,10 +62,9 @@ export function getProjectsDir(): string {
     return custom
   }
 
-  // Check for ~/Local-Projects-2026 directory (local customization)
-  const localProjectsDir = path.join(os.homedir(), 'Local-Projects-2026')
-  if (fs.existsSync(localProjectsDir)) {
-    return localProjectsDir
+  const userDefault = getDefaultProjectsDir()
+  if (userDefault) {
+    return userDefault
   }
 
   return path.join(getDataDir(), 'projects')
@@ -72,6 +73,7 @@ export function getProjectsDir(): string {
 /**
  * Set a custom projects directory path (from --projects-dir CLI flag).
  * Creates the directory if it doesn't exist.
+ * Also persists to ~/.kimaki/config.json for future sessions.
  */
 export function setProjectsDir(dir: string): void {
   const resolvedDir = path.resolve(dir)
@@ -81,6 +83,7 @@ export function setProjectsDir(dir: string): void {
   }
 
   store.setState({ projectsDir: resolvedDir })
+  updateUserConfig({ projectsDir: resolvedDir })
 }
 
 /**

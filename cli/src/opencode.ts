@@ -699,6 +699,10 @@ async function startSingleServer({
     // Use a local ollama model for lightweight tasks (session title generation)
     // instead of falling back to the opencode cloud provider (which requires billing).
     small_model: 'ollama/qwen3.5:2b',
+    ...(() => {
+      const defaultAgent = store.getState().defaultAgent
+      return defaultAgent ? { default_agent: defaultAgent } : {}
+    })(),
     plugin: [
       new URL(
         isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
@@ -707,7 +711,18 @@ async function startSingleServer({
     ],
     permission: {
       edit: 'allow',
-      bash: 'allow',
+      bash: {
+        '*': 'allow',
+        'git reset --hard*': 'ask',
+        'git reset --hard *': 'ask',
+        'git reset --keep*': 'ask',
+        'git reset --merge*': 'ask',
+        'git checkout --force*': 'ask',
+        'git checkout -f *': 'ask',
+        'git clean -f*': 'ask',
+        'git clean -d*': 'ask',
+        'git rebase --hard*': 'ask',
+      },
       external_directory: externalDirectoryPermissions,
       webfetch: 'allow',
       ...(skillPermission && { skill: skillPermission }),

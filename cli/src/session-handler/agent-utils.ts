@@ -14,6 +14,7 @@ import { createLogger } from '../logger.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { type initializeOpencodeForDirectory } from '../opencode.js'
 import { type AgentInfo } from '../system-message.js'
+import { store } from '../store.js'
 
 const agentLogger = createLogger('agent')
 
@@ -45,10 +46,22 @@ export async function resolveValidatedAgentPreference({
       return undefined
     }
 
-    if (!channelId) {
-      return undefined
+    if (channelId) {
+      const channelAgent = await getChannelAgent(channelId)
+      if (channelAgent) {
+        return channelAgent
+      }
     }
-    return getChannelAgent(channelId)
+
+    // Fall back to the global default agent (set via --default-agent CLI flag).
+    // This provides a kimaki-level default when no session or channel
+    // preference is set, instead of relying on opencode's own default.
+    const storedDefaultAgent = store.getState().defaultAgent
+    if (storedDefaultAgent) {
+      return storedDefaultAgent
+    }
+
+    return undefined
   })()
 
   if (getClient instanceof Error) {

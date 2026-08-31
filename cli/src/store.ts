@@ -110,6 +110,17 @@ export type KimakiState = {
   // Read by: cli-runner.ts run() before calling backgroundUpgradeKimaki().
   autoUpgradeEnabled: boolean
 
+  // Default agent name for new sessions when no session or channel agent
+  // preference is set. Written to opencode-config.json as default_agent so
+  // OpenCode uses it as the default agent. Also used as a fallback in
+  // resolveValidatedAgentPreference() when no agent preference is found.
+  // Priority: --default-agent CLI flag > ~/.kimaki/config.json > null.
+  // CLI flag value is persisted to config.json so it survives restarts.
+  // Changes: set at startup from --default-agent CLI flag (overrides config),
+  // or loaded from ~/.kimaki/config.json when no CLI flag is passed.
+  // Read by: opencode.ts (opencode config), agent-utils.ts (fallback).
+  defaultAgent: string | null
+
   // When true, all new sessions from channel messages create git worktrees.
   // Set once at startup from --worktrees CLI flag. The per-channel toggle
   // (getChannelWorktreesEnabled) is checked separately; this is the global override.
@@ -181,6 +192,7 @@ export const store = createStore<KimakiState>(() => ({
   permissionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,
+  defaultAgent: null,
   syncEnabled: true,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
