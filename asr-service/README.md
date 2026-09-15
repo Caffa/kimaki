@@ -12,22 +12,38 @@ Local speech-to-text service using NVIDIA Parakeet on Apple Silicon (MLX).
 
 ## Installation
 
+The ASR service uses a Python 3.13 virtual environment (MLX has no wheels for
+Python 3.14).  Kimaki's `asr-service-manager` creates the venv automatically on
+first start using [`uv`](https://docs.astral.sh/uv/) (preferred) or the system
+`python3.13`.
+
+### Manual setup
+
 ```bash
 cd asr-service
-pip install -r requirements.txt
+
+# Using uv (recommended — fast and handles Python version automatically)
+uv venv --python 3.13 .venv
+uv pip install -r requirements.txt --python .venv/bin/python
+
+# Or using plain venv
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 Requirements:
-- Python 3.10+
+- Python 3.10–3.13 (3.14 is **not** supported — MLX lacks wheels)
 - macOS with Apple Silicon (M1/M2/M3)
 - ffmpeg (for audio format conversion)
+- [`uv`](https://docs.astral.sh/uv/) (optional but recommended: `brew install uv`)
 
 ## Usage
 
 ### Start the service
 
 ```bash
-python asr_server.py
+# Using the venv (auto-created by kimaki on first run)
+.venv/bin/python asr_server.py
 ```
 
 The service runs on `http://127.0.0.1:8765` by default.
@@ -122,7 +138,7 @@ Make sure to start the ASR service before running kimaki:
 
 ```bash
 cd asr-service
-python asr_server.py
+.venv/bin/python asr_server.py
 ```
 
 ### Model download

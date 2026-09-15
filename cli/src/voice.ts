@@ -547,7 +547,7 @@ async function transcribeWithParakeet({
     ) {
       return new TranscriptionError({
         reason:
-          'Parakeet ASR service is not running. Start it with: cd asr-service && pip install -r requirements.txt && python asr_server.py',
+          'Parakeet ASR service is not running. Start it with: cd asr-service && uv venv --python 3.13 .venv && uv pip install -r requirements.txt --python .venv/bin/python && .venv/bin/python asr_server.py',
       })
     }
 

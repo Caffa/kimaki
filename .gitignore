@@ -22,6 +22,9 @@ skills/jitter/dist/
 bin-local.sh
 kimaki.log
 app.log
+# ASR service virtual environment
+asr-service/.venv
+asr-service/.venv/**
 generated
 .zig-cache
 zig-out
