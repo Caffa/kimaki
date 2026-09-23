@@ -68,6 +68,7 @@ import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeKimaki } from './upgrade.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
+import { writeServiceAuthTokenFile } from './service-auth-token-file.js'
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
 import { type ParsedSendAt } from './task-schedule.js'
@@ -1602,6 +1603,11 @@ export async function run({
   // Always set service auth token so local and internet control-plane paths
   // share one auth model (/kimaki/wake and future service endpoints).
   store.setState({ gatewayToken })
+
+  // Persist the live service auth token where launchd scheduled jobs can read
+  // it without a database dependency. Fire-and-forget: failures are logged
+  // and swallowed so they never block startup.
+  void writeServiceAuthTokenFile(gatewayToken).catch(() => {})
 
   // In gateway mode, ensure REST calls route through the gateway proxy.
   // getBotTokenWithMode() sets this for saved-credential paths, but the fresh
