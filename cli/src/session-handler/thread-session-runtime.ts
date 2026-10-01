@@ -4488,7 +4488,7 @@ export class ThreadSessionRuntime {
       // source='kimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
       if (session) {
-        await setThreadSession(this.thread.id, session.id)
+        await setThreadSession(this.thread.id, session.id, this.sdkDirectory)
         if (injectionGuardPatterns?.length) {
           writeInjectionGuardConfig({
             sessionId: session.id,
@@ -4506,7 +4506,7 @@ export class ThreadSessionRuntime {
     }
 
     // Store session in DB and thread state
-    await setThreadSession(this.thread.id, session.id)
+    await setThreadSession(this.thread.id, session.id, this.sdkDirectory)
     threadState.setSessionId(this.threadId, session.id)
     // Parent may have been set on ingress before the thread_sessions row
     // existed; write it now that the row is guaranteed.

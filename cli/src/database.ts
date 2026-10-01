@@ -539,8 +539,12 @@ export async function getThreadSession(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId } }))?.session_id
 }
 
-export async function setThreadSession(threadId: string, sessionId: string) {
+export async function setThreadSession(threadId: string, sessionId: string, directory?: string) {
   await upsertThreadSession({ threadId, sessionId, source: 'kimaki' })
+  if (directory) {
+    const { updateThreadIndexCache } = await import('./thread-index-cache.js')
+    await updateThreadIndexCache(threadId, sessionId, directory).catch(() => {})
+  }
 }
 
 export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
