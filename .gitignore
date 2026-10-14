@@ -29,3 +29,7 @@ zig-out
 website/.wrangler/
 .wrangler
 betterstack
+
+# local parakeet ASR service
+asr-service/.venv/
+asr-service/__pycache__/

@@ -157,15 +157,25 @@ async function healthy(url: string, timeoutMs: number): Promise<boolean> {
   )
 }
 
+// The URL the locally spawned server answers on (ASR_HOST/ASR_PORT), which is
+// not always ASR_SERVICE_URL: readiness is polled here, not on a remote host.
+function localUrl(): string {
+  return `http://${process.env['ASR_HOST'] ?? '127.0.0.1'}:${process.env['ASR_PORT'] ?? '8765'}`
+}
+
+// Auto-start only makes sense for a local URL: a remote ASR_SERVICE_URL (the
+// Mac Studio) is the intended provider — when it is down, fall through to the
+// cloud instead of spawning a server the transcription would never call.
+function isLocalUrl(url: string): boolean {
+  const host = errore.try(() => new URL(url).hostname, () => null)
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+}
+
 // True when anything answers /health (even while the model is still loading):
 // the port is taken, so a second server must not be spawned.
 async function answering(url: string, timeoutMs: number): Promise<boolean> {
   const response = await fetch(new URL('/health', url), { signal: AbortSignal.timeout(timeoutMs) }).catch(() => null)
   return response !== null
-}
-
-export async function checkAsrServiceRunning(): Promise<boolean> {
-  return healthy(ASR_SERVICE_URL, HEALTH_PROBE_TIMEOUT_MS)
 }
 
 // Spawn the server and wait until the model is loaded, or kill it on timeout.
@@ -241,8 +251,8 @@ export function stopAsrService(): void {
 
 // The transcriber probe voice.ts uses per voice message: use the service at
 // baseUrl when it answers; start the local one first when autoStart is set
-// (production: shouldAutoStartAsr()). null when unavailable: voice.ts then
-// falls through to the cloud providers.
+// (production: shouldAutoStartAsr()) and the URL is local. null when
+// unavailable: voice.ts then falls through to the cloud providers.
 export async function parakeetTranscriber({ baseUrl, autoStart }: { baseUrl: string; autoStart: boolean }): Promise<{ kind: 'parakeet' } | null> {
   // An explicit ASR_PROVIDER override (openai, gemini, none) disables parakeet.
   const provider = process.env['ASR_PROVIDER']?.toLowerCase()
@@ -252,7 +262,10 @@ export async function parakeetTranscriber({ baseUrl, autoStart }: { baseUrl: str
     logger.warn('ASR service is up but its model is still loading; transcription may wait or fail once')
     return { kind: 'parakeet' }
   }
-  if (!autoStart || !shouldAutoStartAsr()) return null
+  // A remote ASR_SERVICE_URL (the Mac Studio) is the intended provider: when
+  // it is down, fall through to the cloud instead of spawning a local server
+  // the transcription request would never call.
+  if (!isLocalUrl(baseUrl) || !autoStart || !shouldAutoStartAsr()) return null
   const started = await startAsrService()
   if (started instanceof Error) {
     logger.warn('local ASR service could not start, falling back to cloud transcription', started)

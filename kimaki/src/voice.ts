@@ -486,6 +486,9 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }
 // The local parakeet ASR service (asr-service/, or another machine via
 // ASR_SERVICE_URL): multipart `file` in, `{ text }` out. No prompt, no tool
 // call, no key: private to the machine and always steer.
+// Empty text is a TranscriptionError, not EmptyTranscriptionError: a local
+// decode failure (e.g. the Opus decoder yielding nothing) must fall through
+// to the cloud chain, not dead-end the turn as "no request was transcribed".
 async function transcribeViaParakeet({ baseUrl, audio, mediaType }: {
   baseUrl: string
   audio: Buffer
@@ -502,7 +505,9 @@ async function transcribeViaParakeet({ baseUrl, audio, mediaType }: {
   if (!response.ok) return new TranscriptionApiError({ status: String(response.status), body: body.slice(0, 300) })
   const parsed = parseJsonObject(body)
   if (parsed instanceof Error) return parsed
-  return toTranscriptionResult({ transcription: parsed['text'] })
+  const text = typeof parsed['text'] === 'string' ? parsed['text'].trim() : ''
+  if (!text) return new TranscriptionError({ reason: 'the local ASR service returned no text' })
+  return toTranscriptionResult({ transcription: text })
 }
 
 // --- ChatGPT subscription
