@@ -370,6 +370,8 @@ test('CLI help documents the supported P7 commands', async () => {
     Options:
       --data-dir <path>             Data directory (default: ~/.kimaki)
       -g, --guild <guildId>         Server to onboard when the bot is in several
+      --default-agent <name>        Default agent for new sessions with no channel preference, saved for later starts
+      --no-default-agent            Clear the saved default agent and start without one
       --gateway                     Use the shared Kimaki bot, no Discord app needed
       --gateway-callback-url <url>  Redirect here after the gateway install (appends ?guild_id=<id>)
       --install-url                 Print the install URL and exit (non-interactive onboarding)

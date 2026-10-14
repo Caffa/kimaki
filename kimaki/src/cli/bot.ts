@@ -12,9 +12,11 @@ import type { Goke } from 'goke'
 
 import { distCliEntry, writeAutostartScript } from '../autostart.ts'
 import { ASR_SERVICE_URL, shouldAutoStartAsr } from '../asr-service-manager.ts'
+import { printLocalBanner } from '../banner.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
+import { clearUserConfigKeys, loadUserConfig, updateUserConfig } from '../user-config.ts'
 import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, printJson } from './shared.ts'
 
 const logger = createLogger('CLI')
@@ -82,6 +84,8 @@ export function registerStartCommand(cli: Goke) {
   cli.command('', 'Start the bot. Runs onboarding on first start')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-g, --guild <guildId>', 'Server to onboard when the bot is in several')
+    .option('--default-agent <name>', 'Default agent for new sessions with no channel preference, saved for later starts')
+    .option('--no-default-agent', 'Clear the saved default agent and start without one')
     .option('--gateway', 'Use the shared Kimaki bot, no Discord app needed')
     .option('--gateway-callback-url <url>', 'Redirect here after the gateway install (appends ?guild_id=<id>)')
     .option('--install-url', 'Print the install URL and exit (non-interactive onboarding)')
@@ -97,6 +101,7 @@ export function registerStartCommand(cli: Goke) {
       // OpenCode and agent shells inherit process.env: a bot started from a
       // session (tests) would otherwise think it is supervised and SIGTERM itself on restart.
       delete process.env['KIMAKI_SUPERVISED']
+      printLocalBanner()
       // Bot code loads only here: the other subcommands start without it.
       const [
         { startBot },
@@ -124,6 +129,22 @@ export function registerStartCommand(cli: Goke) {
         fail(error)
       }
       const dataDir = dataDirOrDefault(options.dataDir)
+      // Resolve the default agent: --default-agent flag > --no-default-agent >
+      // config.json > null (V1 parity). The flag persists, so it is only needed
+      // when changing the value.
+      if (options.noDefaultAgent && options.defaultAgent) fail(new Error('Cannot use --default-agent and --no-default-agent at the same time'))
+      const defaultAgent = (() => {
+        if (options.noDefaultAgent) {
+          clearUserConfigKeys({ dataDir, keys: ['defaultAgent'] })
+          return null
+        }
+        if (options.defaultAgent) {
+          updateUserConfig({ dataDir, values: { defaultAgent: options.defaultAgent } })
+          return options.defaultAgent
+        }
+        return loadUserConfig({ dataDir }).defaultAgent ?? null
+      })()
+      if (defaultAgent) process.stderr.write(`Default agent for new sessions: ${defaultAgent}\n`)
       const urls = gatewayUrlsFromEnv()
       const machine = options.machineName ?? defaultMachineName()
       // Validated before the lock, so a typo never stops the running bot. null: reset to the default.
@@ -215,6 +236,7 @@ export function registerStartCommand(cli: Goke) {
         // auto-start the bundled service on Apple Silicon unless overridden.
         transcriptionBaseUrls: { parakeet: ASR_SERVICE_URL },
         asrAutoStart: shouldAutoStartAsr(),
+        defaultAgent,
         analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
         autoWorktrees: Boolean(options.worktrees),
       })

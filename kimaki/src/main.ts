@@ -62,6 +62,9 @@ export type StartBotOptions = {
   // Start the bundled asr-service/ for voice transcription when its URL does
   // not answer (Apple Silicon + ASR_PROVIDER). Tests keep it off.
   asrAutoStart?: boolean
+  // Default agent for new sessions (V1 --default-agent parity), persisted in
+  // <dataDir>/config.json by the CLI flag. null: stock behavior.
+  defaultAgent?: string | null
   // Voice call WebSocket URLs; tests point OpenAI at a local fake.
   realtimeBaseUrls?: RealtimeBaseUrls
   // The scheduler's only source of time. Tests pass a manual clock.
@@ -184,6 +187,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     opencodeDbFile: options.opencodeDbFile,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
     asrAutoStart: options.asrAutoStart ?? false,
+    defaultAgent: options.defaultAgent ?? null,
     realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },

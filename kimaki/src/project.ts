@@ -7,6 +7,7 @@
 // bot reads channel_directories on every message and the Guilds intent
 // delivers CHANNEL_CREATE, so a new channel works without a restart.
 
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { API } from '@discordjs/core/http-only'
@@ -43,8 +44,17 @@ export function defaultMachineName(): string {
   return os.hostname().replace(/\.(local|lan|home)$/i, '') || 'machine'
 }
 
+// Local fork (V1 projectsDir parity): the default channel backs the real
+// projects root when it exists — KIMAKI_PROJECTS_DIR, else ~/Local-Projects-2026
+// — so onboarding's default channel and anything created in it live with the
+// user's other projects. Stock fallback keeps fresh installs elsewhere vanilla.
+// Tests always get the stock location: onboarding creates the directory, and
+// it must never land in the real projects root.
 export function defaultProjectDirectory({ dataDir }: { dataDir: string }): string {
-  return path.join(dataDir, 'projects', 'kimaki')
+  const override = process.env['KIMAKI_PROJECTS_DIR']
+  const localRoot = process.env['KIMAKI_VITEST'] ? null : path.join(os.homedir(), 'Local-Projects-2026')
+  const root = override ?? (localRoot && fs.existsSync(localRoot) ? localRoot : null) ?? path.join(dataDir, 'projects')
+  return path.join(root, 'kimaki')
 }
 
 // The guild of this machine's channels. `project add` needs one: the flag, or

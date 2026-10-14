@@ -389,7 +389,19 @@ export async function startSession(
     const plugin = await bot.features.waitForPlugin(directory)
     if (plugin instanceof Error) return plugin
     const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
-    const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
+    const selected = await (async () => {
+      if (requestedAgent) return agentSelection(bot, { directory, agent: requestedAgent })
+      // Bot-level default agent (local fork, --default-agent): only when no
+      // route or channel preference exists. Unavailable here → warn and start
+      // stock, so a stale default never breaks session creation.
+      if (!bot.defaultAgent) return null
+      const fallback = await agentSelection(bot, { directory, agent: bot.defaultAgent })
+      if (fallback instanceof Error) {
+        logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, fallback)
+        return null
+      }
+      return fallback
+    })()
     if (selected instanceof Error) return selected
     const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
     const global = await globalModel(bot)
