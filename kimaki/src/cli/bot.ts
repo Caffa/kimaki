@@ -11,6 +11,7 @@ import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
 import { distCliEntry, writeAutostartScript } from '../autostart.ts'
+import { ASR_SERVICE_URL, shouldAutoStartAsr } from '../asr-service-manager.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
@@ -210,6 +211,10 @@ export function registerStartCommand(cli: Goke) {
         ensureOpencode: true,
         opencodeConfigDir: opencodeConfigDir(),
         opencodeDbFile: opencodeDbFile(),
+        // Local parakeet transcription: default URL (or ASR_SERVICE_URL), and
+        // auto-start the bundled service on Apple Silicon unless overridden.
+        transcriptionBaseUrls: { parakeet: ASR_SERVICE_URL },
+        asrAutoStart: shouldAutoStartAsr(),
         analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
         autoWorktrees: Boolean(options.worktrees),
       })

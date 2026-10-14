@@ -62,6 +62,8 @@ export type Bot = {
   // OpenCode's SQLite file, source of the ChatGPT credential for voice transcription.
   opencodeDbFile: string
   transcriptionBaseUrls: TranscriptionBaseUrls
+  // Start the bundled asr-service/ when the parakeet URL does not answer.
+  asrAutoStart: boolean
   realtimeBaseUrls: RealtimeBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean

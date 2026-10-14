@@ -1,5 +1,12 @@
 the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI (npm package `kimaki`), built on OpenCode V2. it replaced the V1 `cli/` package; `kimaki/CHANGELOG.md` keeps the V1 release history. this branch supports OpenCode V2 only. the legacy OpenCode V1 compatible codebase lives in the `cli/` folder of the `v1` branch (https://github.com/remorses/kimaki/tree/v1/cli); read it there with `git show v1:cli/<path>`, never re-add V1 support here.
 
+## local fork (Caffa)
+
+this checkout is a local fork of remorses/kimaki (`upstream`), branch `kimaki-1.0-port`; the working V1 fork with parakeet + vLLM voice lives in `~/Local-Projects-2026/kimaki` branch `local-voice-sync` (never delete it, it is the fallback install). local features ported so far:
+
+- **parakeet ASR transcription**: voice messages are transcribed by the local parakeet-mlx service before any cloud provider. the server is `asr-service/` (FastAPI + parakeet-mlx, port 8765); the manager is `kimaki/src/asr-service-manager.ts` and the transcriber slots first in `kimaki/src/voice.ts`. config via env: `ASR_SERVICE_URL` (default `http://127.0.0.1:8765`, point it at the Mac Studio), `ASR_PROVIDER` (`parakeet` default on Apple Silicon, any other value disables it), `ASR_SERVICE_PATH`, `PARAKEET_MODEL`. the bot auto-starts the service on Apple Silicon when its URL does not answer (`asrAutoStart` bot option, off in tests).
+- feature reference docs for the V1 fork: `~/Local-Projects-2026/Local-Code-References/kimaki/`.
+
 after every change and every feature run `pnpm build` (tsc) inside `kimaki`. it validates types and keeps `kimaki/dist` up to date: the OpenCode plugin autostarts the bot from `dist/cli.js` (`src/autostart.ts`), so a stale dist starts old code. try to never use `as any`.
 
 always load the `changesets` skill before fixing bugs or adding features. User-facing fixes and features usually need a `.changeset/*.md` entry, and the skill explains package selection, issue references, descriptive filenames, and `.changeset/readme.md` expectations.

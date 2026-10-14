@@ -7,6 +7,7 @@ import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 import * as errore from 'errore'
 
 import { createAgentUi } from './agent-ui.ts'
+import { stopAsrService } from './asr-service-manager.ts'
 import type { Analytics } from './analytics.ts'
 import { oc, type Bot } from './bot.ts'
 import { openDb } from './db.ts'
@@ -58,6 +59,9 @@ export type StartBotOptions = {
   analytics: Analytics
   // Voice transcription API base URLs; tests point Gemini at a local fake.
   transcriptionBaseUrls?: TranscriptionBaseUrls
+  // Start the bundled asr-service/ for voice transcription when its URL does
+  // not answer (Apple Silicon + ASR_PROVIDER). Tests keep it off.
+  asrAutoStart?: boolean
   // Voice call WebSocket URLs; tests point OpenAI at a local fake.
   realtimeBaseUrls?: RealtimeBaseUrls
   // The scheduler's only source of time. Tests pass a manual clock.
@@ -88,11 +92,17 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   await using cleanup = new errore.AsyncDisposableStack()
   const lock = options.lock
   cleanup.defer(() => lock.close())
+  // Only the server this process spawned: an external one (launchd, another
+  // machine, a manual terminal) stays up.
+  cleanup.defer(() => stopAsrService())
 
   const opened = await openDb({ dataDir: options.dataDir, migrate: true })
   if (opened instanceof Error) return opened
   cleanup.defer(() => opened.close())
   const db = opened.db
+  // Registered first so it runs last: a parakeet ASR server this bot spawned
+  // is stopped only after everything else shut down cleanly.
+  cleanup.defer(() => stopAsrService())
 
   const discord = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates],
@@ -173,6 +183,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     appId: options.appId,
     opencodeDbFile: options.opencodeDbFile,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
+    asrAutoStart: options.asrAutoStart ?? false,
     realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },

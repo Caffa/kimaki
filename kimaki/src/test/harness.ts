@@ -492,6 +492,7 @@ export async function startTestBot({
   geminiBaseUrl,
   openaiBaseUrl,
   chatgptBaseUrl,
+  parakeetBaseUrl,
   opencodeDbFile = server.dbFile,
   realtimeBaseUrls,
   lockPort,
@@ -508,6 +509,8 @@ export async function startTestBot({
   openaiBaseUrl?: string
   // ChatGPT subscription transcription against startFakeChatGPT(), with the credential in opencodeDbFile.
   chatgptBaseUrl?: string
+  // Local parakeet ASR service transcription against startFakeParakeet().
+  parakeetBaseUrl?: string
   opencodeDbFile?: string
   // Voice calls against startFakeLive().
   realtimeBaseUrls?: RealtimeBaseUrls
@@ -552,7 +555,12 @@ export async function startTestBot({
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),
       ...(chatgptBaseUrl && { chatgpt: chatgptBaseUrl }),
+      // Only when the test provides one: the developer's real local ASR
+      // service (127.0.0.1:8765) must never join a test's transcriber chain.
+      ...(parakeetBaseUrl && { parakeet: parakeetBaseUrl }),
     },
+    // Never auto-start the bundled ASR service from a test.
+    asrAutoStart: false,
   })
   if (bot instanceof Error) throw bot
   return bot
@@ -755,6 +763,50 @@ export async function startFakeChatGPT({ text }: { text: string }): Promise<Fake
       response.statusCode = fake.status
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify(fake.status === 200 ? { text } : { detail: 'unauthorized' }))
+    })
+  })
+  const port = await freePort()
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
+  return Object.assign(fake, {
+    baseUrl: `http://127.0.0.1:${port}`,
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  })
+}
+
+export type FakeParakeet = {
+  baseUrl: string
+  // Each POST /transcribe, as the ASR service received it.
+  requests: Array<{ filename: string; type: string; audio: Buffer }>
+  // Reply status; tests set 500 to check the fallback to the next transcriber.
+  status: number
+  stop: () => Promise<void>
+}
+
+// The parakeet ASR service (asr-service/): GET /health and multipart
+// POST /transcribe with `file` in and `{ text }` out, like FakeChatGPT.
+export async function startFakeParakeet({ text }: { text: string }): Promise<FakeParakeet> {
+  const fake: Omit<FakeParakeet, 'baseUrl' | 'stop'> = { requests: [], status: 200 }
+  const server = http.createServer((request, response) => {
+    if (request.url === '/health') {
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ status: 'healthy', model_loaded: true, model_name: 'fake-parakeet' }))
+      return
+    }
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', async () => {
+      const headers = new Headers(Object.entries(request.headers).flatMap(([key, value]) => (typeof value === 'string' ? [[key, value]] : [])))
+      const form = await new Request('http://fake/transcribe', { method: 'POST', headers, body: Buffer.concat(chunks) }).formData()
+      const file = form.get('file')
+      if (!(file instanceof File)) throw new Error('fake parakeet: no file field')
+      fake.requests.push({
+        filename: file.name,
+        type: file.type,
+        audio: Buffer.from(await file.arrayBuffer()),
+      })
+      response.statusCode = fake.status
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(fake.status === 200 ? { text } : { detail: 'transcription failed' }))
     })
   })
   const port = await freePort()

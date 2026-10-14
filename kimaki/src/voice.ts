@@ -1,13 +1,17 @@
 // Voice messages (spec 9.4, 16): transcription with a forced tool call that
 // also returns the route, so a voice message becomes the same Route as text.
 //
-//   audio ─▶ OpenAI gpt-audio (OGG/M4A converted to WAV) or Gemini (raw audio)
+//   audio ─▶ parakeet (local ASR service, when it answers) then OpenAI gpt-audio
+//        (OGG/M4A converted to WAV) or Gemini (raw audio)
 //        ─▶ tool call { transcription, route, agent? } ─▶ parseVoiceMessage ─▶ Route
 //
-// Order: OpenAI (bot_api_keys, then OPENAI_API_KEY), the ChatGPT subscription credential
-// stored by OpenCode (billed to the plan), Gemini (bot_api_keys, then GEMINI_API_KEY), then the
-// free kimaki.dev Whisper endpoint on gateway installs. A failing provider falls through to the
-// next one. ChatGPT and Whisper have no tool call: the route is always steer.
+// Order: the local parakeet ASR service (asr-service/, or another machine via
+// ASR_SERVICE_URL — plain dictation, route is always steer), then OpenAI
+// (bot_api_keys, then OPENAI_API_KEY), the ChatGPT subscription credential
+// stored by OpenCode (billed to the plan), Gemini (bot_api_keys, then
+// GEMINI_API_KEY), then the free kimaki.dev Whisper endpoint on gateway
+// installs. A failing provider falls through to the next one. Parakeet,
+// ChatGPT and Whisper have no tool call: the route is always steer.
 // Plain fetch, no AI SDK: we parse provider bodies ourselves so transient
 // bad responses keep their details and can be retried.
 
@@ -30,6 +34,7 @@ import {
 } from 'discord.js'
 
 import { credentialsFromRow, gatewayUrlsFromEnv } from './credentials.ts'
+import { parakeetTranscriber } from './asr-service-manager.ts'
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError } from './errors.ts'
 import { createLogger } from './logger.ts'
@@ -478,6 +483,28 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }
   return toTranscriptionResult({ transcription: parsed['text'] })
 }
 
+// The local parakeet ASR service (asr-service/, or another machine via
+// ASR_SERVICE_URL): multipart `file` in, `{ text }` out. No prompt, no tool
+// call, no key: private to the machine and always steer.
+async function transcribeViaParakeet({ baseUrl, audio, mediaType }: {
+  baseUrl: string
+  audio: Buffer
+  mediaType: string
+}): Promise<TranscriptionFailure | TranscriptionResult> {
+  const form = new FormData()
+  form.append('file', new File([new Uint8Array(audio)], `voice.${UPLOAD_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
+  const response = await fetch(new URL('/transcribe', baseUrl), {
+    method: 'POST',
+    body: form,
+  }).catch((cause) => new TranscriptionError({ reason: 'the local ASR service is not reachable', cause }))
+  if (response instanceof Error) return response
+  const body = await response.text().catch(() => '')
+  if (!response.ok) return new TranscriptionApiError({ status: String(response.status), body: body.slice(0, 300) })
+  const parsed = parseJsonObject(body)
+  if (parsed instanceof Error) return parsed
+  return toTranscriptionResult({ transcription: parsed['text'] })
+}
+
 // --- ChatGPT subscription
 //
 // "Sign in with ChatGPT" in OpenCode stores an OAuth token that also works on the dictation
@@ -489,7 +516,8 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }
 
 type ChatGPTCredential = { accessToken: string; accountId: string | null }
 
-const CHATGPT_EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' }
+// Multipart uploads use one canonical file extension per media type.
+const UPLOAD_EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' }
 
 // Same claim the Codex CLI sends as chatgpt-account-id.
 function chatGPTAccountId(accessToken: string): string | null {
@@ -531,7 +559,7 @@ async function transcribeViaChatGPT({ credential, baseUrl, audio, mediaType }: {
   mediaType: string
 }): Promise<TranscriptionFailure | TranscriptionResult> {
   const form = new FormData()
-  form.append('file', new File([new Uint8Array(audio)], `voice.${CHATGPT_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
+  form.append('file', new File([new Uint8Array(audio)], `voice.${UPLOAD_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
   const response = await fetch(`${baseUrl}/transcribe`, {
     method: 'POST',
     headers: {
@@ -561,7 +589,7 @@ async function projectFileTree(directory: string): Promise<string> {
   return result?.stdout.split('\n').slice(0, 400).join('\n') ?? ''
 }
 
-export type TranscriptionBaseUrls = { chatgpt?: string; openai?: string; gemini?: string }
+export type TranscriptionBaseUrls = { chatgpt?: string; openai?: string; gemini?: string; parakeet?: string }
 
 // Usable audio API keys, best first: any OpenAI key (stored, then env) before any Gemini key.
 // Gemini's content filter blocks harmless voice messages, so a stored Gemini key must not win over env OpenAI.
@@ -577,13 +605,16 @@ export function audioKeyCandidates(stored: { openai_api_key: string | null; gemi
 }
 
 type Transcriber =
+  | { kind: 'parakeet'; baseUrl: string }
   | { kind: 'openai' | 'gemini'; apiKey: string }
   | { kind: 'chatgpt'; credential: ChatGPTCredential }
   | { kind: 'gateway'; clientId: string; clientSecret: string }
 
-// Best first: OpenAI key (routing tool call), ChatGPT subscription and Gemini key, then hosted Whisper.
-// ChatGPT and Whisper only transcribe, so the route is always steer.
-async function transcribers({ db, token, opencodeDbFile }: { db: KimakiDb; token: string; opencodeDbFile: string }): Promise<DbError | Transcriber[]> {
+// Best first: the local parakeet ASR service (no key, no subscription), then
+// the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
+// key, then hosted Whisper. Parakeet, ChatGPT and Whisper only transcribe, so
+// the route is always steer.
+async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: KimakiDb; token: string; opencodeDbFile: string; parakeet: { baseUrl: string; autoStart: boolean } | null }): Promise<DbError | Transcriber[]> {
   const [row, credential] = await Promise.all([
     db.query.bot_tokens
       .findFirst({ where: { token }, with: { api_keys: true } })
@@ -597,7 +628,11 @@ async function transcribers({ db, token, opencodeDbFile }: { db: KimakiDb; token
   const gemini = keys.find((key) => key.provider === 'gemini')
   const credentials = row ? credentialsFromRow(row) : null
   const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
+  // Probing parakeet first keeps local transcription ahead of every cloud key.
+  // null (not running, cannot start) just leaves it out of the chain.
+  const parakeetTranscriberUrl = parakeet ? await parakeetTranscriber(parakeet) : null
   return [
+    ...(parakeet && parakeetTranscriberUrl ? [{ kind: 'parakeet' as const, baseUrl: parakeet.baseUrl }] : []),
     ...(openai ? [{ kind: 'openai' as const, apiKey: openai.apiKey }] : []),
     ...(credential && !(credential instanceof Error) ? [{ kind: 'chatgpt' as const, credential }] : []),
     ...(gemini ? [{ kind: 'gemini' as const, apiKey: gemini.apiKey }] : []),
@@ -617,6 +652,7 @@ export async function transcribe({
   directory,
   agents,
   inSession,
+  asrAutoStart,
 }: {
   db: KimakiDb
   // The running bot's token: selects its bot_tokens row and API keys.
@@ -630,14 +666,23 @@ export async function transcribe({
   directory: string
   agents: ReadonlyArray<{ name: string; description: string }>
   inSession: boolean
+  // Start the bundled asr-service/ when the parakeet URL does not answer.
+  // Production sets it from shouldAutoStartAsr(); tests keep it off.
+  asrAutoStart?: boolean
 }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
-  const list = await transcribers({ db, token, opencodeDbFile })
+  const list = await transcribers({
+    db,
+    token,
+    opencodeDbFile,
+    parakeet: baseUrls.parakeet ? { baseUrl: baseUrls.parakeet, autoStart: asrAutoStart === true } : null,
+  })
   if (list instanceof Error) return list
   const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
   const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
     ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
     : ''
   const run = (entry: Transcriber) => {
+    if (entry.kind === 'parakeet') return withRetries(() => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType }))
     if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry })
     if (entry.kind === 'chatgpt') return withRetries(() => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType }))
     const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool }

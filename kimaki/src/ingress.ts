@@ -146,6 +146,7 @@ async function voiceRoute(
     token: bot.token,
     opencodeDbFile: bot.opencodeDbFile,
     baseUrls: bot.transcriptionBaseUrls,
+    asrAutoStart: bot.asrAutoStart,
     audio,
     mediaType: voiceMediaType(attachment),
     directory,
