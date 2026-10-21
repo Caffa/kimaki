@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-ASR Service - FastAPI wrapper for parakeet-mlx
-Provides HTTP API for speech-to-text transcription using NVIDIA Parakeet on Apple Silicon.
+ASR Service - FastAPI wrapper for parakeet-mlx + whisper fallback
+Provides HTTP API for speech-to-text transcription using NVIDIA Parakeet on Apple Silicon,
+with an optional mlx-whisper fallback for Chinese and other languages when parakeet returns empty text.
 """
 
 import os
@@ -17,10 +18,13 @@ from pydantic import BaseModel
 # Lazy import parakeet-mlx to allow service to start without model preloaded
 parakeet_model: Optional[object] = None
 
+# Lazy import mlx_whisper fallback. None means "not yet attempted"; False means import failed.
+whisper_available: Optional[bool] = None
+
 app = FastAPI(
     title="Parakeet MLX ASR Service",
-    description="Speech-to-text transcription using NVIDIA Parakeet on Apple Silicon",
-    version="1.0.0",
+    description="Speech-to-text transcription using NVIDIA Parakeet on Apple Silicon with whisper fallback",
+    version="1.1.0",
 )
 
 
@@ -36,6 +40,17 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_name: str
+    fallback_model_name: Optional[str] = None
+
+
+class TranscribeError(Exception):
+    """Internal exception used during transcription fallback handling."""
+    pass
+
+
+def get_fallback_model_name() -> str:
+    """Return the configured whisper fallback model name."""
+    return os.environ.get("ASR_FALLBACK_MODEL", "mlx-community/whisper-large-v3-turbo")
 
 
 def get_model():
@@ -55,6 +70,79 @@ def get_model():
     return parakeet_model
 
 
+def load_whisper() -> Optional[object]:
+    """Lazy import mlx_whisper; import failures are cached so we do not retry them, but model load/download failures during transcription are caught per-call and retried next time."""
+    global whisper_available
+
+    if whisper_available is False:
+        return None
+
+    try:
+        import mlx_whisper
+        whisper_available = True
+        return mlx_whisper
+    except Exception as e:
+        print(f"Failed to load mlx_whisper fallback: {e}")
+        whisper_available = False
+        return None
+
+
+def transcribe_with_parakeet(audio_path: str) -> tuple[str, Optional[float], Optional[str]]:
+    """Transcribe with parakeet and return (text, duration, language)."""
+    model = get_model()
+    result = model.transcribe(audio_path)
+    duration = result.sentences[0].end if result.sentences else None
+    return result.text, duration, "en"
+
+
+def transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> tuple[str, Optional[float], Optional[str]]:
+    """Transcribe with mlx_whisper fallback and return (text, duration, detected_language)."""
+    mlx_whisper = load_whisper()
+    if mlx_whisper is None:
+        raise TranscribeError("mlx_whisper fallback not available")
+
+    model_name = get_fallback_model_name()
+    print(f"Running whisper fallback: {model_name}")
+    result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model_name)
+    text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
+    text = text.strip()
+
+    segments = result.get("segments", []) if isinstance(result, dict) else getattr(result, "segments", [])
+    duration = None
+    if segments:
+        last_segment = segments[-1]
+        if isinstance(last_segment, dict):
+            duration = last_segment.get("end")
+        else:
+            duration = getattr(last_segment, "end", None)
+
+    detected_language = result.get("language") if isinstance(result, dict) else getattr(result, "language", None)
+    detected_language = detected_language or language
+    return text, duration, detected_language
+
+
+def run_transcription(
+    audio_path: str,
+    language: Optional[str] = None,
+    force_fallback: bool = False,
+) -> tuple[str, Optional[float], Optional[str]]:
+    """Run transcription with optional parakeet -> whisper fallback when text is empty."""
+    if force_fallback:
+        return transcribe_with_whisper(audio_path, language=language)
+
+    text, duration, detected_language = transcribe_with_parakeet(audio_path)
+    if not text.strip():
+        print(f"Parakeet returned empty text; trying whisper fallback")
+        try:
+            text, duration, detected_language = transcribe_with_whisper(audio_path, language=language)
+        except TranscribeError as e:
+            print(f"Fallback unavailable, returning empty parakeet result: {e}")
+        except Exception as e:
+            print(f"Fallback transcription failed: {e}; returning empty parakeet result")
+
+    return text, duration, detected_language
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check if the service and model are healthy."""
@@ -65,11 +153,20 @@ async def health_check():
         pass
     
     model_name = os.environ.get("PARAKEET_MODEL", "mlx-community/parakeet-tdt-0.6b-v3")
+    fallback_name = None
+
+    # Probe mlx_whisper availability without trying to load weights yet.
+    try:
+        import mlx_whisper as _  # noqa: F401
+        fallback_name = get_fallback_model_name()
+    except Exception:
+        pass
     
     response = HealthResponse(
         status="healthy" if model else "degraded",
         model_loaded=model is not None,
         model_name=model_name,
+        fallback_model_name=fallback_name,
     )
     
     if not model:
@@ -82,6 +179,7 @@ async def health_check():
 async def transcribe_audio(
     file: UploadFile = File(...),
     language: Optional[str] = None,
+    force_fallback: bool = False,
 ):
     """
     Transcribe audio file to text.
@@ -89,6 +187,7 @@ async def transcribe_audio(
     Args:
         file: Audio file (WAV, MP3, OGG, M4A, etc.)
         language: Optional language hint (e.g., "en")
+        force_fallback: Skip parakeet and run whisper fallback directly
     
     Returns:
         JSON with transcription text, duration, and detected language
@@ -110,16 +209,16 @@ async def transcribe_audio(
         tmp_path = tmp.name
     
     try:
-        # Load model and transcribe
-        model = get_model()
-        
-        # Run transcription
-        result = model.transcribe(tmp_path)
+        text, duration, detected_language = run_transcription(
+            tmp_path,
+            language=language,
+            force_fallback=force_fallback,
+        )
         
         return TranscriptionResponse(
-            text=result.text,
-            duration=result.sentences[0].end if result.sentences else None,
-            language=language or "en",  # Default to English
+            text=text,
+            duration=duration,
+            language=detected_language or language or "en",
         )
         
     except Exception as e:
@@ -140,6 +239,7 @@ async def transcribe_audio_base64(
     audio_data: str = Body(..., description="Base64 encoded audio"),
     media_type: str = Body("audio/wav", description="MIME type of audio"),
     language: Optional[str] = Body(None, description="Language hint"),
+    force_fallback: bool = Body(False, description="Skip parakeet and run whisper fallback directly"),
 ):
     """
     Transcribe base64-encoded audio to text.
@@ -148,6 +248,7 @@ async def transcribe_audio_base64(
         audio_data: Base64-encoded audio data
         media_type: MIME type of the audio (default: audio/wav)
         language: Optional language hint
+        force_fallback: Skip parakeet and run whisper fallback directly
     
     Returns:
         JSON with transcription text
@@ -181,16 +282,19 @@ async def transcribe_audio_base64(
         tmp_path = tmp.name
     
     try:
-        model = get_model()
-        result = model.transcribe(tmp_path)
+        text, duration, detected_language = run_transcription(
+            tmp_path,
+            language=language,
+            force_fallback=force_fallback,
+        )
         
         return TranscriptionResponse(
-            text=result.text,
-            duration=result.sentences[0].end if result.sentences else None,
-            language=language or "en",
+            text=text,
+            duration=duration,
+            language=detected_language or language or "en",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
     finally:
         try:
             os.unlink(tmp_path)
@@ -206,5 +310,6 @@ if __name__ == "__main__":
     
     print(f"Starting ASR service on {host}:{port}")
     print(f"Model: {os.environ.get('PARAKEET_MODEL', 'mlx-community/parakeet-tdt-0.6b-v3')}")
+    print(f"Fallback model: {get_fallback_model_name()}")
     
     uvicorn.run(app, host=host, port=port)

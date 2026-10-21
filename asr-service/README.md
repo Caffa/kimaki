@@ -52,12 +52,30 @@ Environment variables:
 - `ASR_PORT` - Port number (default: 8765)
 - `ASR_HOST` - Host address (default: 127.0.0.1)
 - `PARAKEET_MODEL` - Model to use (default: mlx-community/parakeet-tdt-0.6b-v3)
+- `ASR_FALLBACK_MODEL` - Whisper fallback model (default: mlx-community/whisper-large-v3-turbo)
 
 ### Available models
 
 - `mlx-community/parakeet-tdt-0.6b-v3` - English + multilingual (default)
 - `mlx-community/parakeet-tdt-0.6b-v2` - English only
 - `mlx-community/parakeet-ctc-0.6b-v2` - English only
+
+## Fallback transcription (Chinese and more)
+
+Parakeet is fast and accurate for English but can fail on Chinese audio — either
+garbling it into fake English or returning empty text for real voice notes. The
+service keeps parakeet as the primary model and automatically falls back to
+`mlx-whisper` when parakeet returns empty text. Whisper auto-detects the language,
+so this path also works for Chinese and other languages.
+
+- The fallback is triggered only when the primary model returns empty text.
+- Use `force_fallback=1` (`/transcribe` query param or `force_fallback: true` in
+  `/transcribe/base64`) to bypass parakeet and run only whisper — useful for
+testing the fallback path directly.
+- The first whisper call downloads the model (~1.6 GB) to the local HuggingFace
+cache if it is not already present.
+- If `mlx-whisper` fails to install or load, the service logs the error and
+  continues in parakeet-only mode.
 
 ## API Endpoints
 
@@ -72,9 +90,12 @@ Response:
 {
   "status": "healthy",
   "model_loaded": true,
-  "model_name": "mlx-community/parakeet-tdt-0.6b-v3"
+  "model_name": "mlx-community/parakeet-tdt-0.6b-v3",
+  "fallback_model_name": "mlx-community/whisper-large-v3-turbo"
 }
 ```
+
+`fallback_model_name` is `null` when `mlx-whisper` is not installed.
 
 ### Transcribe (multipart)
 
@@ -84,6 +105,7 @@ Content-Type: multipart/form-data
 
 file: <audio file>
 language: "en" (optional)
+force_fallback: true (optional)
 ```
 
 ### Transcribe (base64)
@@ -95,7 +117,8 @@ Content-Type: application/json
 {
   "audio_data": "<base64 encoded audio>",
   "media_type": "audio/wav",
-  "language": "en" (optional)
+  "language": "en" (optional),
+  "force_fallback": true (optional)
 }
 ```
 
@@ -143,7 +166,7 @@ cd asr-service
 
 ### Model download
 
-On first run, the model (~600MB) will be downloaded from HuggingFace. This may take a few minutes depending on your internet connection.
+On first run, the parakeet model (~600MB) will be downloaded from HuggingFace. This may take a few minutes depending on your internet connection. The whisper fallback model (~1.6 GB) is downloaded the first time it is used.
 
 ### FFmpeg not found
 
