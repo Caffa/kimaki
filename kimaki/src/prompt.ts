@@ -552,6 +552,22 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     if (!threadId) return new ConfigError({ reason: 'No local thread for this session. Use --thread on its owning machine.' })
     const thread = await fetchThread(bot, threadId)
     if (thread instanceof Error) return thread
+    if (input.notifyOnly) {
+      if (route.kind === 'queue' || route.kind === 'btw') {
+        return new ConfigError({ reason: '--notify-only appends do not support . queue / . btw suffixes' })
+      }
+      const shown = await thread
+        .send({
+          content: routeText(route),
+          files: input.files?.map((file) => ({ attachment: promptFilePath(file), name: file.name })),
+          allowedMentions: { parse: [] },
+          flags: NOTIFY_MESSAGE_FLAGS,
+        })
+        .catch((cause) => new DiscordError({ operation: 'post notification', cause }))
+      if (shown instanceof Error) return shown
+      await addMembers(thread, userIds)
+      return { threadId: thread.id, sessionId: null }
+    }
     const sessionId = bot.store.getState().roots[thread.id]
     if (!sessionId) {
       const project = thread.parentId ? await projectOf(bot, thread.parentId) : null
