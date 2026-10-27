@@ -21,6 +21,55 @@ parakeet_model: Optional[object] = None
 # Lazy import mlx_whisper fallback. None means "not yet attempted"; False means import failed.
 whisper_available: Optional[bool] = None
 
+# MLX buffer cache cap (bytes). MLX caches freed Metal buffers indefinitely;
+# with variable-length audio the cache grows unbounded (observed: 20.8 GB after 4 days).
+MLX_CACHE_LIMIT = int(os.environ.get("ASR_MLX_CACHE_LIMIT", str(512 * 1024 * 1024)))
+
+_mlx_core: Optional[object] = None
+
+_cache_limit_applied: bool = False
+
+
+def get_mlx_core():
+    """Lazy import mlx.core; returns None if unavailable so callers can skip cache maintenance."""
+    global _mlx_core
+    if _mlx_core is None:
+        try:
+            import mlx.core as mx
+            _mlx_core = mx
+        except Exception as e:
+            print(f"mlx.core unavailable, skipping cache maintenance: {e}")
+            _mlx_core = False
+    return _mlx_core or None
+
+
+def apply_cache_limit() -> None:
+    """Cap the MLX Metal buffer cache so a long-lived server cannot grow it unbounded."""
+    global _cache_limit_applied
+    mx = get_mlx_core()
+    if mx is None:
+        return
+    try:
+        setter = getattr(getattr(mx, "metal", mx), "set_cache_limit", None)
+        if setter is not None:
+            setter(MLX_CACHE_LIMIT)
+            _cache_limit_applied = True
+            print(f"MLX cache limit set to {MLX_CACHE_LIMIT // (1024 * 1024)} MB")
+    except Exception as e:
+        print(f"Failed to set MLX cache limit: {e}")
+
+
+def clear_mlx_cache() -> None:
+    """Release cached MLX Metal buffers after a transcription."""
+    mx = get_mlx_core()
+    if mx is None:
+        return
+    try:
+        mx.clear_cache()
+    except Exception as e:
+        print(f"Failed to clear MLX cache: {e}")
+
+
 app = FastAPI(
     title="Parakeet MLX ASR Service",
     description="Speech-to-text transcription using NVIDIA Parakeet on Apple Silicon with whisper fallback",
@@ -127,20 +176,27 @@ def run_transcription(
     force_fallback: bool = False,
 ) -> tuple[str, Optional[float], Optional[str]]:
     """Run transcription with optional parakeet -> whisper fallback when text is empty."""
-    if force_fallback:
-        return transcribe_with_whisper(audio_path, language=language)
+    global _cache_limit_applied
+    if not _cache_limit_applied:
+        apply_cache_limit()
 
-    text, duration, detected_language = transcribe_with_parakeet(audio_path)
-    if not text.strip():
-        print(f"Parakeet returned empty text; trying whisper fallback")
-        try:
-            text, duration, detected_language = transcribe_with_whisper(audio_path, language=language)
-        except TranscribeError as e:
-            print(f"Fallback unavailable, returning empty parakeet result: {e}")
-        except Exception as e:
-            print(f"Fallback transcription failed: {e}; returning empty parakeet result")
+    try:
+        if force_fallback:
+            return transcribe_with_whisper(audio_path, language=language)
 
-    return text, duration, detected_language
+        text, duration, detected_language = transcribe_with_parakeet(audio_path)
+        if not text.strip():
+            print(f"Parakeet returned empty text; trying whisper fallback")
+            try:
+                text, duration, detected_language = transcribe_with_whisper(audio_path, language=language)
+            except TranscribeError as e:
+                print(f"Fallback unavailable, returning empty parakeet result: {e}")
+            except Exception as e:
+                print(f"Fallback transcription failed: {e}; returning empty parakeet result")
+
+        return text, duration, detected_language
+    finally:
+        clear_mlx_cache()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -311,5 +367,7 @@ if __name__ == "__main__":
     print(f"Starting ASR service on {host}:{port}")
     print(f"Model: {os.environ.get('PARAKEET_MODEL', 'mlx-community/parakeet-tdt-0.6b-v3')}")
     print(f"Fallback model: {get_fallback_model_name()}")
+    
+    apply_cache_limit()
     
     uvicorn.run(app, host=host, port=port)
