@@ -127,19 +127,32 @@ export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string
   if (ready instanceof Error) return ready
 }
 
+type AgentListItem = Awaited<ReturnType<OpenCodeClient['agent']['list']>>['data'][number]
+
 // Agents a session may switch to (not subagents, not hidden ones).
-export async function primaryAgents(bot: Bot, directory: string) {
-  const ready = await catalogReady(bot, directory)
-  if (ready instanceof Error) return ready
+// Callers that already waited for plugin activation (startSession via waitForPlugin)
+// can skip the redundant integration.list round-trip.
+export async function primaryAgents(
+  bot: Bot,
+  directory: string,
+  { skipCatalogReady = false }: { skipCatalogReady?: boolean } = {},
+) {
+  if (!skipCatalogReady) {
+    const ready = await catalogReady(bot, directory)
+    if (ready instanceof Error) return ready
+  }
   const agents = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
   if (agents instanceof Error) return agents
   return agents.data.filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
 }
 
-export async function agentSelection(bot: Bot, { directory, agent }: { directory: string; agent: string }) {
-  const agents = await primaryAgents(bot, directory)
-  if (agents instanceof Error) return agents
-  const selected = agents.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
+export async function agentSelection(
+  bot: Bot,
+  { directory, agent, agents }: { directory: string; agent: string; agents?: AgentListItem[] },
+) {
+  const list = agents ?? (await primaryAgents(bot, directory))
+  if (list instanceof Error) return list
+  const selected = list.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
   if (!selected) return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
   const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
   return { agent: selected.id, model }
@@ -176,6 +189,7 @@ async function putInstructions(
     userId,
     parentSessionId = null,
     scheduledTask = null,
+    agents: providedAgents,
   }: {
     sessionId: string
     thread: ThreadChannel
@@ -184,10 +198,11 @@ async function putInstructions(
     userId: string
     parentSessionId?: string | null
     scheduledTask?: ScheduledRun | null
+    agents?: AgentListItem[]
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   // The agent list is optional prompt context: a failure must not strand the thread.
-  const found = await primaryAgents(bot, directory)
+  const found = providedAgents ?? (await primaryAgents(bot, directory))
   if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
@@ -388,14 +403,18 @@ export async function startSession(
     const directory = checkout?.directory ?? requestedDirectory
     const plugin = await bot.features.waitForPlugin(directory)
     if (plugin instanceof Error) return plugin
+    // waitForPlugin already waits for plugin/markdown-agent activation via
+    // integration.list, so the catalog is complete. Read it once and reuse it
+    // for agent selection and instructions to avoid redundant ~700ms waits.
+    const agents = await primaryAgents(bot, directory, { skipCatalogReady: true })
     const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
     const selected = await (async () => {
-      if (requestedAgent) return agentSelection(bot, { directory, agent: requestedAgent })
+      if (requestedAgent) return agents instanceof Error ? agents : agentSelection(bot, { directory, agent: requestedAgent, agents })
       // Bot-level default agent (local fork, --default-agent): only when no
       // route or channel preference exists. Unavailable here → warn and start
       // stock, so a stale default never breaks session creation.
       if (!bot.defaultAgent) return null
-      const fallback = await agentSelection(bot, { directory, agent: bot.defaultAgent })
+      const fallback = agents instanceof Error ? agents : await agentSelection(bot, { directory, agent: bot.defaultAgent, agents })
       if (fallback instanceof Error) {
         logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, fallback)
         return null
@@ -410,7 +429,7 @@ export async function startSession(
     const model = choice
       ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
       : undefined
-    return { checkout, directory, model, agent: selected?.agent }
+    return { checkout, directory, model, agent: selected?.agent, agents }
   })()
   const created = await creating
   if (created instanceof Error) return created
@@ -419,7 +438,7 @@ export async function startSession(
     await thread.delete('session setup failed').catch(() => undefined)
     return setup
   }
-  const { checkout, directory, model, agent } = setup
+  const { checkout, directory, model, agent, agents } = setup
 
   const kimaki = {
     threadId: thread.id,
@@ -450,6 +469,7 @@ export async function startSession(
     userId: author.id,
     parentSessionId,
     scheduledTask: task ?? null,
+    ...(agents instanceof Error ? {} : { agents }),
   })
   if (instructions instanceof Error) return instructions
 
