@@ -28,6 +28,7 @@ import {
 import { disabledAnalytics, type Analytics } from '../analytics.ts'
 import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credentials.ts'
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
+import type { FailedVoiceRetryOptions } from '../failed-voice.ts'
 import type { ToolInput } from '../format-parts.ts'
 import * as schema from '../schema.ts'
 import { startLockServer } from '../lock-server.ts'
@@ -500,6 +501,7 @@ export async function startTestBot({
   analytics,
   clock,
   schedulerIntervalMs,
+  failedVoice,
 }: {
   dataDir: string
   twin: TestTwin
@@ -522,6 +524,8 @@ export async function startTestBot({
   // Scheduling tests pass manualClock() and null, then call bot.scheduler.runDueTasks().
   clock?: Clock
   schedulerIntervalMs?: number | null
+  // Failed voice message retry loop; tests use a fast poll (failed-voice e2e).
+  failedVoice?: FailedVoiceRetryOptions
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -551,6 +555,7 @@ export async function startTestBot({
     ...(clock && { clock }),
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
     ...(realtimeBaseUrls && { realtimeBaseUrls }),
+    ...(failedVoice && { failedVoice }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

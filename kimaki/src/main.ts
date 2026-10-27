@@ -14,7 +14,8 @@ import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
 import { createEventLoop } from './event-loop.ts'
-import { registerIngress } from './ingress.ts'
+import { createFailedVoiceRetry, notifyGaveUpFailedVoice, type FailedVoiceRetryOptions } from './failed-voice.ts'
+import { registerIngress, retryFailedVoice } from './ingress.ts'
 import { runLockRoute } from './lock-routes.ts'
 import { installShim, type LockServer } from './lock-server.ts'
 import { createLogger } from './logger.ts'
@@ -71,6 +72,9 @@ export type StartBotOptions = {
   clock?: Clock
   // How often due tasks and wakes run; null: never (tests call scheduler.runDueTasks).
   schedulerIntervalMs?: number | null
+  // Failed voice message persistence and retry loop (failed-voice.ts); pollMs
+  // null disables the timer (tests call runDue themselves).
+  failedVoice?: FailedVoiceRetryOptions
   autoWorktrees?: boolean
 }
 
@@ -197,10 +201,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     intervalMs: options.schedulerIntervalMs === undefined ? 5_000 : options.schedulerIntervalMs,
   })
   cleanup.defer(() => scheduler.stop())
+  const voiceRetry = createFailedVoiceRetry(bot, { retry: retryFailedVoice, notifyGaveUp: notifyGaveUpFailedVoice }, options.failedVoice)
+  cleanup.defer(() => voiceRetry.stop())
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
-  registerIngress(bot)
+  registerIngress(bot, voiceRetry)
   voiceCalls.register(bot)
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
   cleanup.defer(() => voiceCalls.stop(bot))
@@ -232,6 +238,9 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // After Discord and OpenCode are ready: a due task needs both.
   const scheduling = await scheduler.start()
   if (scheduling instanceof Error) return scheduling
+  // Same for the failed voice messages: a retried record needs Discord and
+  // OpenCode up, so the scan runs only here.
+  await voiceRetry.start()
   logger.info(`bot ready as ${discord.user?.tag} in ${discord.guilds.cache.size} server(s)`)
   const projects = await countUserProjects({ db, dataDir: options.dataDir })
   if (projects instanceof Error) logger.warn(projects)
