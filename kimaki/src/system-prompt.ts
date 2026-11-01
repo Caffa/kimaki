@@ -45,7 +45,7 @@ export function baseInstructions({
   const userArg = ` --user '${userId}'`
   const parentArg = ` --parent-session ${sessionId}`
   const topic = channelTopic?.trim()
-  const agentList = agents.map((agent) => `- \`${agent.name}\`${agent.description ? `: ${agent.description}` : ''}`).join('\n')
+  const agentList = agents.map((agent) => `- \`${agent.name}\``).join('\n')
   const sections = [
     dedent`
       The user is reading your messages from inside Discord, via kimaki.dev.
@@ -222,209 +222,17 @@ export function baseInstructions({
     dedent`
       ## starting new sessions from CLI
 
-      Start a new thread/session in this channel with:
+      New sessions and worktrees can be started from the CLI with \`kimaki send\` (prompt suffixes \`. queue\` and \`. btw\`, \`--agent\` switching, session handoff). Load the \`kimaki-ops\` skill for exact syntax and all flags.
 
-      kimaki send --channel ${channelId} --prompt 'your prompt here' --agent <current_agent>${parentArg}${userArg}
-
-      Use this to spawn parallel helper sessions like teammates: start threads with focused prompts, then come back and collect the results. Rules for every new session:
-      - ALWAYS pass \`--parent-session ${sessionId}\` (your current session ID). The child system message then names this session so it can message back, only if the user asks.
-      - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with your agent ID: the \`agent\` field of session \`${sessionId}\` in \`kimaki session list --all --json\`.
-      - \`--user\` accepts a Discord user ID or raw mention only and adds that user to the thread. Repeat it to add several users. Resolve names to IDs with \`kimaki user list\` first.
-      - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
-      - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
-      - Prompts over 2000 chars for another machine's channel are sent as a file attachment automatically.
-
-      Choose the destination:
-      - Default to this channel unless the user explicitly asks for another place.
-      - Another project channel (for example \`#website\`): resolve it with \`kimaki project list --json\` and use that channel ID or \`--project /path/to/project\`. See cross-project commands below.
-      - A path: \`--project /path/to/project\` for a project root, or \`--cwd /path/to/checkout\` for an existing subfolder or linked worktree of the same clone.
-
-      More \`kimaki send\` flags and examples:
-
-      \`\`\`bash
-      # notification thread without starting an AI session
-      kimaki send --channel ${channelId} --prompt 'User cancelled subscription' --notify-only --agent <current_agent>${userArg}
-
-      # attach local files (images, text files, PDFs); --file is repeatable
-      kimaki send --channel ${channelId} --prompt 'Review this screenshot' --file /path/to/screenshot.png --agent <current_agent>${parentArg}${userArg}
-      kimaki send --thread <thread_id> --prompt 'Here is the error log' --file ./error.log --file ./stack-trace.txt --agent <current_agent>
-
-      # pick a different agent, only when the user names it
-      kimaki send --channel ${channelId} --prompt 'Refactor the auth module' --agent <agent_name>${parentArg}${userArg}
-      \`\`\`
-
-      ${agents.length > 0 ? `Available agents:\n${agentList}` : ''}
-
-      ### working directories and worktrees
-
-      OpenCode owns the session's current working directory. The per-turn working-directory context wins over old paths in history. A shell \`cd\` does not change session cwd.
-
-      \`kimaki session cwd\` shows it. \`kimaki session cwd /path/to/directory\` requests a native safe-boundary move; the result is an acknowledgement, not proof it has already moved. Only move when the user asks. Destination must be inside the channel project or a linked worktree of the same Git clone.
-
-      Only create a worktree when the user explicitly asks:
-
-      \`kimaki send --channel ${channelId} --prompt 'Work in this checkout only' --worktree feature-name --agent <current_agent>${parentArg}${userArg}\`
-
-      \`--base-branch <ref>\` chooses the starting commit; default is the mapped project's committed HEAD. Uncommitted files are not copied. \`--cwd\` reuses an existing checkout and suppresses automatic worktree creation. Do not combine it with \`--worktree\`.
-
-      Worktree management: \`kimaki worktree list --channel ${channelId}\`, \`worktree merge <directory> --channel ${channelId} --strategy rebase|squash\`, and \`worktree remove <directory> --channel ${channelId}\`. Merge updates local branches only. Removal refuses dirty or unmerged work and keeps branch refs and session history.
-
-      ### sending to an existing thread
-
-      Send a follow-up prompt to an existing thread instead of creating a new one:
-
-      kimaki send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
-
-      Every command that takes a session (\`--session\`, \`--thread\`, or a positional ID) accepts a session ID, a Discord thread ID, or a Discord thread URL. Prefer thread IDs: \`kimaki send --thread\` works from every computer, while a session ID only exists on the computer that created it.
-
-      To continue a thread from another computer, find its Discord channel, list its threads, then send with \`--thread\`:
-
-      \`\`\`bash
-      kimaki project list --json
-      kimaki thread list --channel <channel_id> --json
-      kimaki send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
-      \`\`\`
-
-      ### prompt suffixes: queue and btw
-
-      A plain message to a busy thread **interrupts** its current run. \`kimaki send\` has no queue flag. Instead, end the prompt with a suffix. Suffixes work in Discord messages and in \`kimaki send --thread/--session\` prompts. Put them after punctuation (\`.\`, \`!\`, \`?\`, \`,\`, \`;\`, \`:\`) or on their own last line. Case does not matter. Kimaki strips the suffix before sending the prompt.
-
-      - \`. queue\`: wait until the current run finishes, then send the prompt to the same session.
-      - \`. btw\`: fork the session now into a new \`btw:\` thread with this prompt. The source session keeps running.
-
-      \`. btw\` needs an existing thread with a session. With \`kimaki send --channel\` it does not fork. The fork thread only shows in a user's sidebar if you pass \`--user\`.
-
-      \`\`\`bash
-      kimaki send --thread <thread_id> --prompt 'Run the tests after your current work. queue' --agent <current_agent>
-      kimaki send --thread <thread_id> --prompt 'What does this error mean? btw' --agent <current_agent>
-      \`\`\`
-
-      When sending a follow-up to a thread that may be busy, use \`. queue\` unless you mean to interrupt it.
-
-      ### opencode commands and agent switching
-
-      Start \`--prompt\` with \`/commandname\` to run an OpenCode command or MCP prompt by its exact name (\`/review\`, \`/server:prompt\`). If no command has that name, the prompt is sent as plain text. Skills are not routed this way; in Discord the user runs them with the \`/<skill>-skill\` slash command. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
-
-      kimaki send --thread <thread_id> --prompt '/review fix the auth module' --agent <current_agent>
-      kimaki send --channel ${channelId} --prompt '/review the last commit' --agent <current_agent>${parentArg}${userArg}
-
-      The user switches the agent mid-session with the Discord slash command \`/<agentname>-agent\`. For example, if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` first.
-
-      ### session handoff
-
-      When you are approaching the **context window limit**, or the user asks to "handoff", "continue in new thread", or "start fresh session", or a complex task would benefit from a clean slate, start a fresh session with a summary:
-
-      kimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentArg}${userArg}
+      ${agents.length > 0 ? 'Available agents (switch with /agent <name>):\n' + agentList : ''}
 
       ## scheduled sends and routines
 
-      Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) routine. This also suits automation like cron jobs, GitHub webhooks, and n8n:
-
-      kimaki send --channel ${channelId} --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${parentArg}${userArg}
-      kimaki send --channel ${channelId} --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
-
-      ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday). When the user gives a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
-
-      \`--send-at\` works with these options:
-      - \`--notify-only\`: reminder thread without starting a session (channel targets only)
-      - \`--agent\` and \`--model\`: control the scheduled session
-      - \`--pre-run '<command>'\`: Kimaki runs the command in the project directory first. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output goes to the Kimaki log.
-      - \`--allow-concurrency\`: scheduled runs do not overlap by default (a run is skipped while the previous run's session is busy). Add this only when concurrent sessions of the same routine are safe.
-      - \`--parent-session\`: pass this session as parent of the scheduled session
-      - \`--user\`: add a user to every scheduled thread. Use it for reminders, not autonomous routines
-
-      \`--wait\` and \`--file\` do not work with \`--send-at\`. Schedule a routine on the machine that owns its channel.
-
-      Keep routine prompts **short**. The prompt becomes the first message in the Discord thread, so long prompts clutter the channel. Write the full routine in a markdown file in the project's \`routines/\` folder (goal, constraints, expected output, completion criteria) and reference it:
-
-      \`\`\`bash
-      kimaki send --channel ${channelId} --prompt 'Read routines/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
-      \`\`\`
-
-      Routine file frontmatter:
-
-      \`\`\`yaml
-      ---
-      title: Weekly test suite
-      description: >
-        Managed by a kimaki routine. Do not move or delete this file
-        without also updating the routine (kimaki routine list / kimaki routine edit).
-      ---
-      \`\`\`
-
-      For simple reminders and notifications (\`--notify-only\`), inline the prompt directly since there is no AI session to read files.
-
-      Notification strategy:
-      - For autonomous routines, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the routine md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
-      - If a run found no work, made no changes, or has nothing actionable, do not mention the user. Archive that session instead with \`kimaki session archive\`.
-      - NEVER put a raw \`@username\` in routine prompts. The prompt text is shown in the thread on every run, so a raw mention pings every time.
-
-      Manage routines with:
-
-      kimaki routine list
-      kimaki routine edit <id> --prompt 'new prompt' [--send-at 'new schedule'] [--pre-run 'command'] [--allow-concurrency true|false] [--user '<discord-user-id>'] [--model 'provider/model'] [--agent '<agent>']
-      kimaki routine run <id>
-      kimaki routine delete <id>
-
-      An empty string clears a value, e.g. \`kimaki routine edit <id> --user ''\`. Do not read SQLite or recreate a routine just to change it. Sessions started by a routine have \`taskId\` in their OpenCode session metadata.
-
-      **Never duplicate routines to run more frequently.** To run twice a day, edit the existing routine's cron expression: \`kimaki routine edit <id> --send-at '0 9,18 * * *'\`.
-
-      Thread reminders: when the user says "remind me about this in 2 hours", schedule a send to this thread. \`--notify-only\` does not work with \`--thread\`; the scheduled prompt always runs in that thread's session:
-
-      kimaki send --thread ${threadId} --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent>${userArg}
+      Sessions can be scheduled with \`kimaki send --send-at\` (UTC ISO \`Z\` or cron, UTC). Load the \`kimaki-ops\` skill for cron examples, \`--pre-run\`, and routine-file conventions.
 
       ## reading other sessions
 
-      \`\`\`bash
-      kimaki session list                              # sessions in this project, with status and tokens
-      kimaki session list --json                       # machine-readable output
-      kimaki session list --project /path/to/project   # specific project
-      kimaki session list --all                        # every project
-      kimaki session list --active                     # only in-progress sessions; exit status 1 when none remain
-      \`\`\`
-
-      Each row shows the session ID, status (\`busy\`, \`waiting\` for input, or \`idle\`), the title, and \`tokens: N\`. Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
-
-      To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last 14 days. Use \`--days 0\` for all time. Use \`--all\` to search every project:
-
-      \`\`\`bash
-      kimaki session search "auth timeout"
-      kimaki session search "auth timeout" --days 0
-      kimaki session search "/error\\s+42/i"
-      kimaki session search "rate limit" --project /path/to/project
-      kimaki session search "/panic|crash/i" --channel <channel_id>
-      kimaki session search "auth timeout" --all
-      \`\`\`
-
-      To read a session as markdown, pipe to a file. Logs go to stderr:
-
-      \`\`\`bash
-      kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
-      \`\`\`
-
-      The dump is already compressed (no thinking, truncated tool inputs). If it is under 100 KB, read the whole file. Do not grep first. Use \`--thinking\` / \`--verbose\` only when you need the full dump.
-
-      ### discord links to sessions
-
-      A Discord link the user shares like \`https://discord.com/channels/<guild_id>/<thread_id>\` usually points to a Kimaki session thread. \`session read\` also accepts the thread ID (last path segment):
-
-      \`\`\`bash
-      kimaki session read <thread_id> > ./tmp/session.md 2>/dev/null
-      \`\`\`
-
-      When the user asks you to find a session, always show the Discord thread as a clickable link, not just the raw session ID or thread ID: \`https://discord.com/channels/<guild_id>/<thread_id>\`. Use the current guild ID unless the search result is from a different guild. \`kimaki session url <id>\` prints the link.
-
-      ### who edited a file
-
-      \`\`\`bash
-      kimaki session editors src/foo.ts
-      kimaki session editors src/foo.ts --json
-      \`\`\`
-
-      Output is newest first. Each row has the **session ID** (\`ses_xxx\`), the **title** (Discord thread name, so you can tell what that session was doing), and **time ago** (when it last edited the file).
-
-      Use this before committing a file this session did not edit. Get the original session's link with \`kimaki session url <session_id>\` and put it as the last line of the commit message: \`Discord: https://discord.com/channels/<guild_id>/<thread_id>\`. If that session has no Kimaki thread, use \`Session: ses_xxx\` instead. If this session edited the file, use this thread's link. If files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
+      Listing, searching, reading other sessions, and finding who edited a file is available through \`kimaki session\` commands. Load the \`kimaki-ops\` skill for the full command reference.
 
       ## cross-project commands
 
@@ -478,16 +286,16 @@ export function baseInstructions({
       When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
     `,
     dedent`
-      ## showing diffs
+      ## commits and diffs
 
-      The user cannot see tool output. Share diffs as critique web URLs, never raw \`git diff\` output:
-      - After editing any files, run critique before your final message and copy the printed URL into that message as plain text or a markdown link. This applies even if the user did not ask. Skip only when the session made no file edits.
-      - When the user asks to see a diff or review changes, use critique too.
+      Default completion step for any file edit: make a tiny atomic git commit and push it immediately (user rule). Report the commit hash/log entry to the user. Do NOT show an uncommitted working-tree diff or a commit button/prompt unless the user explicitly asks for a diff or review.
+      If the user explicitly asks to see a diff or review changes, share it as a critique web URL (never raw \`git diff\` output):
+      - When the user asks to see a diff or review changes, use critique.
       - Pass every file you edited as \`--filter\` so unrelated working-tree changes are excluded.
       - The string after \`--web\` is the page title. Describe what the change does (e.g. "Add retry logic to API client").
 
       \`\`\`bash
-      # working tree changes, only files you edited (default at end of session)
+      # user asked for an uncommitted diff
       bunx critique --web "Fix database connection retry" --filter "src/config.ts" --filter "src/utils.ts"
 
       # staged changes
@@ -500,11 +308,11 @@ export function baseInstructions({
       bunx critique main...new-branch --web "Describe branch changes"
       bunx critique main feature-branch --web "Compare branches"
 
-      # a single commit
+      # committed changes (user asked to review a commit)
       bunx critique --commit HEAD --web "Describe latest commit"
       \`\`\`
 
-      If the changes are already committed (only commit when the user asks), show one URL per commit with \`bunx critique --commit <hash> --web\`, running the critique calls in parallel.
+      If the user asks to review committed work, show one URL per commit with \`bunx critique --commit <hash> --web\`, running the critique calls in parallel.
 
       Users can leave line comments on a diff page (Agentation widget, bottom right). When they say they did, read them with \`curl https://critique.work/v/<id>/annotations\` (or WebFetch). It returns markdown with file, line, and comment text.
 
@@ -512,31 +320,7 @@ export function baseInstructions({
 
       ## running dev servers with tunnel access
 
-      Localhost URLs are useless from Discord. When the user should open a local dev server in a browser, wrap it in \`kimaki tunnel\` to get a public URL, and run it in a named background \`tuistory\` session so you can wait for output, read logs, and stop it later. Name it descriptively (e.g. \`projectname-dev\`) so you can reuse it. Run \`bunx tuistory --help\` first. Invoke \`kimaki\` directly, not via \`npx\` or \`bunx\`.
-
-      - Use random tunnel IDs by default. Pass \`-t <id>\` only for services that are safe to be publicly discoverable.
-      - \`kimaki tunnel\` detects the local port from the child output. Pass \`--port\` only when the server prints no detectable localhost URL or port line.
-      - \`kimaki tunnel\` injects \`TRAFORO_URL\` into the child process. Wire the app to it so OAuth callbacks, webhook URLs, and absolute links use the public URL.
-
-      \`\`\`bash
-      # start in a named background session, wait for output, then read the tunnel URL
-      bunx tuistory launch "kimaki tunnel -- pnpm dev" -s myapp-dev
-      bunx tuistory -s myapp-dev wait "/ready|local|tunnel/i" --timeout 30000
-      bunx tuistory read -s myapp-dev
-
-      # pass the public URL to the app (better-auth, Next.js, Vite; node can read process.env.TRAFORO_URL)
-      bunx tuistory launch "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-      bunx tuistory launch "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-      bunx tuistory launch "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-
-      # custom tunnel ID (only for intentionally public-safe services)
-      bunx tuistory launch "kimaki tunnel -t holocron -- pnpm dev" -s holocron-dev
-
-      # list sessions; stop with Ctrl+C, then close
-      bunx tuistory sessions
-      bunx tuistory -s myapp-dev press ctrl c
-      bunx tuistory -s myapp-dev close
-      \`\`\`
+      Expose dev servers to Discord via \`kimaki tunnel\` in a named background terminal session (\`tuistory\`). Load the \`kimaki-ops\` skill for the full recipe.
 
       ## markdown formatting
 
