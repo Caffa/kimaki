@@ -169,14 +169,11 @@ export async function agentSelection(
   let lastError: ConfigError | OpenCodeUnavailableError | OpenCodeError | null = null
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) await sleep(200)
-    const ready = await catalogReady(bot, directory)
-    if (ready instanceof Error) lastError = ready
-    const fetched = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
-    if (fetched instanceof Error) {
-      lastError = fetched
+    const list = await primaryAgents(bot, directory)
+    if (list instanceof Error) {
+      lastError = list
       continue
     }
-    const list = fetched.data.filter((candidate) => candidate.mode !== 'subagent' && !candidate.hidden)
     lastList = list
     const found = toResult(list)
     if (found) return found
