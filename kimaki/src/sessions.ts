@@ -127,7 +127,7 @@ export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string
   if (ready instanceof Error) return ready
 }
 
-type AgentListItem = Awaited<ReturnType<OpenCodeClient['agent']['list']>>['data'][number]
+export type AgentListItem = Awaited<ReturnType<OpenCodeClient['agent']['list']>>['data'][number]
 
 // Agents a session may switch to (not subagents, not hidden ones).
 // Callers that already waited for plugin activation (startSession via waitForPlugin)
@@ -149,13 +149,42 @@ export async function primaryAgents(
 export async function agentSelection(
   bot: Bot,
   { directory, agent, agents }: { directory: string; agent: string; agents?: AgentListItem[] },
-) {
-  const list = agents ?? (await primaryAgents(bot, directory))
-  if (list instanceof Error) return list
-  const selected = list.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
-  if (!selected) return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
-  const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
-  return { agent: selected.id, model }
+): Promise<
+  ConfigError | OpenCodeUnavailableError | OpenCodeError | { agent: string; model: ModelChoice | null; agents?: AgentListItem[] }
+> {
+  const wanted = (candidate: AgentListItem) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase()
+  const toResult = (list: AgentListItem[]) => {
+    const selected = list.find(wanted)
+    if (!selected) return null
+    const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
+    return { agent: selected.id, model, agents: list }
+  }
+
+  if (agents && agents.some(wanted)) {
+    const found = toResult(agents)
+    if (found) return found
+  }
+
+  let lastList: AgentListItem[] | null = null
+  let lastError: ConfigError | OpenCodeUnavailableError | OpenCodeError | null = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) await sleep(200)
+    const ready = await catalogReady(bot, directory)
+    if (ready instanceof Error) lastError = ready
+    const fetched = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
+    if (fetched instanceof Error) {
+      lastError = fetched
+      continue
+    }
+    const list = fetched.data.filter((candidate) => candidate.mode !== 'subagent' && !candidate.hidden)
+    lastList = list
+    const found = toResult(list)
+    if (found) return found
+  }
+  if (lastList) {
+    return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
+  }
+  return lastError ?? new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
 }
 
 // OpenCode switches the agent and model separately, including the configured variant.
@@ -404,17 +433,19 @@ export async function startSession(
     const plugin = await bot.features.waitForPlugin(directory)
     if (plugin instanceof Error) return plugin
     // waitForPlugin already waits for plugin/markdown-agent activation via
-    // integration.list, so the catalog is complete. Read it once and reuse it
-    // for agent selection and instructions to avoid redundant ~700ms waits.
-    const agents = await primaryAgents(bot, directory, { skipCatalogReady: true })
+    // integration.list, so the catalog is usually complete. Read it once and
+    // reuse it; if the requested agent is missing, agentSelection refreshes the
+    // catalog and returns the list it actually used.
+    const initialAgents = await primaryAgents(bot, directory, { skipCatalogReady: true })
+    const agentsAvailable = !(initialAgents instanceof Error)
     const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
     const selected = await (async () => {
-      if (requestedAgent) return agents instanceof Error ? agents : agentSelection(bot, { directory, agent: requestedAgent, agents })
+      if (requestedAgent) return initialAgents instanceof Error ? initialAgents : agentSelection(bot, { directory, agent: requestedAgent, agents: initialAgents })
       // Bot-level default agent (local fork, --default-agent): only when no
       // route or channel preference exists. Unavailable here → warn and start
       // stock, so a stale default never breaks session creation.
       if (!bot.defaultAgent) return null
-      const fallback = agents instanceof Error ? agents : await agentSelection(bot, { directory, agent: bot.defaultAgent, agents })
+      const fallback = initialAgents instanceof Error ? initialAgents : await agentSelection(bot, { directory, agent: bot.defaultAgent, agents: initialAgents })
       if (fallback instanceof Error) {
         logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, fallback)
         return null
@@ -422,6 +453,7 @@ export async function startSession(
       return fallback
     })()
     if (selected instanceof Error) return selected
+    const refreshedAgents = selected && 'agents' in selected && selected.agents ? selected.agents : (agentsAvailable ? initialAgents : null)
     const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
     const global = await globalModel(bot)
     if (global instanceof Error) return global
@@ -429,6 +461,7 @@ export async function startSession(
     const model = choice
       ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
       : undefined
+    const agents = refreshedAgents instanceof Error ? null : refreshedAgents
     return { checkout, directory, model, agent: selected?.agent, agents }
   })()
   const created = await creating
@@ -469,7 +502,7 @@ export async function startSession(
     userId: author.id,
     parentSessionId,
     scheduledTask: task ?? null,
-    ...(agents instanceof Error ? {} : { agents }),
+    ...(Array.isArray(agents) ? { agents } : {}),
   })
   if (instructions instanceof Error) return instructions
 
