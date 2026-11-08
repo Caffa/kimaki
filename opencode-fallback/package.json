@@ -1,6 +1,6 @@
 {
   "name": "@kimaki/plugin-fallback",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "OpenCode V2 plugin that switches account or model per session on rate limit, quota and overload errors.",
   "main": "./dist/index.js",
@@ -54,13 +54,13 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@opencode/cli": "2.0.22",
-    "@opencode/client": "2.0.22",
-    "@opencode/plugin": "2.0.22",
+    "@opencode/cli": "2.0.29",
+    "@opencode/client": "2.0.29",
+    "@opencode/plugin": "2.0.29",
     "@types/node": "^24.3.0",
     "rimraf": "^6.0.1"
   },
   "peerDependencies": {
-    "@opencode/plugin": ">=2.0.22"
+    "@opencode/plugin": ">=2.0.28"
   }
 }
