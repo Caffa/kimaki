@@ -220,7 +220,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     allowAllUsers: options.allowAllUsers ?? false,
     disabledSkills: options.disabledSkills ?? [],
     disabledPrompt: options.disabledPrompt ?? [],
-    coordinatorDefault: options.coordinator ?? true,
+    coordinatorDefault: options.coordinator ?? false,
     warmupTimers: options.warmupTimers ?? null,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }

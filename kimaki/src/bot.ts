@@ -81,8 +81,7 @@ export type Bot = {
   disabledSkills: readonly string[]
   // `kimaki --disable-prompt`: static instruction parts left out of new sessions.
   disabledPrompt: readonly PromptSection[]
-  // Default for channels without a channel_coordinator row (`kimaki --coordinator`, on unless false):
-  // project channel messages go to one long coordinator session in the channel.
+  // Default for channels without a channel_coordinator row (`kimaki --coordinator`, off unless true):
   coordinatorDefault: boolean
   // Short warmup windows (tests), written into session markers; null uses the plugin defaults.
   warmupTimers: WarmupTimers | null
