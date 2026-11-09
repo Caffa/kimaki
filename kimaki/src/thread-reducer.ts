@@ -473,24 +473,6 @@ function applyRoot(context: Context & { event: V2Event }) {
       draft.lastRetryAt = event.created
       emit({ type: 'send', text: formatRetry({ attempt: event.data.attempt, delayMs: event.data.at - event.created, message: event.data.error.message }) })
       return
-    case 'session.model.selected': {
-      const model = event.data.model
-      const prev = event.data.previous
-      const nextModel = `${model.providerID}/${model.id}`
-      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
-      draft.turn.model = model
-      if (prev) {
-        const prevModel = `${prev.providerID}/${prev.id}`
-        if (prevModel !== nextModel) {
-          emit({ type: 'send', text: asSubtext(`⬦ fell back to ${nextModel} (was ${prevModel})`) })
-        } else {
-          emit({ type: 'send', text: asSubtext(`⬦ switched model to ${nextModel}`) })
-        }
-      } else {
-        emit({ type: 'send', text: asSubtext(`⬦ switched model to ${nextModel}`) })
-      }
-      return
-    }
     // User `!cmd` (session.shell): shown at every verbosity.
     case 'session.shell.started':
       return toolLine(context, formatShellStarted(event.data.shell.command))
