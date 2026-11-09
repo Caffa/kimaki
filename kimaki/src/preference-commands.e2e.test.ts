@@ -179,6 +179,8 @@ test('/model switches the session model from the next step, /model-variant its t
   expect(await pick({ channelId: thread.id, prefix: 'model:', value: 'deterministic-provider' })).toMatchInlineSnapshot(`
     [
       "Deterministic Provider",
+      "Hugging Face",
+      "Ollama",
       "OpenCode Zen",
     ]
   `)

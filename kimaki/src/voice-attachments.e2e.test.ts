@@ -301,6 +301,12 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
+    slow-done
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: ]
+    -# Queued message sent
+    voice queue ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: ]
     -# » **tommy:** Side voice-btw
     [reply to tommy: ]
@@ -311,13 +317,7 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     [reply to tommy: ]
     -# » **tommy:** Fresh start voice-new
     [reply to tommy: ]
-    Started a new session in <#THREAD>
-    slow-done
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    [reply to tommy: ]
-    -# Queued message sent
-    voice queue ok
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    Started a new session in <#THREAD>"
   `)
   expect([btw.name, fresh.name]).toMatchInlineSnapshot(`
     [

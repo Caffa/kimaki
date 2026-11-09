@@ -91,10 +91,10 @@ test('an Ogg Opus voice message goes to the ASR service as raw audio', async () 
     "--- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
-    » **tommy:** Hello from the Mac Studio voice-parakeet
+    -# » **tommy:** Hello from the Mac Studio voice-parakeet
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     parakeet voice ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const [request] = parakeet.requests
   expect({
@@ -121,7 +121,10 @@ test('a failing ASR service is reported instead of falling through to a cloud pr
       .user(TEST_USER_ID)
       .sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
     const reply = await twin.discord.channel(twin.channelId).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.startsWith('✗') })
-    expect(reply.content).toMatchInlineSnapshot(`"✗ Transcription API returned 500: {"detail":"transcription failed"}"`)
+    expect(reply.content).toMatchInlineSnapshot(`
+      "✗ Transcription API returned 500: {"detail":"transcription failed"}
+      The audio is saved and its delivery will be retried automatically."
+    `)
   } finally {
     parakeet.status = 200
   }
