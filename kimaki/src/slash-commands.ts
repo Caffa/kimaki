@@ -32,6 +32,7 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
+import { isBuiltinSkill } from './builtin-skills.ts'
 import {
   Events,
   MessageFlags,
@@ -175,7 +176,7 @@ async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string): Promi
   if (agents instanceof Error) return agents
   if (commands instanceof Error) return commands
   if (skills instanceof Error) return skills
-  return { agents: agents.data, commands: commands.data, skills: skills.data }
+  return { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
 }
 
 // Autocomplete keeps the whole project catalog reachable beyond Discord's shortcut limit.
@@ -187,7 +188,7 @@ function catalogRoutes(): InteractionRoutes {
       if (kind === 'skill') {
         const skills = await oc(bot, 'skill.list', (client) => client.skill.list({ location }))
         if (skills instanceof Error) return skills
-        return skills.data.map((skill) => ({ name: skill.id, description: skill.description }))
+        return skills.data.filter((skill) => !isBuiltinSkill(skill.id)).map((skill) => ({ name: skill.id, description: skill.description }))
       }
       const list = await oc(bot, 'command.list', (client) => client.command.list({ location }))
       if (list instanceof Error) return list
@@ -321,25 +322,27 @@ async function sendInput(
   const target = await resolveTarget(bot, interaction.channelId)
   if (target instanceof Error) return replyError(interaction, target)
   const author = authorOf(interaction)
-  if (target.thread && target.sessionId) {
+  // In a coordinator channel an agent pick starts a new thread: the coordinator keeps its own agent and model.
+  const newThread = route.kind === 'steer' && Boolean(route.agent) && target.conversation !== null && !target.conversation.isThread()
+  if (target.conversation && target.sessionId && !newThread) {
     const reply = await replyWithEcho(interaction, { author, text: echo })
     if (reply instanceof Error) return replyError(interaction, reply)
     if (model && !(route.kind === 'steer' && route.agent)) {
       const switched = await switchModel(bot, { sessionId: target.sessionId, model })
       if (switched instanceof Error) return replyError(interaction, switched)
     }
-    const result = await dispatch(bot, { thread: target.thread, route, author, messageId: reply.id, model })
+    const result = await dispatch(bot, { conversation: target.conversation, route, author, messageId: reply.id, model })
     if (result instanceof Error) return replyError(interaction, result)
     return
   }
-  if (target.thread) {
+  if (target.conversation && !newThread) {
     await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
     return
   }
   await interaction.deferReply()
   const started = await startSession(bot, {
     channelId: target.channelId,
-    directory: target.directory,
+    directory: target.projectDirectory,
     route,
     author,
     messageId: interaction.id,
@@ -460,7 +463,7 @@ export function registerSlashCommands(
     if (project instanceof Error) return logger.warn(project)
     if (!project) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
-    if (!guild || !(await canUseKimaki({ guild, userId: interaction.user.id }))) {
+    if (!guild || !(await canUseKimaki(bot, { guild, userId: interaction.user.id }))) {
       if (interaction.isAutocomplete()) return respondChoices(interaction, [])
       if (interaction.isRepliable()) {
         await interaction.reply({ content: 'You do not have permission to use Kimaki', flags: MessageFlags.Ephemeral })

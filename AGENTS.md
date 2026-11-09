@@ -1,3 +1,5 @@
+Decisions: `plans/decisions/`. Search them before designing or refactoring.
+
 the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI (npm package `kimaki`), built on OpenCode V2. it replaced the V1 `cli/` package; `kimaki/CHANGELOG.md` keeps the V1 release history. this branch supports OpenCode V2 only. the legacy OpenCode V1 compatible codebase lives in the `cli/` folder of the `v1` branch (https://github.com/remorses/kimaki/tree/v1/cli); read it there with `git show v1:cli/<path>`, never re-add V1 support here.
 
 ## local fork (Caffa)
@@ -55,13 +57,15 @@ OpenCode events ──▶ opencode-server.ts ──▶ event-loop.ts ──▶ t
 
 - `main.ts`: wiring. lock port, then SQLite migration, then OpenCode and Discord login in parallel.
 - `bot.ts`: the `Bot` context passed to every module. `store.ts`: the one zustand store.
-- `ingress.ts`: Discord messages, attachments, voice. `slash-commands.ts` + `commands/*`: slash commands and components.
+- `ingress.ts`: Discord messages, attachments, voice. In a **coordinator** channel (on by default; `/toggle-coordinator` per channel, stored in `channel_coordinator`, else `--coordinator`, which `--coordinator false` turns off; `isCoordinatorChannel` in `bot.ts`) the channel itself is the conversation of one long coordinator session: `roots[channelId]`, bound in `thread_sessions` with the channel ID, a `Conversation` is a thread or that channel (`bot.ts`). `startCoordinator` in `sessions.ts` creates it.
+- `coordinator.ts`: when a thread run ends, a `<session-finished>` synthetic note goes to the coordinator (wakes it only when the coordinator sent the run's prompt, read from the prompt's `sender` metadata; silent for prompts the user typed in the thread, routines and other senders). `plugin/coordinator.ts`: coordinator and worker role instructions, prompt cache warmup while a coordinator's channel is busy or a session sleeps at most 45 minutes (asks the bot's `session.warmup` lock route) and compaction when a coordinator's warmup ends. Decisions: `plans/decisions/coordinator.md`. `slash-commands.ts` + `commands/*`: slash commands and components.
 - `opencode-server.ts`: finds the OpenCode service, owns the event subscription, installs the plugin shim.
 - `event-loop.ts`: routes events to threads, hydrates after a (re)connect. `thread-reducer.ts`: pure fold of events into a thread view plus effects.
 - `effects.ts`: the only Discord writer for session output. `format-parts.ts`, `markdown/`: formatting.
 - `lock-server.ts`, `lock-routes.ts`: single-instance lock and the local HTTP API used by CLI subcommands.
 - `cli.ts`, `cli/*.ts`: goke CLI. `plugin/`: code that runs inside the OpenCode process.
-- `autostart.ts`: the bot writes `<dataDir>/autostart.command`; the plugin opens it in the default terminal when OpenCode starts and no bot answers on the lock port.
+- `system-prompt.ts` holds the session instruction entry (the whole agent-facing CLI reference). Only two parts are opt-out skills: `kimaki-debug` and `kimaki-tunnel` (`skills/<id>/SKILL.md`, `builtin-skills.ts`), registered by the `kimaki` plugin through `ctx.skill.transform` and hidden from Discord slash commands. `kimaki --disable-skills all|id,id` denies them per session with `skill:<id>` permission rules (`disabledSkillRules`). Static prompt parts carry a tag (`PROMPT_SECTIONS` in `builtin-skills.ts`); `kimaki --disable-prompt <tag>` leaves them out of new sessions. Only tag parts with no session-specific values.
+- `autostart.ts`: the bot writes `<dataDir>/autostart.command`; the plugin opens it in the default terminal when OpenCode starts and the lock port refuses a TCP connect (a timeout never opens it). `--no-autostart` deletes the script on every start.
 - `gateway-proxy/`: multi-tenant Discord Gateway + REST proxy. one shared bot for all users.
 - `website/`: https://kimaki.dev, OAuth callback and onboarding status routes.
 - `db/`: shared Postgres schema (`db/schema.prisma`) for website and gateway. kimaki does not use it.
@@ -113,7 +117,9 @@ later change  ──▶ session.instructions.updated ──▶ appended to histo
 
 source: `packages/core/src/session/instruction-state.ts` and `message-updater.ts` in opencode v2. so put session-level text in **instruction entries**, never in the plugin `context` hook. Kimaki's system prompt (`system-prompt.ts`) is one instruction entry, written with `session.instructions.entry.put` in `sessions.ts`. `event.system.push(...)` in `session.hook('context')` runs on every request and sits before all messages: any change to that text (for example the git branch line) invalidates the whole cached prompt. only push text there that stays the same during a session.
 
-kimaki posts `-# ⬦ prompt cache miss: ...` in the thread when the cached prefix of a root step shrinks (`thread-reducer.ts`, `session.step.ended`). causes: changed prefix, model switch, or provider cache TTL expiry (about 5 minutes idle on Anthropic).
+**instructions that must update in existing sessions go through the plugin.** the bot-written instruction entry is frozen at session create: a new Kimaki version never reaches old sessions through it. OpenCode reloads the plugin when its code changes, so plugin-owned text updates on its own. OpenCode has no instruction source for plugins: the plugin stores the text as a synthetic message before a user prompt when the latest one is missing or stale (`registerCoordinatorRoles` in `plugin/coordinator.ts`, the pattern of OpenCode's `core/src/plugin/plan.ts`). it lands at the tail, so the prompt cache stays warm.
+
+kimaki posts `-# prompt cache miss: ...` in the thread when the cached prefix of a root step shrinks and that step wrote at least 50% of its prompt to the cache, so partial misses stay silent (`thread-reducer.ts`, `session.step.ended`). causes: changed prefix, model switch, or provider cache TTL expiry (about 5 minutes idle on Anthropic).
 
 # restarting the discord bot
 
@@ -148,6 +154,8 @@ inline straightforward Drizzle queries (`db.query.*.findFirst`, `db.insert`, `db
 before any publish, read `docs/release-process.md`. it covers the #changelog notification via sigillo with the demo bot token, the website production deploy, and kimaki-demo deploys.
 
 ## github issues
+
+only issues are welcome: pull requests are restricted to collaborators. when a contributor wants to show a reference implementation, they link a commit on their fork in the issue. never open a pull request on remorses/kimaki unless remorses asked for one.
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
@@ -210,14 +218,16 @@ full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-pa
 
 `kimaki/src/plugin/` runs inside the **OpenCode server process**, not the bot. on start the bot writes a shim per plugin into `<opencode config dir>/plugins/<name>/index.js` that re-exports `dist/plugin/` of the running Kimaki install (`installPluginShim` in `opencode-server.ts`), also when the bot runs from `src`: OpenCode watches plugin files and reloads on change, so a `src` target would load half-edited code on every save. run `pnpm build` to ship plugin changes. no opencode.json edit. writing the shim only when its content changes matters: any change in that folder reloads every location and cancels pending forms.
 
-- `plugin/index.ts` (`kimaki`): git branch reminder, `<discord-user>` turn context rendered from `metadata.discord` into the model request only (stored prompt text stays clean for the TUI), extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
+- `plugin/index.ts` (`kimaki`): git branch reminder, `<discord-user>` turn context rendered from `metadata.discord` and the time since the last assistant message (`sinceAssistantMs`, stamped on the prompt metadata by the prompt hook) into the model request only (stored prompt text stays clean for the TUI), extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
 - `plugin/anthropic/index.ts` (`kimaki-anthropic`): Claude Pro/Max OAuth for every session, TUI included.
+
+**never add a new injected plugin** (a new shim or a new opencode.json `plugins` entry). new hooks go into the existing `kimaki` plugin (`plugin/index.ts`, helpers in separate files like `plugin/coordinator.ts`). we keep just one injected plugin.
 
 each plugin is a directory loaded through its `index` module. OpenCode only accepts directories in opencode.json `plugins`, so plain OpenCode users can list `<kimaki>/src/plugin/anthropic` there. OpenCode keeps one plugin per ID and reports a second one as failed (`Duplicate plugin ID`), so `installPluginShim` removes a shim when the global `opencode.json`/`opencode.jsonc` already lists the same plugin directory of any Kimaki install. the `anthropic` directory must import nothing from Kimaki outside itself except npm packages.
 
 each module has one `export default Plugin.define(...)`. keep utilities in separate files and import them.
 
-**the `kimaki` plugin must only act on Kimaki sessions.** OpenCode loads it for every session, including the user's own TUI sessions. every hook must first check the session's `metadata.kimaki` marker (or the parent chain for subagents, see `marker()` in `plugin/index.ts`) and return without changes when it is missing. the bot writes the marker at `session.create` and when it adopts a V1 session. never add a hook that changes prompts, tools, shell commands or files for unmarked sessions.
+**the `kimaki` plugin must only act on Kimaki sessions.** OpenCode loads it for every session, including the user's own TUI sessions. every hook must first check the session's `metadata.kimaki` marker (or the parent chain for subagents, see `marker()` in `plugin/index.ts`) and return without changes when it is missing. the only exceptions: the built-in skills and the stable `OpenCode session ID: ses_...` system line, which reach every session on purpose. the bot writes the marker at `session.create` and when it adopts a V1 session. never add a hook that changes prompts, tools, shell commands or files for unmarked sessions.
 
 the plugin gets bot state from the marker, not from env vars: `dataDir` and `lockPort`. its `execute.before` hook prefixes each shell command with `PATH=<dataDir>/bin:$PATH`, `KIMAKI_DATA_DIR`, `KIMAKI_LOCK_PORT` and `KIMAKI_TOOL_CALL`, so agents call the `<dataDir>/bin/kimaki` shim (`installShim` in `lock-server.ts`) and reach the right bot.
 
@@ -238,6 +248,7 @@ when creating system messages like replies to commands never add blank lines bet
 typing comes from `POST /channels/{id}/typing` / `sendTyping()`. one pulse only lasts about 10 seconds in the Discord UI and stops at the next bot message.
 
 - the reducer decides: it emits `{ type: 'typing', on }` when `isTyping(view)` changes. typing is on while the root execution or a child runs, and off while a question or permission waits for the user.
+- a coordinator channel also types while any thread of its channel types (`conversationTyping`). `commit()` in `event-loop.ts` applies it on every view change, so a worker run turns the coordinator typing on and off.
 - `effects.ts` runs one 7s interval per thread and clears it on `typing: false`, on stop, and before the footer.
 - user messages never start typing. only OpenCode events do.
 
@@ -308,15 +319,16 @@ markdown tables and callouts render as a Components V2 `Container` (`markdown/co
 
 use this to write tests that find messages matching specific patterns. formatting lives in `format-parts.ts`.
 
-- Kimaki creates a thread on the first user message and replies in it. sessions the bot created start with a banner: `-# *using anthropic/claude-sonnet-4 ⋅ build*` (`formatBanner`).
+- in a coordinator channel (the default) the coordinator replies in the channel itself (banner, text, tool lines, footer). a new coordinator session's banner has a second subtext line: `-# Coordinator mode is on: ...`. Kimaki posts no notice when a worker thread ends: the woken coordinator reports the outcome with the `<#thread>` link. a turn that answers `IDLE` posts nothing, not even a footer.
+- with coordinator mode off (`--coordinator false`, `/toggle-coordinator`, and the e2e harness default), Kimaki creates a thread on the first user message and replies in it. sessions the bot created start with a banner: `-# *using anthropic/claude-sonnet-4 ⋅ build*` (`formatBanner`).
 - assistant text is plain Discord markdown, full width, **never quoted**. reasoning is never shown.
 - tool lines are subtext: `-# ┣ shell _ls_`, file edits and writes use `◼︎`: `-# ◼︎ edit *file.ts* (+3-1)` (`formatToolLine`). subagent lines carry the agent: `-# ┣ general ⋅ glob _*.md_`. when the kind changes between text and tool, the next block starts with a blank line.
 - verbosity per channel is `tools` (default) or `text` (`isToolVisible`). `tools` hides read-only tools and shells with `hasSideEffect: false`. file edits always show.
-- status lines use the `⬦` glyph: `⬦ retrying in 5s (attempt 2): ...`, `⬦ general finished: ...`, `⬦ context compacted`, `⬦ prompt cache miss: ...`. errors start with `✗ `.
-- on a successful turn a footer shows folder, branch, duration, context percent, model and agent (agent omitted when `build`): `-# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. never after an interrupt or failure, and not while a subagent still runs.
+- status lines are plain subtext: `retrying in 5s (attempt 2): ...`, `general finished: ...`, `context compacted to 179k tokens (18%)`, `prompt cache miss: ...`. errors start with `✗ `.
+- on a successful turn a footer shows branch, duration, context percent and model: `-# *fix-login ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. the branch shows only when it is not the repo's default branch (`origin/HEAD`, else a local `main` or `master`, cached per directory in `effects.ts`). the folder shows first only when the session runs outside the channel's project folder (worktree, other cwd), and the agent last only when it is not the channel's default agent (channel agent, else OpenCode's default). `channelDefaults` in `sessions.ts` reads both when the footer is posted. never after an interrupt or failure, and not while a subagent still runs.
 - `!cmd` in a thread runs a user shell: a start line, then one output message from `session.shell.*` events.
-- queued messages (`/queue`, or a message sent while busy with queue delivery) get `-# Queued at position N...`. when delivered, the bot posts `» **Tommy:** content` and edits the ack to `Queued message sent`. remove one by deleting the Discord message or with `/clear-queue`.
-- root user prompts without `metadata.discord` (sent from the TUI, phone or another client) show as `» **user:** text` (`queue.ts`). every bot prompt goes through `prompt()` with that metadata; synthetic inbox items and subagent prompts are never echoed. `session.command` takes no metadata, so `command()` dispatches `kimaki.command` first to hide the expanded template.
+- queued messages (`/queue`, or a message sent while busy with queue delivery) get `-# Queued at position N...`. when delivered, the bot edits the ack to `Queued` and replies `-# Queued message sent` to the user message (the text is never posted again; in a coordinator channel too, and the answer after it is then not a reply). remove one by deleting the Discord message or with `/clear-queue`.
+- root user prompts without `metadata.discord` (sent from the TUI, phone or another client) show as subtext `-# » **user:** text` (`queue.ts`), like every prompt the bot posts (`kimaki send`, routines, voice, slash command replies: `-# » **CLI:** text`, `formatEcho`). every bot prompt goes through `prompt()` with that metadata; synthetic inbox items and subagent prompts are never echoed. `session.command` takes no metadata, so `command()` dispatches `kimaki.command` first to hide the expanded template.
 - voice messages are transcribed (`voice.ts`) and the transcription decides the route (steer, queue, new session, agent).
 
 # session runtime
@@ -397,6 +409,7 @@ always add `expect(await discord.thread(id).text()).toMatchInlineSnapshot()` (or
 
 - **always assert on Discord messages (what the user sees), not internal state or logs.** never match log text in expectations.
 - e2e tests use `opencode-deterministic-provider` (model `deterministic-v2`), which returns canned responses instantly. build turns with `scriptedTurn`, `textParts`, `toolParts`, `slowTextMatcher` from the harness.
+- the provider inside the OpenCode binary POSTs each prompt to the test process (`startTestModel` in the harness), which runs the matchers and records it in `server.model.requests`. to check what the model saw (plugin context, role text, attachments), assert on `requests` (`latestUserText`, `raw` JSON). do not add a matcher whose only job is to reply differently when the prompt contains something.
 - `waitFor` clamps every timeout into **8s..10s** and polls every 100ms: the first turn on a fresh server costs 2-4s. `waitForFooter`, `waitForBotMessageContaining` and `waitForSelectMenu` build on it. tests asserting something never appears must use their own loop.
 - snapshot a finished turn only after `waitForFooter`. never treat a `-# *using ...` banner as a footer (`isFooter` excludes it).
 - to assert something doesn't appear (e.g. no footer after abort), poll the thread messages: sleep 20ms, max 10 iterations (200ms total is enough, everything is deterministic). fail immediately if the unwanted message appears.
@@ -424,6 +437,6 @@ represent opencode tool usage in matchers as `tool-call` parts with `toolName` a
 these V1 features have no kimaki equivalent. do not document them as existing:
 
 - self-upgrade (`kimaki upgrade`, `/upgrade-and-restart`)
-- bundled skills (`skills/` copied into the npm package, `sync-skills`)
+- `sync-skills` (V1 copied user skills; the `kimaki-*` skills in `skills/` are new, see `builtin-skills.ts`)
 - image optimizer plugin (shrink images over 2000px / 4 MB before the model sees them)
 - kitty graphics plugin (images printed by shell tools sent to Discord)

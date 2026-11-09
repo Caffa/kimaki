@@ -61,10 +61,10 @@ test('session cwd changes preserve the session and use the new location after re
   await waitForFooter({ discord: twin.discord, threadId: sent.threadId, count: 2 })
   expect(hide(await twin.discord.thread(sent.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Start cwd session
+    -# » **CLI:** Start cwd session
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *Ns ⋅ deterministic-v2*
     -# Working directory changed to PROJECT/sub
     --- from: user (tommy)
     write-cwd-marker
@@ -72,14 +72,14 @@ test('session cwd changes preserve the session and use the new location after re
     -# ┣ shell _Write to the current directory_
 
     Wrote cwd.txt.
-    -# *sub ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *sub ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect((await client.session.get({ sessionID: sent.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))
   expect(fs.readFileSync(path.join(server.projectDirectory, 'sub', 'cwd.txt'), 'utf8')).toBe('isolated')
   expect(fs.existsSync(path.join(server.projectDirectory, 'cwd.txt'))).toBe(false)
   const source = await bot.discord.channels.fetch(sent.threadId)
   if (!source?.isThread()) throw new Error('No thread')
-  const fork = await forkBtw(bot, { sourceThread: source, text: 'Side question', author: { id: TEST_USER_ID, username: 'tommy' }, messageId: 'cwd-btw' })
+  const fork = await forkBtw(bot, { source, text: 'Side question', author: { id: TEST_USER_ID, username: 'tommy' }, messageId: 'cwd-btw' })
   if (fork instanceof Error) throw fork
   await waitForFooter({ discord: twin.discord, threadId: fork.threadId })
   expect(hide(await twin.discord.thread(fork.threadId).text())).toMatchInlineSnapshot(`
@@ -87,7 +87,7 @@ test('session cwd changes preserve the session and use the new location after re
     Reusing context from <#THREAD> to answer prompt...
     Side question
     ok
-    -# *sub ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *sub ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await client.session.get({ sessionID: fork.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))
 })
@@ -105,11 +105,11 @@ test('native moves of a busy session update the live footer without aborting its
   await waitForFooter({ discord: twin.discord, threadId: sent.threadId })
   expect(hide(await twin.discord.thread(sent.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** busy-move-marker
+    -# » **CLI:** busy-move-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Finished without interruption.
     -# Working directory changed to PROJECT/sub
-    -# *sub ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *sub ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Working directory: \`PROJECT/sub\`"
   `)
   expect((await client.session.get({ sessionID: sent.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))
@@ -143,7 +143,7 @@ test('new-worktree forks context, and CLI creation and worktree toggle use the s
   await waitForFooter({ discord: twin.discord, threadId: created.threadId })
   expect(hide(await twin.discord.thread(created.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** CLI isolation
+    -# » **CLI:** CLI isolation
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *cli-checkout ⋅ opencode/kimaki-cli-checkout ⋅ Ns ⋅ deterministic-v2*"
@@ -156,7 +156,7 @@ test('new-worktree forks context, and CLI creation and worktree toggle use the s
   await waitForFooter({ discord: twin.discord, threadId: automatic.threadId })
   expect(hide(await twin.discord.thread(automatic.threadId).text()).replace(/automatic-isolation-[a-f0-9]{8}/g, 'automatic-isolation-ID')).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Automatic isolation
+    -# » **CLI:** Automatic isolation
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *automatic-isolation-ID ⋅ opencode/kimaki-automatic-isolation-ID ⋅ Ns ⋅ deterministic-v2*"
@@ -172,7 +172,7 @@ test('send worktree creates an isolated named checkout, while explicit cwd reuse
   await waitForFooter({ discord: twin.discord, threadId: sent.threadId })
   expect(hide(await twin.discord.thread(sent.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** write-cwd-marker
+    -# » **CLI:** write-cwd-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# ┣ shell _Write to the current directory_
 
@@ -189,7 +189,7 @@ test('send worktree creates an isolated named checkout, while explicit cwd reuse
   await waitForFooter({ discord: twin.discord, threadId: reused.threadId })
   expect(hide(await twin.discord.thread(reused.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Reuse checkout
+    -# » **CLI:** Reuse checkout
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *isolated ⋅ opencode/kimaki-isolated ⋅ Ns ⋅ deterministic-v2*"

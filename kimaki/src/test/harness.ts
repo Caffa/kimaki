@@ -2,7 +2,8 @@
 // temp root with private XDG dirs and SQLite DB, started with the same
 // `serve --service` command the user's service uses, so the bot connects
 // through Service.discover() exactly like production. The bot runs in-process
-// against discord-digital-twin.
+// against discord-digital-twin. The model is opencode-deterministic-provider,
+// answered by startTestModel() in this process.
 
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -22,10 +23,13 @@ import { ChannelType, ComponentType, type APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencode2Config,
+  getLatestUserText,
+  resolveResponse,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 
 import { disabledAnalytics, type Analytics } from '../analytics.ts'
+import type { WarmupTimers } from '../bot.ts'
 import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credentials.ts'
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { FailedVoiceRetryOptions } from '../failed-voice.ts'
@@ -61,8 +65,50 @@ export function opencodeBinary(): string {
   return path.join(path.dirname(packageJsonPath), 'bin/opencode.exe')
 }
 
+export type TestModelRequest = {
+  latestUserText: string
+  // The whole prompt as JSON: system, history and tool results.
+  raw: string
+}
+
+// The deterministic model, answered in this process: OpenCode's provider POSTs each
+// prompt here. Tests read `requests` to check what the model saw and may push matchers.
+export type TestModel = {
+  matchers: DeterministicMatcher[]
+  requests: TestModelRequest[]
+}
+
+async function startTestModel({ matchers }: { matchers: DeterministicMatcher[] }) {
+  const model: TestModel = { matchers, requests: [] }
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      try {
+        const { prompt } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Parameters<typeof resolveResponse>[0]
+        model.requests.push({ latestUserText: getLatestUserText({ prompt }), raw: JSON.stringify(prompt) })
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(resolveResponse({ prompt, settings: { strict: false, matchers: model.matchers } })))
+      } catch (error) {
+        // The provider turns this into a model error, so the run fails visibly instead of hanging.
+        response.statusCode = 500
+        response.end(error instanceof Error ? error.stack : String(error))
+      }
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address !== 'object') throw new Error('test model has no port')
+  return {
+    model,
+    url: `http://127.0.0.1:${address.port}`,
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
+
 export type OpencodeTestServer = {
   root: string
+  model: TestModel
   serviceFile: string
   // Global OpenCode config dir of this server (XDG_CONFIG_HOME/opencode).
   configDir: string
@@ -92,7 +138,7 @@ export async function startOpencodeTestServer({
   // Appended after the allow-all rules: the last matching rule wins.
   permissions?: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }>
   // More deterministic models next to TEST_MODEL, e.g. with thinking variants.
-  models?: Record<string, { name: string; variants?: Array<{ id: string }> }>
+  models?: Record<string, { name: string; variants?: Array<{ id: string }>; limit?: { context?: number; output?: number } }>
   // Agent overrides and custom agents (config `agents`).
   agents?: Record<string, { description?: string; mode?: 'primary' | 'subagent' | 'all'; hidden?: boolean; model?: string }>
   // MCP servers (config `mcp.servers`).
@@ -105,9 +151,10 @@ export async function startOpencodeTestServer({
   fs.mkdirSync(projectDirectory, { recursive: true })
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: projectDirectory })
   const serviceFile = path.join(root, 'state', 'opencode', 'service.json')
+  const testModel = await startTestModel({ matchers })
   const config = buildDeterministicOpencode2Config({
     model: TEST_MODEL,
-    settings: { strict: false, matchers },
+    settings: { responderUrl: testModel.url },
     permissions: [
       { action: 'shell', resource: '*', effect: 'allow' },
       { action: 'edit', resource: '*', effect: 'allow' },
@@ -184,6 +231,7 @@ export async function startOpencodeTestServer({
   await start()
   return {
     root,
+    model: testModel.model,
     serviceFile,
     configDir: path.join(env.XDG_CONFIG_HOME, 'opencode'),
     dbFile: path.join(env.XDG_DATA_HOME, 'opencode', 'opencode.db'),
@@ -194,6 +242,7 @@ export async function startOpencodeTestServer({
     start,
     stop: async () => {
       await kill()
+      await testModel.stop()
       fs.rmSync(root, { recursive: true, force: true })
     },
   }
@@ -502,6 +551,8 @@ export async function startTestBot({
   clock,
   schedulerIntervalMs,
   failedVoice,
+  coordinator,
+  warmupTimers,
 }: {
   dataDir: string
   twin: TestTwin
@@ -526,6 +577,9 @@ export async function startTestBot({
   schedulerIntervalMs?: number | null
   // Failed voice message retry loop; tests use a fast poll (failed-voice e2e).
   failedVoice?: FailedVoiceRetryOptions
+  // Default off (`--coordinator false`) so most tests get threads; coordinator tests pass true.
+  coordinator?: boolean
+  warmupTimers?: WarmupTimers
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -542,7 +596,7 @@ export async function startTestBot({
   if (lock instanceof Error) throw lock
   const bot = await startBot({
     dataDir,
-    kimakiCommand: `'${process.execPath}' --import '${createRequire(import.meta.url).resolve('tsx')}' '${path.resolve('src/cli.ts')}'`,
+    kimakiArgv: [process.execPath, '--import', createRequire(import.meta.url).resolve('tsx'), path.resolve('src/cli.ts')],
     token: credentials.token,
     appId: credentials.appId,
     lock,
@@ -556,6 +610,8 @@ export async function startTestBot({
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
     ...(realtimeBaseUrls && { realtimeBaseUrls }),
     ...(failedVoice && { failedVoice }),
+    coordinator: coordinator ?? false,
+    ...(warmupTimers && { warmupTimers }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),
@@ -633,7 +689,8 @@ export function schedulingKit({ suite, dataDir, clock }: {
   }
 }
 
-export type FakeTranscription = { transcription: string; route?: string; agent?: string }
+// delayMs: how long the fake Gemini waits before it answers (not sent back as a tool argument).
+export type FakeTranscription = { transcription: string; route?: string; agent?: string; delayMs?: number }
 
 // A voice message whose audio bytes are the transcription the fake returns.
 export function voiceUrl(result: FakeTranscription): string {
@@ -663,13 +720,15 @@ export async function startFakeGemini(): Promise<FakeGemini> {
       const declaration = body.tools[0]!.functionDeclarations[0]!
       const audio = body.contents[0]!.parts.find((part) => part.inlineData)!.inlineData!
       requests.push({ routes: declaration.parameters.properties.route?.enum ?? null, mimeType: audio.mimeType })
-      const args = JSON.parse(Buffer.from(audio.data, 'base64').toString('utf8')) as FakeTranscription
-      response.setHeader('content-type', 'application/json')
-      response.end(
-        JSON.stringify({
-          candidates: [{ finishReason: 'STOP', content: { parts: [{ functionCall: { name: declaration.name, args } }] } }],
-        }),
-      )
+      const { delayMs = 0, ...args } = JSON.parse(Buffer.from(audio.data, 'base64').toString('utf8')) as FakeTranscription
+      setTimeout(() => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            candidates: [{ finishReason: 'STOP', content: { parts: [{ functionCall: { name: declaration.name, args } }] } }],
+          }),
+        )
+      }, delayMs)
     })
   })
   const port = await freePort()
@@ -740,14 +799,15 @@ export async function startFakeOpenAI({ result }: { result: FakeTranscription })
 
 export type FakeChatGPT = {
   baseUrl: string
-  // Each POST /transcribe, as ChatGPT received it.
-  requests: Array<{ authorization: string | null; accountId: string | null; filename: string; type: string; audio: Buffer }>
+  // Each POST, as the server received it.
+  requests: Array<{ path: string; authorization: string | null; accountId: string | null; model: string | null; filename: string; type: string; audio: Buffer }>
   // Reply status; tests set 401 to check the API key fallback.
   status: number
   stop: () => Promise<void>
 }
 
 // chatgpt.com/backend-api/transcribe: multipart `file` in, `{ text }` out.
+// Also a local Whisper server (/audio/transcriptions), which takes the same shape plus `model`.
 export async function startFakeChatGPT({ text }: { text: string }): Promise<FakeChatGPT> {
   const fake: Omit<FakeChatGPT, 'baseUrl' | 'stop'> = { requests: [], status: 200 }
   const server = http.createServer((request, response) => {
@@ -758,9 +818,12 @@ export async function startFakeChatGPT({ text }: { text: string }): Promise<Fake
       const form = await new Request('http://fake/transcribe', { method: 'POST', headers, body: Buffer.concat(chunks) }).formData()
       const file = form.get('file')
       if (!(file instanceof File)) throw new Error('fake ChatGPT: no file field')
+      const model = form.get('model')
       fake.requests.push({
+        path: request.url ?? '',
         authorization: headers.get('authorization'),
         accountId: headers.get('chatgpt-account-id'),
+        model: typeof model === 'string' ? model : null,
         filename: file.name,
         type: file.type,
         audio: Buffer.from(await file.arrayBuffer()),

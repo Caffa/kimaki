@@ -1,4 +1,4 @@
-// CLI session commands: editors, search by channel, command, named fork, resume by folder.
+// CLI session commands: editors, command, named fork, resume by folder.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -68,16 +68,14 @@ test('session diff prints critique output for the session folder', async () => {
   expect(diff.stdout).toContain('No changes to display')
 })
 
-test('session editors lists sessions that wrote a file, skips failed tool calls; search accepts a channel', async () => {
+test('session editors lists sessions that wrote a file, skips failed tool calls', async () => {
   const writer = await newSession('editor-marker write')
   // An edit of a missing file fails and must not be recorded.
   await newSession('fail-marker edit')
   const written = await cli(['session', 'editors', 'edited.txt', '--json'])
   const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'missing.txt')]).catch((error: Error & { code: number }) => error)
-  const searched = await cli(['session', 'search', 'editor-marker', '--channel', twin.channelId])
   expect(JSON.parse(written.stdout).map((row: { sessionId: string }) => row.sessionId)).toEqual([writer.sessionId])
   expect(failed instanceof Error && failed.code).toBe(1)
-  expect(searched.stdout).toContain(writer.sessionId)
 })
 
 test('session command, named fork, and resume without a channel use the session folder', async () => {
@@ -89,12 +87,13 @@ test('session command, named fork, and resume without a channel use the session 
   const resumed = JSON.parse((await cli(['session', 'resume', source.sessionId])).stdout)
   expect(await twin.discord.thread(source.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** command-source
+    -# » **CLI:** command-source
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **CLI:** /review focus --focus security
     reviewed with passthrough
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect((await twin.discord.thread(forked.threadId).getChannel())?.name).toBe('named fork')
   expect(resumed.sessionId).toBe(source.sessionId)

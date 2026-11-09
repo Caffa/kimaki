@@ -11,6 +11,7 @@ import { ChannelType, type Client, type TextChannel, type ThreadChannel } from '
 
 import type { AgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
+import type { PromptSection } from './builtin-skills.ts'
 import type { KimakiDb } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
@@ -28,6 +29,11 @@ import type { RealtimeBaseUrls, VoiceCalls } from './voice-call.ts'
 export type Author = { id: string; username: string }
 
 export type PromptFile = { uri: string; name: string }
+
+// Prompt cache warmup windows (plugin/coordinator.ts): a keep-alive every
+// intervalMs while a coordinator's channel is busy (at most maxMs after its
+// last turn) or a session sleeps.
+export type WarmupTimers = { intervalMs: number; maxMs: number }
 
 export type ModelChoice = { providerID: string; id: string; variant: string | null }
 
@@ -69,6 +75,17 @@ export type Bot = {
   realtimeBaseUrls: RealtimeBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean
+  // --allow-all-users: every guild member can use the bot (canUseKimaki). Admin-only commands stay admin-only.
+  allowAllUsers: boolean
+  // Built-in skill ids (builtin-skills.ts) denied through the permissions of new sessions.
+  disabledSkills: readonly string[]
+  // `kimaki --disable-prompt`: static instruction parts left out of new sessions.
+  disabledPrompt: readonly PromptSection[]
+  // Default for channels without a channel_coordinator row (`kimaki --coordinator`, on unless false):
+  // project channel messages go to one long coordinator session in the channel.
+  coordinatorDefault: boolean
+  // Short warmup windows (tests), written into session markers; null uses the plugin defaults.
+  warmupTimers: WarmupTimers | null
   features: BotFeatures
 }
 
@@ -99,6 +116,11 @@ export async function sessionDirectory(bot: Pick<Bot, 'opencode'>, sessionId: st
   return info.location.directory
 }
 
+// A project channel in coordinator mode: its /toggle-coordinator choice, else the default.
+export function isCoordinatorChannel(bot: Bot, channelId: string): boolean {
+  return bot.store.getState().coordinator[channelId] ?? bot.coordinatorDefault
+}
+
 export function rootSession(bot: Bot, threadId: string): OpenCodeError | string {
   return bot.store.getState().roots[threadId] ?? new OpenCodeError({ operation: `find the session of thread ${threadId}` })
 }
@@ -110,13 +132,22 @@ export function threadOfSession(bot: Bot, sessionId: string): string | null {
   return threadId && roots[threadId] === sessionId ? threadId : null
 }
 
-export async function fetchThread(bot: Bot, threadId: string): Promise<DiscordError | ConfigError | ThreadChannel> {
+// Where a root session talks to the user: its thread, or a coordinator project
+// channel (the channel itself is the conversation, roots[channelId]).
+export type Conversation = ThreadChannel | TextChannel
+
+// The project channel of a conversation.
+export function projectChannelOf(conversation: Conversation): string | null {
+  return conversation.isThread() ? conversation.parentId : conversation.id
+}
+
+export async function fetchConversation(bot: Bot, id: string): Promise<DiscordError | ConfigError | Conversation> {
   const channel = await bot.discord.channels
-    .fetch(threadId)
-    .catch((cause) => new DiscordError({ operation: `fetch thread ${threadId}`, cause }))
+    .fetch(id)
+    .catch((cause) => new DiscordError({ operation: `fetch conversation ${id}`, cause }))
   if (channel instanceof Error) return channel
-  if (!channel?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
-  return channel
+  if (channel?.isThread() || channel?.type === ChannelType.GuildText) return channel
+  return new ConfigError({ reason: 'Target is not a thread or a text channel' })
 }
 
 export async function textChannel(bot: Bot, channelId: string): Promise<DiscordError | TextChannel> {

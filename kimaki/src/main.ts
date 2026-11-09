@@ -9,21 +9,23 @@ import * as errore from 'errore'
 import { createAgentUi } from './agent-ui.ts'
 import { stopAsrService } from './asr-service-manager.ts'
 import type { Analytics } from './analytics.ts'
-import { oc, type Bot } from './bot.ts'
+import { oc, type Bot, type WarmupTimers } from './bot.ts'
+import type { PromptSection } from './builtin-skills.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
-import { createEventLoop } from './event-loop.ts'
+import { createEventLoop, type RunEnded } from './event-loop.ts'
 import { createFailedVoiceRetry, notifyGaveUpFailedVoice, type FailedVoiceRetryOptions } from './failed-voice.ts'
-import { registerIngress, retryFailedVoice } from './ingress.ts'
+import { registerIngress, retryFailedVoice } from './ingress.ts' 
 import { runLockRoute } from './lock-routes.ts'
 import { installShim, type LockServer } from './lock-server.ts'
 import { createLogger } from './logger.ts'
+import { createCoordinatorNotes } from './coordinator.ts'
 import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './opencode-server.ts'
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
-import { createEventRecorder } from './session-events.ts'
-import { createPluginWait, refreshCliContext } from './sessions.ts'
+import { createEventRecorder, syncSessionTranscript } from './session-events.ts'
+import { channelDefaults, createPluginWait, refreshCliContext } from './sessions.ts'
 import { createInteractionRegistry, registerSlashCommands } from './slash-commands.ts'
 import { createSleepLock } from './sleeps.ts'
 import { createBotStore } from './store.ts'
@@ -54,8 +56,9 @@ export type StartBotOptions = {
   // OpenCode's SQLite file (opencodeDbFile()): voice transcription reads the ChatGPT credential from it.
   // Required, so tests never read the developer's real credentials.
   opencodeDbFile: string
-  // Shell command that runs this Kimaki install (given to agents), from kimakiShellCommand().
-  kimakiCommand: string
+  // Command that runs this Kimaki install, for the <dataDir>/bin/kimaki shim agents call.
+  // No --data-dir: the shim sets KIMAKI_DATA_DIR, and not every command takes the flag.
+  kimakiArgv: readonly string[]
   // Product analytics sink (createAnalytics or disabledAnalytics).
   analytics: Analytics
   // Voice transcription API base URLs; tests point Gemini at a local fake.
@@ -76,6 +79,15 @@ export type StartBotOptions = {
   // null disables the timer (tests call runDue themselves).
   failedVoice?: FailedVoiceRetryOptions
   autoWorktrees?: boolean
+  allowAllUsers?: boolean
+  // Built-in skill ids denied in new sessions (builtin-skills.ts).
+  disabledSkills?: readonly string[]
+  // Static instruction parts left out of new sessions (system-prompt.ts).
+  disabledPrompt?: readonly PromptSection[]
+  // `--coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts). Default: on.
+  coordinator?: boolean
+  // Default: the plugin's prompt cache warmup windows (plugin/coordinator.ts). Tests pass short ones.
+  warmupTimers?: WarmupTimers
 }
 
 export type BotHandle = Bot & {
@@ -152,10 +164,21 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
       const result = await oc({ opencode }, 'mark session viewed', (client) => client.session.view({ sessionID: sessionId, idle }))
       if (result instanceof Error) return result
     },
+    footerDefaults: (channelId) => channelDefaults({ db, opencode }, channelId),
   })
   cleanup.defer(() => effects.stop())
   const voiceCalls = createVoiceCalls({ opencodeConfigDir: options.opencodeConfigDir })
-  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded: voiceCalls.runEnded })
+  const onTranscriptDue = (sessionId: string) => {
+    void oc({ opencode }, 'sync transcript', (client) => syncSessionTranscript({ client, dataDir: options.dataDir, sessionId })).then((result) => {
+      if (result instanceof Error) logger.warn(`transcript of ${sessionId} not synced`, result)
+    })
+  }
+  const coordinatorNotes = createCoordinatorNotes()
+  const onRunEnded = (run: RunEnded) => {
+    voiceCalls.runEnded(run)
+    coordinatorNotes.runEnded(run)
+  }
+  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded, onTranscriptDue })
   const loaded = await eventLoop.load()
   if (loaded instanceof Error) return loaded
   // Before the service is used, so a service started by ensure() loads it at once.
@@ -169,7 +192,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     onDisconnect: eventLoop.onDisconnect,
   })
   cleanup.defer(() => opencode.stop())
-  const shim = await installShim({ dataDir: options.dataDir, command: options.kimakiCommand })
+  const shim = await installShim({ dataDir: options.dataDir, argv: options.kimakiArgv })
   if (shim instanceof Error) return shim
   // The features that non-interaction code reaches through bot.features.
   const agentUi = createAgentUi({ store, eventLoop, opencode })
@@ -194,6 +217,11 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     defaultAgent: options.defaultAgent ?? null,
     realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
+    allowAllUsers: options.allowAllUsers ?? false,
+    disabledSkills: options.disabledSkills ?? [],
+    disabledPrompt: options.disabledPrompt ?? [],
+    coordinatorDefault: options.coordinator ?? true,
+    warmupTimers: options.warmupTimers ?? null,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }
   const scheduler = createScheduler({
@@ -208,6 +236,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // Before login: gateway-proxy replays missed messages right after READY.
   registerIngress(bot, voiceRetry)
   voiceCalls.register(bot)
+  coordinatorNotes.register(bot)
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
   cleanup.defer(() => voiceCalls.stop(bot))
 

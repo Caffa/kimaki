@@ -79,7 +79,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/clear-queue: Remove queued messages",
       "/command: Run any OpenCode command in this project",
       "/compact: Compact the session context by summarizing the history",
-      "/context-usage: Show token usage and context window percentage",
+      "/context-usage: Show token usage, context window percentage and whether the session is working",
       "/cwd: Show or change this session working directory",
       "/diff: Show the git diff as a shareable URL",
       "/fork: Fork the session from a past user message",
@@ -98,11 +98,13 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/queue-command: Queue an OpenCode command to run after the current run finishes",
       "/redo: Redo the previously undone turn",
       "/report-skill: Use when the user wants to report an opencode issue or bug. Collect standard diagnostics, add user-s",
+      "/reset-coordinator: Reset the context of this channel: the next message starts a fresh coordinator session",
       "/resume: Resume an existing OpenCode session in a new thread",
       "/review-cmd: review changes [commit|branch|pr], defaults to uncommitted",
       "/routines: List routines, run one now, or delete it",
       "/session-id: Show the OpenCode session ID of this thread and how to open it in OpenCode",
       "/skill: Run any OpenCode skill in this project",
+      "/toggle-coordinator: Turn coordinator mode on or off: one long session in this channel that starts threads",
       "/transcription-key: Set the OpenAI or Gemini API key for voice transcription and speech",
       "/undo: Undo the last turn (file changes are kept)",
       "/verbosity: Set what the bot shows in this channel",
@@ -131,13 +133,13 @@ test('/skill and /command run catalog entries through project autocomplete', asy
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    » **tommy:** /opencode explain skill-marker
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **tommy:** /opencode explain skill-marker
     skill reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** /hello world
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# » **tommy:** /hello world
     command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -181,14 +183,14 @@ test('/<agent>-agent sets the channel agent, or starts a session with a prompt',
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     plan reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.thread(built.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **tommy:** Build it build-marker
+    -# » **tommy:** Build it build-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     build reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ build*"
   `)
 })
 
@@ -209,18 +211,18 @@ test('/<cmd>-cmd, /<skill>-skill and a `/server:prompt` message run in the threa
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*
-    » **tommy:** /hello world
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **tommy:** /hello world
     command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
-    » **tommy:** /opencode explain skill-marker
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# » **tommy:** /opencode explain skill-marker
     skill reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     /fake:greet World
     --- from: assistant (TestBot)
     mcp reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   const sessionId = bot.store.getState().roots[thread.id]!
@@ -274,17 +276,19 @@ test('/queue-command queues an OpenCode command after the current run', async ()
   })
   await waitForBotMessageContaining({ discord, threadId: thread.id, text: 'queued command reply' })
   await waitForFooter({ discord, threadId: thread.id, count: 2 })
-  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(await discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Long run slow-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
-    » **tommy:** /later please
-    -# Queued message sent
+    -# » **tommy:** /later please
+    [reply to TestBot: -# » **tommy:** /later please]
+    -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
-    » **tommy:** /later please
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to TestBot: -# » **tommy:** /later please]
+    -# Queued message sent
     queued command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

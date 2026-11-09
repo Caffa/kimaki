@@ -13,7 +13,7 @@ import * as orm from 'drizzle-orm'
 import { z } from 'zod'
 
 import { parseButton } from './agent-ui.ts'
-import { fetchThread, oc, parseModel, projectOf, type Bot } from './bot.ts'
+import { fetchConversation, isCoordinatorChannel, oc, parseModel, projectOf, type Bot } from './bot.ts'
 import { credential, loginCli } from './commands/login-commands.ts'
 import { setChannelAgent, setChannelModel, setGlobalModel, setVerbosity } from './commands/preference-commands.ts'
 import { channelWorktrees, manageWorktree, newWorktree, setAutoWorktrees } from './commands/worktree-commands.ts'
@@ -23,7 +23,8 @@ import { abort, cancelQueuedPrompt, clearQueue, send, shell, upload } from './pr
 import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
 import { channelForDirectory, channelForSession, fork, resume, sessionCwd } from './sessions.ts'
-import { createSleep } from './sleeps.ts'
+import { createSleep, sleepsWarm } from './sleeps.ts'
+import { conversationTyping, workersTyping } from './thread-reducer.ts'
 import { worktreeName } from './worktrees.ts'
 
 type LockRoute<S extends z.ZodType, R> = {
@@ -82,6 +83,10 @@ const sendFields = {
   // '' asks for an automatic name.
   worktree: z.string({ error: 'worktree must be a name or an empty string for an automatic name' }).optional(),
   notifyOnly: z.boolean({ error: 'notifyOnly must be boolean' }).optional(),
+  // Seconds the CLI waits for the run (`--wait [seconds]`): a run that ends within them sends no coordinator note.
+  wait: z.number({ error: 'wait must be a number of seconds' }).positive({ error: 'wait must be a positive number of seconds' }).optional(),
+  // OPENCODE_SESSION_ID of the shell that ran `kimaki send`: a coordinator wakes when the runs it prompted end.
+  senderSessionId: text('senderSessionId').optional(),
   permissions: z.array(z.string(), { error: 'Permission rules must be strings' }).optional(),
   prompt: text('prompt'),
   files: z.array(z.object({ uri: z.string(), name: z.string() }), { error: 'files must contain uri and name strings' }).optional(),
@@ -265,6 +270,19 @@ async function snapshotHeap({ dataDir }: { dataDir: string }) {
   return { path: written }
 }
 
+// The coordinator or a thread of its channel runs, from the thread views.
+function coordinatorBusy(bot: Bot, sessionId: string): boolean {
+  const { sessionThreads, roots, threads } = bot.store.getState()
+  // A coordinator's conversation is its channel. A replaced one (/reset-coordinator), one of a
+  // channel with coordinator mode off, or a thread session is never busy.
+  const channelId = sessionThreads[sessionId]
+  if (!channelId || roots[channelId] !== sessionId || !isCoordinatorChannel(bot, channelId)) return false
+  const view = threads[channelId]
+  // An idle coordinator has no view after a bot restart; its threads do.
+  if (!view) return workersTyping({ threads, channelId })
+  return view.coordinator && conversationTyping({ threads, threadId: channelId })
+}
+
 const loginField = z.string({ error: 'Login fields must be non-empty strings' }).min(1, { error: 'Login fields must be non-empty strings' }).optional()
 
 export const lockRoutes = {
@@ -295,6 +313,16 @@ export const lockRoutes = {
         opencode: { connected: bot.opencode.connected, url: endpoint?.url ?? null, version: endpoint?.version ?? null },
         guilds: [...bot.discord.guilds.cache.values()].map((guild) => ({ id: guild.id, name: guild.name })),
       }
+    },
+  }),
+  // The plugin keeps a session's prompt cache warm while its coordinator channel is busy
+  // or it sleeps (plugin/coordinator.ts).
+  'session.warmup': route({
+    input: z.object({ sessionId: text('sessionId') }),
+    run: async (bot, { sessionId }) => {
+      const sleeping = await sleepsWarm(bot, sessionId)
+      if (sleeping instanceof Error) return sleeping
+      return { busy: coordinatorBusy(bot, sessionId), sleeping }
     },
   }),
   restart: route({
@@ -369,6 +397,17 @@ export const lockRoutes = {
       const sessionId = sessionOf(bot, { ...input, threadId })
       if (sessionId instanceof Error) return sessionId
       return bot.features.agentUi.request({ ...input, sessionId, content: { buttons }, signal })
+    },
+  }),
+  // Labels of buttons each session showed and the user did not click yet (`kimaki session wait`).
+  'session.buttons': route({
+    input: z.object({ sessionIds: z.array(text('sessionId'), { error: 'sessionIds must be an array' }) }),
+    run: async (bot, { sessionIds }) => {
+      const prompts = Object.values(bot.store.getState().threads).flatMap((view) => view.agentUi)
+      return Object.fromEntries(sessionIds.map((sessionId) => [
+        sessionId,
+        prompts.flatMap((prompt) => prompt.sessionId === sessionId ? (prompt.buttons ?? []).map((item) => item.label) : []),
+      ]))
     },
   }),
   'upload-request': route({
@@ -493,9 +532,9 @@ export const lockRoutes = {
     run: async (bot, input) => {
       const target = localSession(bot, input)
       if (target instanceof Error) return target
-      const thread = await fetchThread(bot, target.threadId)
+      const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
-      return sessionCwd(bot, { thread, directory: input.directory })
+      return sessionCwd(bot, { conversation: thread, directory: input.directory })
     },
   }),
   'session.title': route({
@@ -506,8 +545,10 @@ export const lockRoutes = {
       const title = input.text
       const renamed = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: target.sessionId, title }))
       if (renamed instanceof Error) return renamed
-      const thread = await fetchThread(bot, target.threadId)
+      const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
+      // A coordinator channel keeps its project name.
+      if (!thread.isThread()) return { title }
       const updated = await thread.setName(title.slice(0, 100)).catch((cause) => new DiscordError({ operation: 'rename thread', cause }))
       if (updated instanceof Error) return updated
       return { title }
@@ -518,8 +559,9 @@ export const lockRoutes = {
     run: async (bot, input) => {
       const target = localSession(bot, input)
       if (target instanceof Error) return target
-      const thread = await fetchThread(bot, target.threadId)
+      const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
+      if (!thread.isThread()) return new ConfigError({ reason: 'A coordinator channel cannot be archived' })
       const archived = await thread.setArchived(true).catch((cause) => new DiscordError({ operation: 'archive thread', cause }))
       if (archived instanceof Error) return archived
       return { archived: true }
@@ -533,15 +575,27 @@ export const lockRoutes = {
       return abort(bot, { threadId: target.threadId })
     },
   }),
+  'session.compact': route({
+    input: sessionInput({}),
+    run: async (bot, input) => {
+      const target = localSession(bot, input)
+      if (target instanceof Error) return target
+      // Queued, so an agent compacting its own session finishes its turn first.
+      const sessionID = input.sessionId ?? target.sessionId
+      const compaction = await oc(bot, 'session.compact', (client) => client.session.compact({ sessionID, delivery: 'queue' }))
+      if (compaction instanceof Error) return compaction
+      return { sessionId: sessionID, queued: true }
+    },
+  }),
   'session.fork': route({
     input: sessionInput({ before: text('before').optional(), name: text('name').optional() }),
     run: async (bot, input) => {
       const target = localSession(bot, input)
       if (target instanceof Error) return target
-      const thread = await fetchThread(bot, target.threadId)
+      const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
       // A child session ID forks that child, not the root.
-      return fork(bot, { sourceThread: thread, sessionId: input.sessionId ?? target.sessionId, before: input.before, name: input.name, author: cliAuthor(bot) })
+      return fork(bot, { source: thread, sessionId: input.sessionId ?? target.sessionId, before: input.before, name: input.name, author: cliAuthor(bot) })
     },
   }),
   'session.command': route({

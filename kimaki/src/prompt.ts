@@ -15,13 +15,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { Events, MessageFlags, type Message, type ThreadChannel } from 'discord.js'
+import { Events, MessageFlags, type Message } from 'discord.js'
 import * as errore from 'errore'
 
 import {
-  fetchThread,
+  fetchConversation,
   oc,
   parseModel,
+  projectChannelOf,
   projectOf,
   rootSession,
   routeText,
@@ -29,6 +30,7 @@ import {
   threadOfSession,
   type Author,
   type Bot,
+  type Conversation,
   type ModelChoice,
   type PromptFile,
 } from './bot.ts'
@@ -37,19 +39,29 @@ import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableE
 import { formatError, NOTIFY_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { SendInput } from './lock-routes.ts'
-import { formatEcho } from './queue.ts'
+import { discordMessageId, formatEcho } from './queue.ts'
 import { noAnswerError, parseRemoteResult, remoteEnvelope, promptFilePath, REMOTE_TIMEOUT_MS, type RemoteResult } from './remote-send.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { allMessages } from './session-events.ts'
-import { ensureSessionMarker, forkBtw, startSession, switchAgent, threadProject } from './sessions.ts'
+import { ensureSessionMarker, forkBtw, startSession, switchAgent, conversationProject } from './sessions.ts'
 import { cancelSleep } from './sleeps.ts'
 import type { ScheduledRun } from './system-prompt.ts'
-import { localFilesBlock, type TurnContext } from './system-prompt.ts'
+import { attachmentsBlock, type PromptAttachment, type TurnContext } from './system-prompt.ts'
 import { isBusy, type UploadFile } from './thread-reducer.ts'
 import { resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('PROMPT')
 
+
+// Who sent a prompt that no person typed in Discord: `kimaki send`, routines,
+// remote sends, sleep wakes. Stored in the prompt metadata; at the run end
+// coordinator.ts reads it: only a run a coordinator prompted wakes that coordinator.
+export type Sender = {
+  // The session whose shell ran `kimaki send` (OPENCODE_SESSION_ID).
+  sessionId?: string
+  // `kimaki send --wait`: until this time (epoch ms) the sender waits for the result itself, so a run that ends before it sends no note.
+  waitUntil?: number
+}
 
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
 export function promptIdForMessage(messageId: string): string {
@@ -70,6 +82,7 @@ export async function prompt(
     skills = [],
     id = promptIdForMessage(messageId),
     echo,
+    sender,
   }: {
     sessionId: string
     threadId: string
@@ -86,12 +99,14 @@ export async function prompt(
     // Line the thread shows when OpenCode takes the prompt (queue.ts), for
     // inputs that have no Discord message: wakes, scheduled runs.
     echo?: string
+    // Unset: a person typed it in Discord.
+    sender?: Sender
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
-  const { attached, localPaths } = await splitPromptFiles(files)
+  const { attached, attachments } = await splitPromptFiles(files)
   // The text stays as the user wrote it. The plugin renders the <discord-user>
   // context from this metadata into the model request only (turnContext()).
-  const discord: TurnContext = { userId: author.id, username: author.username, messageId, threadId, threadName, localFiles: localPaths }
+  const discord: TurnContext = { userId: author.id, username: author.username, messageId, threadId, threadName, attachments }
   const result = await oc(bot, 'session.prompt', (client) =>
     client.session.prompt({
       sessionID: sessionId,
@@ -100,7 +115,7 @@ export async function prompt(
       files: attached,
       ...(skills.length > 0 && { skills: skills.map((skill) => ({ id: skill })) }),
       delivery,
-      metadata: { discord: { ...discord, ...(echo && { echo }) } },
+      metadata: { discord: { ...discord, ...(echo && { echo }) }, ...(sender && { sender }) },
     }),
   )
   if (result instanceof Error) return result
@@ -113,19 +128,19 @@ export async function prompt(
 const OPENCODE_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const INLINE_MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'])
 
+// `attachments` keeps every file in the user's order, so "the second image" resolves.
 async function splitPromptFiles(files: readonly PromptFile[]) {
   const attached: Array<{ uri: string; name: string }> = []
-  const localPaths: string[] = []
+  const attachments: PromptAttachment[] = []
   for (const file of files) {
     const local = promptFilePath(file)
     const stat = await fs.promises.stat(local).catch(() => null)
     const tooBig = stat !== null && stat.size > OPENCODE_MAX_ATTACHMENT_BYTES
-    const inline = INLINE_MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase())
     if (!tooBig) attached.push({ uri: file.uri, name: file.name })
-    // Text files also get the path: the extension cannot tell text from binary.
-    if (tooBig || !inline) localPaths.push(local)
+    // Text files count as not inline: the extension cannot tell text from binary.
+    attachments.push({ name: file.name, path: local, inline: !tooBig && INLINE_MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase()) })
   }
-  return { attached, localPaths }
+  return { attached, attachments }
 }
 
 // Questions and permissions of the thread (root and children) that wait for the user.
@@ -163,6 +178,7 @@ export async function steer(
     files?: readonly PromptFile[]
     skills?: readonly string[]
     echo?: string
+    sender?: Sender
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   const cancelled = await cancelPendingUi(bot, input.threadId)
@@ -283,6 +299,7 @@ async function command(
     author: Author
     messageId: string
     files: readonly PromptFile[]
+    echo?: string
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   const { route } = input
@@ -299,9 +316,9 @@ async function command(
     const interrupted = await interrupt(bot, input.sessionId)
     if (interrupted instanceof Error) return interrupted
   }
-  const { attached, localPaths } = await splitPromptFiles(input.files)
-  const block = localFilesBlock(localPaths)
-  bot.eventLoop.dispatch(input.threadId, { type: 'kimaki.command', text: typed, username: input.author.username })
+  const { attached, attachments } = await splitPromptFiles(input.files)
+  const block = attachmentsBlock(attachments)
+  bot.eventLoop.dispatch(input.threadId, { type: 'kimaki.command', text: typed, username: input.author.username, messageId: discordMessageId(input.messageId), echo: input.echo ?? null })
   const result = await oc(bot, 'session.command', (client) =>
     client.session.command({
       sessionID: input.sessionId,
@@ -330,6 +347,7 @@ export async function runInSession(
     messageId,
     files,
     echo,
+    sender,
     model,
   }: {
     sessionId: string
@@ -341,10 +359,11 @@ export async function runInSession(
     messageId: string
     files: readonly PromptFile[]
     echo?: string
+    sender?: Sender
     model?: ModelChoice | null
   },
 ) {
-  const base = { sessionId, threadId, threadName, author, messageId, files, echo }
+  const base = { sessionId, threadId, threadName, author, messageId, files, echo, sender }
   switch (route.kind) {
     case 'shell':
       return shell(bot, { threadId, sessionId, command: route.command })
@@ -371,32 +390,37 @@ export async function runInSession(
 export async function dispatch(
   bot: Bot,
   {
-    thread,
+    conversation,
     route,
     author,
     messageId,
     files = [],
     echo,
+    sender,
     model,
+    parentSessionId,
   }: {
-    thread: ThreadChannel
+    conversation: Conversation
     route: Route
     author: Author
     messageId: string
     files?: readonly PromptFile[]
     echo?: string
+    sender?: Sender
     model?: ModelChoice | null
+    // `kimaki send --parent-session`: only a btw fork records it, the session itself exists.
+    parentSessionId?: string
   },
 ) {
-  const sessionId = rootSession(bot, thread.id)
+  const sessionId = rootSession(bot, conversation.id)
   if (sessionId instanceof Error) return sessionId
   // New input supersedes a pending `kimaki sleep` of this session.
   await cancelSleep(bot, sessionId)
-  const project = await threadProject(bot, thread)
+  const project = await conversationProject(bot, conversation)
   if (project instanceof Error) return project
   const marked = await ensureSessionMarker(bot, {
     sessionId,
-    thread,
+    conversation,
     channelId: project.channelId,
     directory: project.directory,
     userId: author.id,
@@ -404,9 +428,9 @@ export async function dispatch(
   if (marked instanceof Error) return marked
   switch (route.kind) {
     case 'btw':
-      return forkBtw(bot, { sourceThread: thread, text: route.text, author, messageId, files, agent: route.agent })
+      return forkBtw(bot, { source: conversation, text: route.text, author, messageId, files, agent: route.agent, parentSessionId, sender })
     case 'new-session':
-      // A fresh thread in the same channel, with no history.
+      // A fresh conversation in the same channel, with no history.
       return startSession(bot, {
         channelId: project.channelId,
         directory: project.directory,
@@ -415,20 +439,26 @@ export async function dispatch(
         messageId,
         startMessageId: null,
         files,
+        sender,
       })
-    default:
+    default: {
+      // The coordinator keeps its agent and model: a worker's `kimaki send --agent <current_agent>` names the worker's agent.
+      const coordinator = !conversation.isThread()
+      if (coordinator && route.kind === 'steer' && route.agent) logger.log(`ignoring agent ${route.agent} of a prompt to coordinator ${conversation.id}`)
       return runInSession(bot, {
         sessionId,
-        threadId: thread.id,
-        threadName: thread.name,
+        threadId: conversation.id,
+        threadName: conversation.name,
         directory: project.directory,
-        route,
+        route: coordinator && route.kind === 'steer' ? { kind: 'steer', text: route.text } : route,
         author,
         messageId,
         files,
         echo,
-        model,
+        sender,
+        model: coordinator ? null : model,
       })
+    }
   }
 }
 
@@ -528,7 +558,13 @@ async function remoteSend(bot: Bot, input: SendInput) {
 
 // `localOnly`: never forward to another machine (remote envelopes, scheduled runs).
 // `task`: a scheduled run; its input shows as "» routine #N: prompt".
-export async function send(bot: Bot, input: SendInput, { localOnly = false, task }: { localOnly?: boolean; task?: ScheduledRun } = {}) {
+// `shownIn`: a Discord message that already shows the prompt (remote envelope, clicked buttons).
+// Without it the thread shows the prompt as an echo.
+export async function send(
+  bot: Bot,
+  input: SendInput,
+  { localOnly = false, task, shownIn }: { localOnly?: boolean; task?: ScheduledRun; shownIn?: string } = {},
+) {
   if (input.worktree !== undefined && (input.cwd || input.threadId || input.sessionId || input.notifyOnly)) {
     return new ConfigError({ reason: '--worktree requires a new session without --cwd or --notify-only.' })
   }
@@ -538,11 +574,16 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
   }
   const userIds = (input.user ?? []).map((user) => user.replace(/[<@!>]/g, ''))
   const author = { id: userIds[0] ?? bot.discord.user!.id, username: task ? `routine #${task.id}` : 'CLI' }
-  // Every --user joins the thread; startSession adds the author of a new session itself.
-  const addMembers = async (thread: ThreadChannel, ids: readonly string[]) => {
-    for (const id of ids) await thread.members.add(id).catch((error: Error) => logger.warn(`add thread member ${id}`, error))
+  // Every --user joins the thread; startSession adds them to a new session itself.
+  // Not awaited: the prompt does not wait for Discord round trips.
+  const addMembers = (thread: Conversation, ids: readonly string[]) => {
+    // A coordinator channel has no thread members to add.
+    if (!thread.isThread()) return
+    for (const id of ids) void thread.members.add(id).catch((error: Error) => logger.warn(`add thread member ${id}`, error))
   }
-  const messageId = crypto.randomUUID()
+  const messageId = shownIn ?? crypto.randomUUID()
+  // Also set without a session (routines, a terminal): it marks the prompt as not typed by a person.
+  const sender: Sender = { ...(input.senderSessionId && { sessionId: input.senderSessionId }), ...(input.wait !== undefined && { waitUntil: Date.now() + input.wait * 1000 }) }
   const route = parseTextMessage({ content: input.prompt })
   if (!route) return new ConfigError({ reason: 'Prompt is empty' })
   if (input.agent && (route.kind === 'steer' || route.kind === 'btw')) route.agent = input.agent
@@ -550,7 +591,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
   if (input.sessionId || input.threadId) {
     const threadId = input.threadId ?? threadOfSession(bot, input.sessionId!)
     if (!threadId) return new ConfigError({ reason: 'No local thread for this session. Use --thread on its owning machine.' })
-    const thread = await fetchThread(bot, threadId)
+    const thread = await fetchConversation(bot, threadId)
     if (thread instanceof Error) return thread
     if (input.notifyOnly) {
       if (route.kind === 'queue' || route.kind === 'btw') {
@@ -570,19 +611,24 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     }
     const sessionId = bot.store.getState().roots[thread.id]
     if (!sessionId) {
-      const project = thread.parentId ? await projectOf(bot, thread.parentId) : null
+      const channelId = projectChannelOf(thread)
+      const project = channelId ? await projectOf(bot, channelId) : null
       if (project instanceof Error) return project
       return !project && !localOnly ? remoteSend(bot, input) : new ConfigError({ reason: 'No local session for this thread' })
     }
-    await addMembers(thread, userIds)
-    if (input.model) {
-      const model = parseModel(input.model, null)
-      if (!model) return new ConfigError({ reason: 'Use --model provider/model' })
-      const switched = await switchModel(bot, { sessionId, model: { ...model, variant: null } })
+    addMembers(thread, userIds)
+    const explicit = input.model ? parseModel(input.model, null) : null
+    if (input.model && !explicit) return new ConfigError({ reason: 'Use --model provider/model' })
+    // The coordinator keeps its model; /model in its channel changes it.
+    const model = explicit && thread.isThread() ? { ...explicit, variant: null } : null
+    if (explicit && !model) logger.log(`ignoring --model ${input.model} of a prompt to coordinator ${thread.id}`)
+    if (model) {
+      const switched = await switchModel(bot, { sessionId, model })
       if (switched instanceof Error) return switched
     }
-    const echo = task ? formatEcho({ username: author.username, text: routeText(route) }) : undefined
-    const result = await dispatch(bot, { thread, route, author, messageId, files: input.files, echo })
+    const echo = shownIn ? undefined : formatEcho({ username: author.username, text: routeText(route) })
+    // --model reaches the agent switch too, so an agent with its own model cannot replace it.
+    const result = await dispatch(bot, { conversation: thread, route, author, messageId, files: input.files, echo, sender, parentSessionId: input.parentSessionId, model })
     if (result instanceof Error) return result
     return result ?? { threadId, sessionId: bot.store.getState().roots[threadId]! }
   }
@@ -609,7 +655,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
       })
       .catch((cause) => new DiscordError({ operation: 'post notification', cause }))
     if (shown instanceof Error) return shown
-    await addMembers(thread, userIds)
+    addMembers(thread, userIds)
     return { threadId: thread.id, sessionId: null }
   }
 
@@ -634,27 +680,24 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     : task && input.worktree
       ? `${input.worktree.slice(0, 40)}-${crypto.randomBytes(4).toString('hex')}`
       : input.worktree
-  const started = await startSession(bot, {
+  return startSession(bot, {
     channelId: project.channel_id,
     directory,
     route: first,
     author,
+    members: userIds.slice(1),
     messageId,
     startMessageId: null,
     threadName: input.name,
     files: input.files,
     permissions,
     parentSessionId: input.parentSessionId,
+    sender,
     task,
     worktree,
     baseBranch: input.baseBranch,
     ...(model && { model: { ...model, variant: null } }),
   })
-  if (started instanceof Error || userIds.length < 2) return started
-  const thread = await fetchThread(bot, started.threadId)
-  if (thread instanceof Error) logger.warn(`add thread members`, thread)
-  else await addMembers(thread, userIds.slice(1))
-  return started
 }
 
 // `kimaki upload-to-discord`: posts local files into the session's thread (or the voice channel chat),
@@ -674,7 +717,8 @@ export async function upload(bot: Bot, { id, files }: { id: string; files: Array
     if (!stat?.isFile()) return new ConfigError({ reason: `File not found: ${file.path}` })
     sized.push({ ...file, size: stat.size })
   }
-  const error = await new Promise<Error | null>((settle) => bot.effects.run(threadId, [{ type: 'attachments', files: sized, settle }]))
-  if (error) return error
-  return { uploaded: files.map((file) => file.name) }
+  const urls = await new Promise<Error | string[]>((settle) => bot.effects.run(threadId, [{ type: 'attachments', files: sized, settle }]))
+  if (urls instanceof Error) return urls
+  // Discord keeps attachments in upload order. The URLs let a coordinator repost the files.
+  return { uploaded: files.map((file, index) => ({ name: file.name, url: urls[index] ?? null })) }
 }

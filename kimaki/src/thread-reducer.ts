@@ -12,7 +12,7 @@
 //
 //   root   text, tool lines, banner, footer, retries, errors
 //   child  foreground: tool lines labelled "┣ general ⋅ glob ..."
-//          background: no tool lines, one "⬦ general finished: ..." line
+//          background: no tool lines, one "general finished: ..." line
 //          never text, banner or footer
 //
 // busy = root execution running OR any child running (29.2 #3). Typing
@@ -36,9 +36,12 @@ import {
   executeCalls,
   formatExecuteFailures,
   buttonRow,
+  formatAgentSwitched,
   formatBanner,
   formatCacheMiss,
+  formatCompacted,
   formatError,
+  formatModelSwitched,
   formatRetry,
   formatShellEnded,
   formatShellFinished,
@@ -52,6 +55,7 @@ import {
   type ToolInput,
   type UiMessage,
 } from './format-parts.ts'
+import { IDLE_REPLY } from './plugin/coordinator.ts'
 import { closePermission, hydratePermissions, showPermission, STATUS, type PendingPermission } from './permissions.ts'
 import { closeForm, formatAnswer, hydrateForms, showForm, withAnswer, type PendingForm } from './questions.ts'
 import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, queuedItems, type PendingInput } from './queue.ts'
@@ -64,6 +68,10 @@ export type Turn = {
   tokens: number
   // `kimaki sleep` ran in this turn: the session wakes later, so the footer is silent.
   slept: boolean
+  // Discord message the next answer text replies to (a coordinator prompt, queue.ts). Taken by the first text.
+  replyTo: string | null
+  // The current answer posted model text. A coordinator answer without it gets no footer.
+  texted: boolean
 }
 
 export type Child = {
@@ -95,6 +103,8 @@ export type ThreadView = {
   sessionId: string
   // Project channel of the thread: its verbosity applies.
   channelId: string
+  // The view is a coordinator channel itself, not a thread.
+  coordinator: boolean
   // Current working directory of the root session (session.moved changes it).
   directory: string
   // True only for sessions this bot created: the first step shows a banner.
@@ -107,16 +117,19 @@ export type ThreadView = {
   children: Readonly<Record<string, Child>>
   // Background shells started by tool calls: shell ID -> label, until their job ends.
   shells: Readonly<Record<string, string>>
-  // Blank line between text and tool blocks.
+  // Blank line between text and tool blocks. null: the current answer posted nothing yet (no footer).
   lastKind: 'text' | 'tool' | null
   lastRetryAt: number | null
   // Prompt tokens the provider holds in cache after the last root step, and when that step ended.
   cached: { tokens: number; at: number } | null
+  // The root context was compacted: the next root step (or the execution end) posts the new size.
+  compacted: boolean
   // Root inbox: user items not delivered yet, in order (queuedItems() for the queue).
   inbox: readonly PendingInput[]
   // Kimaki runs an OpenCode command (kimaki.command): the next root user item
   // without Discord metadata is its expanded prompt, shown as the typed command.
-  commandPending: { text: string; username: string } | null
+  // `echo` is set when no Discord message shows the command (CLI, routines).
+  commandPending: { text: string; username: string; messageId: string | null; echo: string | null } | null
   // Questions and permission requests waiting for the user (root and children).
   forms: Readonly<Record<string, PendingForm>>
   permissions: Readonly<Record<string, PendingPermission>>
@@ -127,19 +140,22 @@ export type UploadFile = { path: string; name: string; size: number }
 export type Effect =
   // Bot-formatted Discord content (tool lines, banner, errors).
   // Effects are silent unless `notify` is set (format-parts.ts message flags).
-  | { type: 'send'; text: string; notify?: boolean }
+  // `echo`: user text (a prompt echo), posted with mentions disabled.
+  | { type: 'send'; text: string; notify?: boolean; echo?: boolean }
   // Model markdown, rendered and split by the executor.
-  | { type: 'markdown'; text: string; blankLineBefore: boolean }
+  // `replyTo`: the first message replies to this Discord message.
+  | { type: 'markdown'; text: string; blankLineBefore: boolean; replyTo: string | null }
   | { type: 'typing'; on: boolean }
   // Files from `kimaki upload-to-discord` (never from the reducer). `settle`
-  // answers the waiting CLI call: null once posted, or why not.
-  | { type: 'attachments'; files: readonly UploadFile[]; settle: (error: Error | null) => void }
-  // The executor adds folder and git branch of `directory` when it posts.
-  | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
-  // Posts the messages in order; the first replies to `replyTo` when set.
-  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null; notify: boolean }
-  // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
-  | { type: 'edit'; key: string; messages: readonly UiMessage[] }
+  // answers the waiting CLI call: the Discord URL of each file once posted, or why not.
+  | { type: 'attachments'; files: readonly UploadFile[]; settle: (result: Error | string[]) => void }
+  // The executor adds the git branch of `directory` and the defaults of `channelId` when it posts.
+  | { type: 'footer'; channelId: string; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
+  // Posts the messages in order; the first replies to `replyTo` when set. `echo`: holds user text, no mentions.
+  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null; notify: boolean; echo?: boolean }
+  // Edits the messages `show` posted under `key` (by index; the last one covers the rest),
+  // then posts `reply` as a reply to `replyTo`, or to the first of them when null.
+  | { type: 'edit'; key: string; messages: readonly UiMessage[]; reply?: string; replyTo?: string | null }
   // Marks the root execution that went idle at `idle` as read in OpenCode, once
   // the lines before it are posted. Bots cannot see Discord read state.
   | { type: 'viewed'; sessionId: string; idle: number }
@@ -165,7 +181,7 @@ export type KimakiEvent =
   // Kimaki is about to run an OpenCode command (prompt.ts). Prompts without
   // Discord metadata are echoed as sent from elsewhere; this one must not be.
   // TODO: pass metadata.discord to session.command once its payload accepts metadata, then drop this event.
-  | { type: 'kimaki.command'; text: string; username: string }
+  | { type: 'kimaki.command'; text: string; username: string; messageId: string | null; echo: string | null }
   // session.command failed, so no prompt follows.
   | { type: 'kimaki.command-failed' }
   // A session found by walking parentID after a bot restart.
@@ -184,12 +200,13 @@ export function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
 
 export type Prefs = {
   verbosity: Verbosity
-  // "providerID/modelID" -> context window size in tokens.
-  contextLimits: Readonly<Record<string, number>>
+  // "providerID/modelID" -> display name and context window size in tokens.
+  models: Readonly<Record<string, { name: string; context: number }>>
 }
 
 const RETRY_NOTICE_INTERVAL_MS = 10_000
 const CACHE_MISS_SLACK = 1_024
+const CACHE_MISS_MIN_WRITE_SHARE = 0.5
 const REPLAY_LIMIT = 30
 
 export function emptyView({
@@ -197,15 +214,18 @@ export function emptyView({
   channelId,
   directory,
   isNew,
+  coordinator,
 }: {
   sessionId: string
   channelId: string
   directory: string
   isNew: boolean
+  coordinator: boolean
 }): ThreadView {
   return {
     sessionId,
     channelId,
+    coordinator,
     directory,
     bannerPending: isNew,
     turn: null,
@@ -216,6 +236,7 @@ export function emptyView({
     lastKind: null,
     lastRetryAt: null,
     cached: null,
+    compacted: false,
     inbox: [],
     commandPending: null,
     forms: {},
@@ -223,13 +244,37 @@ export function emptyView({
   }
 }
 
+function newTurn(startedAt: number): Turn {
+  return { startedAt, model: null, agent: null, tokens: 0, slept: false, replyTo: null, texted: false }
+}
+
 export function isBusy(view: ThreadView): boolean {
   return view.turn !== null || Object.values(view.children).some((child) => child.running)
 }
 
+function waitsForUser(view: ThreadView): boolean {
+  return Object.keys(view.forms).length > 0 || Object.keys(view.permissions).length > 0
+}
+
 // Typing stops while the agent waits for the user (spec 6.6).
 function isTyping(view: ThreadView): boolean {
-  return isBusy(view) && Object.keys(view.forms).length === 0 && Object.keys(view.permissions).length === 0
+  return isBusy(view) && !waitsForUser(view)
+}
+
+// Typing of one conversation across all views: a coordinator (a view whose channel
+// is its own conversation) also types while a thread of its channel does, so
+// background workers show there. Other conversations: isTyping of their view.
+export function conversationTyping({ threads, threadId }: { threads: Readonly<Record<string, ThreadView>>; threadId: string }): boolean {
+  const view = threads[threadId]
+  if (!view || waitsForUser(view)) return false
+  if (isBusy(view)) return true
+  if (!view.coordinator) return false
+  return workersTyping({ threads, channelId: threadId })
+}
+
+// A thread of the channel runs and does not wait for the user.
+export function workersTyping({ threads, channelId }: { threads: Readonly<Record<string, ThreadView>>; channelId: string }): boolean {
+  return Object.entries(threads).some(([id, thread]) => id !== channelId && thread.channelId === channelId && isTyping(thread))
 }
 
 export function eventSessionId(event: V2Event): string | null {
@@ -272,24 +317,41 @@ function toolLine({ draft, emit }: Context, text: string) {
   draft.lastKind = 'tool'
 }
 
-function contextPercent({ turn, prefs }: { turn: Draft<Turn>; prefs: Prefs }): number | null {
-  if (!turn.model || turn.tokens <= 0) return null
-  const limit = prefs.contextLimits[`${turn.model.providerID}/${turn.model.id}`]
+function showCompacted(context: Context, size: { tokens: number | null; percent: number | null }) {
+  context.draft.compacted = false
+  toolLine(context, formatCompacted(size))
+}
+
+// A compaction in an execution with no model step (`/compact`, the idle coordinator compaction) stays silent:
+// the user did not ask for anything, so the line is only noise. Auto compaction in a turn shows.
+function endCompaction(context: Context) {
+  if (context.draft.compacted && context.draft.turn?.model) showCompacted(context, { tokens: null, percent: null })
+  context.draft.compacted = false
+}
+
+function contextPercent({ tokens, model, prefs }: { tokens: number; model: ModelRef | null; prefs: Prefs }): number | null {
+  if (!model || tokens <= 0) return null
+  const limit = prefs.models[`${model.providerID}/${model.id}`]?.context
   if (!limit || limit <= 0) return null
-  return Math.round((turn.tokens / limit) * 100)
+  return Math.round((tokens / limit) * 100)
 }
 
 // The footer closing the answer of `turn` at `at`.
 function emitFooter({ draft, prefs, emit, turn, at, notify }: Context & { turn: Draft<Turn>; at: number; notify: boolean }) {
   // No model step ran (a compaction-only execution): nothing to summarize.
   if (!turn.model) return
+  // The answer posted no text or tool line (e.g. an IDLE_REPLY, only hidden tools).
+  if (draft.lastKind === null) return
+  // A coordinator answer with only tool lines (it started a worker, then answered IDLE): its thread shows the work.
+  if (draft.coordinator && !turn.texted) return
   // A child still runs: the answer comes later.
   if (Object.values(draft.children).some((child) => child.running)) return
   emit({
     type: 'footer',
+    channelId: draft.channelId,
     directory: draft.directory,
     durationMs: at - turn.startedAt,
-    contextPercent: contextPercent({ turn, prefs }),
+    contextPercent: contextPercent({ tokens: turn.tokens, model: turn.model, prefs }),
     model: { providerID: turn.model.providerID, id: turn.model.id },
     agent: turn.agent,
     notify,
@@ -320,7 +382,8 @@ function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event
   // Questions and permissions of subagents show in this thread too.
   const label = child?.agent ?? null
   if (event.type === 'session.inbox.enqueued' && event.data.item.type === 'synthetic' && !child?.background) {
-    return showShellFinished({ draft, prefs, emit, metadata: event.data.item.payload.metadata ?? {}, label })
+    const metadata = event.data.item.payload.metadata ?? {}
+    return showShellFinished({ draft, prefs, emit, metadata, label })
   }
   switch (event.type) {
     case 'form.created':
@@ -346,14 +409,28 @@ function applyRoot(context: Context & { event: V2Event }) {
       emit({ type: 'send', text: asSubtext(`Working directory changed to ${event.data.location.directory}`) })
       return
     case 'session.execution.started':
-      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
+      draft.turn ??= newTurn(event.created)
       return
+    // A new session's banner already shows its first model and agent.
+    case 'session.model.selected': {
+      const { model, previous } = event.data
+      const same = previous && previous.providerID === model.providerID && previous.id === model.id && previous.variant === model.variant
+      if (draft.bannerPending || same) return
+      emit({ type: 'send', text: formatModelSwitched({ name: prefs.models[`${model.providerID}/${model.id}`]?.name ?? `${model.providerID}/${model.id}`, variant: model.variant }) })
+      return
+    }
+    case 'session.agent.selected': {
+      const { agent, previous } = event.data
+      if (draft.bannerPending || agent === previous) return
+      emit({ type: 'send', text: formatAgentSwitched({ agent, previous }) })
+      return
+    }
     case 'session.step.started': {
       const model = { providerID: event.data.model.providerID, id: event.data.model.id }
-      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
+      draft.turn ??= newTurn(event.created)
       draft.turn.model = model
       draft.turn.agent = event.data.agent
-      if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model: event.data.model, agent: event.data.agent }) })
+      if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model: event.data.model, agent: event.data.agent, coordinator: draft.coordinator }) })
       draft.bannerPending = false
       return
     }
@@ -361,10 +438,17 @@ function applyRoot(context: Context & { event: V2Event }) {
       if (!draft.turn) return
       const { tokens } = event.data
       draft.turn.tokens = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+      if (draft.compacted) {
+        const prompt = tokens.input + tokens.cache.read + tokens.cache.write
+        showCompacted(context, { tokens: prompt, percent: contextPercent({ tokens: prompt, model: draft.turn.model, prefs }) })
+      }
       // The prompt only grows, so the cached prefix should too. A drop means the provider
       // re-read it: changed prefix, other model, or cache expired (TTL). The slack absorbs cache block rounding.
+      // Only a step that rewrote most of the prompt is a full loss; a smaller rewrite is a partial miss, not worth a line.
       const previous = draft.cached
-      if (previous && tokens.cache.read + CACHE_MISS_SLACK < previous.tokens) {
+      const promptTokens = tokens.input + tokens.cache.read + tokens.cache.write
+      const rewroteMost = tokens.cache.write >= promptTokens * CACHE_MISS_MIN_WRITE_SHARE
+      if (previous && rewroteMost && tokens.cache.read + CACHE_MISS_SLACK < previous.tokens) {
         toolLine(context, formatCacheMiss({ read: tokens.cache.read, expected: previous.tokens, idleMs: event.created - previous.at }))
       }
       draft.cached = { tokens: tokens.cache.read + tokens.cache.write, at: event.created }
@@ -372,8 +456,15 @@ function applyRoot(context: Context & { event: V2Event }) {
     }
     case 'session.text.ended': {
       const text = event.data.text.trim()
-      if (!text) return
-      emit({ type: 'markdown', text, blankLineBefore: draft.lastKind === 'tool' })
+      // A coordinator turn with nothing for the user (a note, a started worker) answers IDLE_REPLY: Discord shows nothing.
+      if (!text || text === IDLE_REPLY) return
+      const replyTo = draft.turn?.replyTo ?? null
+      // The reply header already sets the text apart from the tool lines above.
+      emit({ type: 'markdown', text, blankLineBefore: draft.lastKind === 'tool' && !replyTo, replyTo })
+      if (draft.turn) {
+        draft.turn.replyTo = null
+        draft.turn.texted = true
+      }
       draft.lastKind = 'text'
       return
     }
@@ -419,24 +510,28 @@ function applyRoot(context: Context & { event: V2Event }) {
     case 'session.compaction.ended':
       // A compacted history has a new prefix: its first miss is expected.
       draft.cached = null
-      return toolLine(context, asSubtext('⬦ context compacted'))
+      // Its size is only known when the next step reads it.
+      draft.compacted = true
+      return
     case 'session.compaction.failed':
       return toolLine(context, formatError(`compaction failed: ${event.data.error.message}`))
     case 'session.execution.succeeded': {
-      const turn = draft.turn
+      endCompaction(context)
+      if (draft.turn) emitFooter({ ...context, turn: draft.turn, at: event.created, notify: !draft.turn.slept })
       draft.turn = null
       draft.lastKind = null
-      if (turn) emitFooter({ ...context, turn, at: event.created, notify: !turn.slept })
       emit({ type: 'viewed', sessionId: draft.sessionId, idle: event.created })
       return
     }
     case 'session.execution.failed':
+      endCompaction(context)
       draft.turn = null
       draft.lastKind = null
       emit({ type: 'send', text: formatError(event.data.error.message), notify: true })
       emit({ type: 'viewed', sessionId: draft.sessionId, idle: event.created })
       return
     case 'session.execution.interrupted':
+      endCompaction(context)
       draft.turn = null
       draft.lastKind = null
       // A shutdown does not make the session idle in OpenCode.
@@ -447,11 +542,16 @@ function applyRoot(context: Context & { event: V2Event }) {
     case 'session.inbox.delivered': {
       // OpenCode runs queued items in the same execution: close the answer
       // before each one with a silent footer, like V1 did per turn.
-      const queued = queuedItems(draft).some((item) => item.inboxID === event.data.inboxID)
+      const item = draft.inbox.find((candidate) => candidate.inboxID === event.data.inboxID)
+      const queued = item?.delivery === 'queue'
+      // Each user prompt the run takes gets its own reply; synthetic items keep the current one.
+      // An acked item's "Queued message sent" reply already marks where its answer starts.
+      if (item && draft.turn) draft.turn.replyTo = item.acked ? null : item.replyTo
       if (queued && draft.turn?.model) {
         emitFooter({ ...context, turn: draft.turn, at: event.created, notify: false })
         draft.turn.startedAt = event.created
         draft.turn.slept = false
+        draft.turn.texted = false
         draft.lastKind = null
       }
       return deliverQueued({ draft, emit, inboxID: event.data.inboxID })
@@ -575,6 +675,7 @@ function showShellFinished({
   ...context
 }: Context & { metadata: Readonly<Record<string, unknown>>; label: string | null }) {
   const { shellID, jobID, state, exit } = metadata
+  // A <session-finished> note (coordinator.ts) shows nothing: the coordinator reports the outcome.
   if (metadata['source'] !== 'shell' || typeof shellID !== 'string' || typeof jobID !== 'string') return
   const description = context.draft.shells[shellID] ?? null
   delete context.draft.shells[shellID]
@@ -599,7 +700,7 @@ function showAgentPrompt({ draft, emit, prompt }: Pick<Context, 'draft' | 'emit'
 function dismissAgentPrompts({ draft, emit, ids, result = 'dismissed' }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[]; result?: string }) {
   if (ids.length === 0) return
   draft.agentUi = draft.agentUi.filter((prompt) => !ids.includes(prompt.id))
-  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly(asSubtext(`⬦ ${result}`))] })
+  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly(asSubtext(result))] })
 }
 
 function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEvent }) {
@@ -612,7 +713,7 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       if (draft.turn) draft.turn.slept = true
       return
     case 'kimaki.command':
-      draft.commandPending = { text: event.text, username: event.username }
+      draft.commandPending = { text: event.text, username: event.username, messageId: event.messageId, echo: event.echo }
       return
     case 'kimaki.command-failed':
       draft.commandPending = null
@@ -631,7 +732,7 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       const active = new Set(event.activeSessionIds)
       for (const [id, child] of Object.entries(draft.children)) child.running = active.has(id)
       if (!active.has(draft.sessionId)) draft.turn = null
-      else draft.turn ??= { startedAt: event.at, model: null, agent: null, tokens: 0, slept: false }
+      else draft.turn ??= newTurn(event.at)
       // Nothing runs: tool calls whose end was missed while disconnected are over.
       if (!isBusy(draft)) draft.tools = {}
       for (const session of event.sessions) {
@@ -678,7 +779,7 @@ export function replayEffects({
   const skipped = blocks.length - kept.length
   const effects = kept.map((block, index): Effect => {
     const previous = kept[index - 1]?.kind ?? null
-    if (block.kind === 'text') return { type: 'markdown', text: block.text, blankLineBefore: previous === 'tool' }
+    if (block.kind === 'text') return { type: 'markdown', text: block.text, blankLineBefore: previous === 'tool', replyTo: null }
     return { type: 'send', text: previous === 'text' ? `\n${block.text}` : block.text }
   })
   return [

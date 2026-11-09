@@ -1,6 +1,8 @@
 // Discord-facing commands: agent UI (buttons, upload requests) through the
 // running bot, plus thread/user lookups and uploads with the saved bot token.
 
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { ChannelType } from 'discord-api-types/v10'
 import { wrapJsonSchema, type Goke } from 'goke'
@@ -15,22 +17,23 @@ function agentShell() {
   return { fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'] }
 }
 
-// The model reads this after `kimaki buttons`: a reminder to explain the buttons if it did not.
+// The model reads this after `kimaki buttons`. Text planned before a tool call
+// is sometimes never written (#256), so it asks for a missing answer or explanation.
 const BUTTONS_SHOWN = dedent`
 
   Buttons shown in Discord.
 
-  NB: never show only buttons with short labels.
-  The user cannot see tool calls, command outputs, or subagent and task results. They only see your text.
-  Check the text you wrote before this call. It must explain:
+  The user cannot see tool calls, command outputs, your reasoning, or subagent and task results. They only see your text.
+  If this turn has no text yet that answers the user and explains the buttons, write it now:
+  - your answer to what the user asked, if anything
   - what was done in this session, concisely, including any findings from tool or task outputs that the choice depends on
   - what each button does and its tradeoffs
-  If anything is missing, write it now. Be concise: a few short lines, no walls of text. Do not only repeat the button labels. Then stop and wait for the click.
+  Be concise: a few short lines in plain sentences, no walls of text. Do not only repeat the button labels. Then stop and wait for the click.
 
 `
 // buttons, upload-request
 export function registerAgentUiCommands(cli: Goke) {
-  cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
+  cli.command('buttons', 'Show 1-3 action buttons. Explain them in your text')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[:white|blue|green|red]" }))
@@ -99,7 +102,7 @@ export function registerDiscordCommands(cli: Goke) {
       printRows({ json: options.json, rows: users, line: (user) => `${user.id} ${user.username}${user.name ? ` (${user.name})` : ''}` })
     })
 
-  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread or the Kimaki voice channel chat')
+  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread or the Kimaki voice channel chat. Pass many files in one call: Discord shows them numbered in argument order')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .option('-c, --channel <id>', 'Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)')
@@ -113,4 +116,25 @@ export function registerDiscordCommands(cli: Goke) {
       // Waits for Discord: big files and a busy thread take longer than the 30s default.
       await action({ route: 'upload', dataDir: options.dataDir, input, signal: AbortSignal.timeout(5 * 60_000) })
     })
+
+  cli.command('diagram <input>', 'Render a Mermaid diagram (file path, or - for stdin) to a light themed PNG. Upload it with upload-to-discord')
+    .option('-o, --output <path>', 'PNG file to write (default: input path with .png, or a temp file for stdin)')
+    .option('--dark', 'Dark theme instead of light')
+    .action(async (input, options) => {
+      const source = input === '-' ? await readStdin() : await fs.promises.readFile(input, 'utf8').catch((error: Error) => error)
+      if (source instanceof Error) fail(source)
+      const { renderDiagram } = await import('../diagram.ts')
+      const png = renderDiagram(source, { theme: options.dark ? 'dark' : 'light' })
+      if (png instanceof Error) fail(png)
+      const output = path.resolve(options.output ?? (input === '-' ? path.join(os.tmpdir(), `kimaki-diagram-${Date.now()}.png`) : input.replace(/(\.\w+)?$/, '.png')))
+      const written = await fs.promises.writeFile(output, png).catch((error: Error) => error)
+      if (written instanceof Error) fail(written)
+      process.stdout.write(`${output}\n`)
+    })
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
 }

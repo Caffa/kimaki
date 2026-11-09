@@ -1,6 +1,7 @@
 // Discord ingress (spec 4): gates every messageCreate, parses it into a Route
-// and calls actions. Gates, in order: bots (including ourselves), channel
-// ownership (only channels mapped in this machine's SQLite), permission.
+// and calls actions. Gates, in order: webhooks and our own messages (except
+// remote send envelopes), channel ownership (only channels mapped in this
+// machine's SQLite), permission (other bots need the Kimaki role).
 // Messages of one channel are handled in arrival order, after OpenCode is ready.
 //
 // Messages sent while the bot was offline are not fetched here: gateway-proxy
@@ -16,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  ChannelType,
   Events,
   GuildMember,
   MessageFlags,
@@ -27,30 +29,36 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 
+import { isCoordinatorChannel, oc, projectOf, rootSession, sessionDirectory, fetchThread, type Author, type Bot, type PromptFile } from './bot.ts'
+import { ConfigError } from './errors.ts'
+import { failedVoiceDir, type FailedVoiceRecord, type FailedVoiceRetry } from './failed-voice.ts'
 import {
   EmptyTranscriptionError,
   NoTranscriptionKeyError,
   TranscriptionApiError,
   TranscriptionBlockedError,
-} from './voice.ts'
-import { failedVoiceDir, type FailedVoiceRecord, type FailedVoiceRetry } from './failed-voice.ts'
-import { oc, projectOf, rootSession, sessionDirectory, fetchThread, type Author, type Bot, type PromptFile } from './bot.ts'
-import { ConfigError } from './errors.ts'
+} from './voice.ts' 
 import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
 import { cancelQueuedPrompt, dispatch, promptIdForMessage, requeueEdited, send } from './prompt.ts'
 import { REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX } from './remote-send.ts'
-import { formatEcho, queuedItemFor } from './queue.ts'
+import { echoPayloads, formatEcho, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
-import { primaryAgents, startSession } from './sessions.ts'
+import { primaryAgents, startCoordinator, startSession } from './sessions.ts'
 import { isVoiceAttachment, parseVoiceMessage, transcribe, voiceMediaType, type AttachmentLike } from './voice.ts'
 
 const logger = createLogger('INGRESS')
+// Later messages of the channel wait for downloads (registerIngress).
+const DOWNLOAD_TIMEOUT_MS = 60_000
 
-// Owner, Administrator, Manage Server, or a role named "Kimaki". A role named
-// "no-kimaki" always denies. Missing member data fails closed.
-export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: string }): Promise<boolean> {
+// Owner, Administrator, Manage Server, or a role named "Kimaki"; with
+// --allow-all-users every member. A role named "no-kimaki" always denies.
+// Missing member data fails closed.
+export async function canUseKimaki(
+  bot: Pick<Bot, 'allowAllUsers'>,
+  { guild, userId }: { guild: Guild; userId: string },
+): Promise<boolean> {
   const member = await guild.members.fetch({ user: userId, force: true }).catch((error: Error) => error)
   if (member instanceof Error) {
     // Still denied, but say why: a REST failure must not look like a missing role.
@@ -58,19 +66,22 @@ export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: st
     return false
   }
   if (!(member instanceof GuildMember)) return false
-  return memberCanUseKimaki(member)
+  return memberCanUseKimaki(bot, member)
 }
 
 // MESSAGE_CREATE carries the author's current roles: no REST fetch on the hot path.
 // Discord omits the member only for webhook and ephemeral messages, which never get here.
-function authorCanUseKimaki(message: Message<true>): Promise<boolean> {
-  if (message.member instanceof GuildMember) return Promise.resolve(memberCanUseKimaki(message.member))
-  return canUseKimaki({ guild: message.guild, userId: message.author.id })
+function authorCanUseKimaki(bot: Bot, message: Message<true>): Promise<boolean> {
+  if (message.member instanceof GuildMember) return Promise.resolve(memberCanUseKimaki(bot, message.member))
+  return canUseKimaki(bot, { guild: message.guild, userId: message.author.id })
 }
 
-function memberCanUseKimaki(member: GuildMember): boolean {
+function memberCanUseKimaki(bot: Pick<Bot, 'allowAllUsers'>, member: GuildMember): boolean {
   const roleNames = member.roles.cache.map((role) => role.name.toLowerCase())
   if (roleNames.includes('no-kimaki')) return false
+  // Other bots are opt-in: only the Kimaki role lets them in, never admin rights or --allow-all-users.
+  if (member.user.bot) return roleNames.includes('kimaki')
+  if (bot.allowAllUsers) return true
   if (member.guild.ownerId === member.id) return true
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true
   if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true
@@ -115,14 +126,14 @@ class AttachmentError extends errore.createTaggedError({
 }) {}
 
 async function remotePromptText(url: string) {
-  const response = await fetch(url).catch((cause) => new AttachmentError({ file: REMOTE_PROMPT_FILE, cause }))
+  const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) }).catch((cause) => new AttachmentError({ file: REMOTE_PROMPT_FILE, cause }))
   if (response instanceof Error) return response
   if (!response.ok) return new AttachmentError({ file: REMOTE_PROMPT_FILE, cause: new Error(`HTTP ${response.status}`) })
   return response.text().catch((cause) => new AttachmentError({ file: REMOTE_PROMPT_FILE, cause }))
 }
 
 async function download(url: string): Promise<AttachmentError | Buffer> {
-  const response = await fetch(url).catch((e) => new AttachmentError({ file: url, cause: e }))
+  const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) }).catch((e) => new AttachmentError({ file: url, cause: e }))
   if (response instanceof Error) return response
   if (!response.ok) return new AttachmentError({ file: `${url} (HTTP ${response.status})` })
   const body = await response.arrayBuffer().catch((e) => new AttachmentError({ file: url, cause: e }))
@@ -215,7 +226,7 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
   const input = prompt instanceof Error ? prompt : parseInput(sendInput, { ...value.options, ...target, prompt })
   const attachments = [...message.attachments.values()].filter((attachment) => attachment !== promptAttachment)
   const files = await saveAttachments({ dataDir: bot.dataDir, messageId: message.id, attachments })
-  const result = input instanceof Error ? input : files instanceof Error ? files : await send(bot, { ...input, files }, { localOnly: true })
+  const result = input instanceof Error ? input : files instanceof Error ? files : await send(bot, { ...input, files }, { localOnly: true, shownIn: message.id })
   const answer = JSON.stringify(result instanceof Error ? { error: result.message } : result)
   await message
     .reply({
@@ -239,7 +250,7 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
   if (!project) return
   if (project.channel_type === 'voice') {
     // The text chat of the voice channel talks to the running call.
-    if (message.author.bot || thread || !(await authorCanUseKimaki(message))) return
+    if (message.author.bot || thread || !(await authorCanUseKimaki(bot, message))) return
     bot.features.voiceCalls.text(bot, {
       guildId: message.guild.id,
       channelId,
@@ -248,15 +259,16 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
     })
     return
   }
-  if (message.author.bot) {
-    if (message.author.id !== bot.discord.user?.id) return
+  if (message.author.id === bot.discord.user?.id) {
     return handleRemoteEnvelope(bot, { message, channelId, threadId: thread?.id ?? null })
   }
-  if (!(await authorCanUseKimaki(message))) {
+  if (!(await authorCanUseKimaki(bot, message))) {
     logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
     return
   }
-  const sessionId = thread ? bot.store.getState().roots[thread.id] : undefined
+  // A coordinator channel has its root session under the channel ID.
+  const coordinator = !thread && isCoordinatorChannel(bot, channelId)
+  const sessionId = bot.store.getState().roots[thread?.id ?? (coordinator ? channelId : '')]
   if (thread && !sessionId) return
   const author = { id: message.author.id, username: message.author.username }
   const reportError = async (error: Error) => {
@@ -331,13 +343,35 @@ async function deliverRoute(bot: Bot, input: {
   const attached = files.length > 0 ? `, ${files.length} file(s)` : ''
   logger.log(`${route.kind}${detail} from ${author.username} in ${thread ? `thread ${thread.id}` : `channel ${channelId}`}${attached}`)
   // The transcription is not visible anywhere else.
-  if (voice && thread && message && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
-    // Best effort: a rejected reply (message deleted meanwhile, archived
-    // thread) must not fail the delivery — the prompt may already be on its
-    // way, so a failure here is not retryable either.
-    await message
-      .reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
-      .catch((error: Error) => logger.warn(`voice echo reply for ${messageId}`, error))
+  if (voice && (thread || coordinator) && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
+    // A long transcript continues in more messages after the reply.
+    for (const [index, payload] of echoPayloads(formatEcho({ username: author.username, text: route.text })).entries()) {
+      const options = { ...payload, allowedMentions: { parse: [] }, flags: ('flags' in payload ? payload.flags : 0) | SILENT_MESSAGE_FLAGS }
+      if (index === 0) await message.reply(options)
+      else if (channel.isSendable()) await channel.send(options)
+    }
+  }
+
+  // Coordinator: the channel is the conversation of one long session.
+  if (coordinator && channel.type === ChannelType.GuildText) {
+    // A spoken agent is for a new thread: the coordinator keeps its own agent and model.
+    const result = route.kind === 'new-session' || (route.kind === 'steer' && route.agent)
+      ? await startSession(bot, { channelId, directory: project.directory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId: message.id, startMessageId: null, files })
+      : bot.store.getState().roots[channel.id]
+        ? await dispatch(bot, { conversation: channel, route, author, messageId: message.id, files })
+        : await startCoordinator(bot, {
+            channel,
+            // Queue and btw need a session to wait for or fork from: the first input is a plain prompt.
+            route: route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' || route.kind === 'steer' ? route : { kind: 'steer', text: route.text },
+            author,
+            messageId: message.id,
+            files,
+          })
+    if (result instanceof Error) return reportError(result)
+    if (!result || result.threadId === channel.id) return
+    const note = route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
+    await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+    return
   }
 
   if (!thread) {
@@ -360,8 +394,8 @@ async function deliverRoute(bot: Bot, input: {
     return
   }
 
-  const result = await dispatch(bot, { thread, route, author, messageId, files })
-  if (result instanceof Error) return result
+  const result = await dispatch(bot, { conversation: thread, route, author, messageId: message.id, files })
+  if (result instanceof Error) return reportError(result)
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
@@ -479,8 +513,9 @@ export async function retryFailedVoice(bot: Bot, record: FailedVoiceRecord, audi
   })
 }
 
-// Registers the message listeners. Messages of one channel are handled in arrival order.
-export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
+// Registers the message listeners. Messages of one channel are handled in arrival order:
+// a text sent while a voice message is transcribed waits for it (voice-attachments.e2e.test.ts).
+export function registerIngress(bot: Bot, voiceRetry?: FailedVoiceRetry) {
   const chains = new Map<string, Promise<void>>()
 
   function serialize(channelId: string, task: () => Promise<void>) {
@@ -496,6 +531,9 @@ export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
   }
 
   bot.discord.on(Events.MessageCreate, (message) => {
+    // Webhooks have no member to check. Own messages only matter as remote send envelopes.
+    if (message.webhookId) return
+    if (message.author.id === bot.discord.user?.id && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
     if (message.author.bot && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
     serialize(message.channelId, () => handleMessage(bot, voiceRetry, message))
   })
@@ -515,7 +553,7 @@ export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
     serialize(message.channelId, async () => {
       const full = message.partial ? await message.fetch().catch(() => null) : message
       if (!full?.guild || !queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })) return
-      if (!(await canUseKimaki({ guild: full.guild, userId: full.author.id }))) return
+      if (!(await canUseKimaki(bot, { guild: full.guild, userId: full.author.id }))) return
       // The re-queued prompt must carry the message's attachments again.
       const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
       if (files instanceof Error) {

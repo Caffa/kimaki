@@ -1,5 +1,6 @@
 // Phase 3: the queue on the native OpenCode inbox. `. queue` waits for the run,
-// message delete/edit and /clear-queue change the inbox.
+// message delete/edit and /clear-queue change the inbox. Other sources
+// (CLI, TUI, promotion) are in queue-sources.e2e.
 
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -29,7 +30,7 @@ function reply(marker: string, text: string): DeterministicMatcher {
 }
 
 const matchers: DeterministicMatcher[] = [
-  slowTextMatcher({ marker: 'slow-marker', text: 'slow-done', delayMs: 2_500 }),
+  slowTextMatcher({ marker: 'slow-marker', text: 'slow-done', delayMs: 1_500 }),
   reply('steer-marker', 'steer ok'),
   reply('queued-one', 'queued one ok'),
   reply('queued-two', 'queued two ok'),
@@ -94,15 +95,15 @@ async function expectNever({ threadId, text }: { threadId: string; text: string 
   }
 }
 
-test('. queue waits for the run, acks with position, echoes when it starts', async () => {
+test('. queue waits for the run, acks with position, replies to the message when it starts', async () => {
   const thread = await startSlowThread('Queue after me')
   const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
-  await user.sendMessage({ content: 'First queued-one. queue' })
+  const first = await user.sendMessage({ content: 'First queued-one. queue' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'position 1' })
-  await user.sendMessage({ content: 'Second queued-two. queue' })
+  const second = await user.sendMessage({ content: 'Second queued-two. queue' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'queued two ok' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 3 })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(await twin.discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Queue after me slow-marker
     --- from: assistant (TestBot)
@@ -110,20 +111,27 @@ test('. queue waits for the run, acks with position, echoes when it starts', asy
     --- from: user (tommy)
     First queued-one. queue
     --- from: assistant (TestBot)
-    -# Queued message sent
+    [reply to tommy: First queued-one. queue]
+    -# Queued
     --- from: user (tommy)
     Second queued-two. queue
     --- from: assistant (TestBot)
-    -# Queued message sent
+    [reply to tommy: Second queued-two. queue]
+    -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** First queued-one
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: First queued-one. queue]
+    -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** Second queued-two
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: Second queued-two. queue]
+    -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
+  const messages = await twin.discord.thread(thread.id).getMessages()
+  const sent = messages.filter((message) => message.content === '-# Queued message sent')
+  expect(sent.map((message) => message.message_reference?.message_id)).toEqual([first.id, second.id])
 })
 
 test('message delete takes items out of the queue, edit re-queues', async () => {
@@ -163,24 +171,29 @@ test('message delete takes items out of the queue, edit re-queues', async () => 
 
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'edited ok' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 2 })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(await twin.discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Queue edits slow-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    [reply to unknown message]
     -# Removed from queue
+    [reply to unknown message]
     -# Removed from queue
     --- from: user (tommy)
     New text edited-marker. queue
     [attachment: queued-notes.txt]
     --- from: assistant (TestBot)
+    [reply to tommy: New text edited-marker. queue]
     -# Removed from queue
-    -# Queued message sent
+    [reply to tommy: New text edited-marker. queue]
+    -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** New text edited-marker
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: New text edited-marker. queue]
+    -# Queued message sent
     edited ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
   await expectNever({ threadId: thread.id, text: 'queued two ok' })
@@ -204,7 +217,7 @@ test('a revoked user cannot replace a queued prompt', async () => {
   await twin.discord.prisma.guildMember.update({ where: member, data: { roles: JSON.stringify([deny.id]) } })
   await user.editMessage({ messageId: queued.id, content: 'Replacement edited-marker. queue' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 2 })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(await twin.discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Queue before revocation slow-marker
     --- from: assistant (TestBot)
@@ -212,12 +225,14 @@ test('a revoked user cannot replace a queued prompt', async () => {
     --- from: user (tommy)
     Replacement edited-marker. queue
     --- from: assistant (TestBot)
-    -# Queued message sent
+    [reply to tommy: Replacement edited-marker. queue]
+    -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** Original queued-one
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: Replacement edited-marker. queue]
+    -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await twin.discord.thread(thread.id).text()).toContain('queued one ok')
   expect(await twin.discord.thread(thread.id).text()).not.toContain('edited ok')
@@ -233,21 +248,24 @@ test('/queue and /clear-queue', async () => {
   await user.runSlashCommand({ name: 'clear-queue', options: [{ name: 'position', type: 4, value: 1 }] })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'queued two ok' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 2 })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(await twin.discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Slash queue slow-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    » **tommy:** Slash queued-one
+    -# » **tommy:** Slash queued-one
+    [reply to TestBot: -# » **tommy:** Slash queued-one]
     -# Removed from queue
-    » **tommy:** Slash queued-two
-    -# Queued message sent
+    -# » **tommy:** Slash queued-two
+    [reply to TestBot: -# » **tommy:** Slash queued-two]
+    -# Queued
     -# Cleared 1 queued message
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **tommy:** Slash queued-two
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to TestBot: -# » **tommy:** Slash queued-two]
+    -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
 })

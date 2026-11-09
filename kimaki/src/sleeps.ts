@@ -9,7 +9,7 @@ import crypto from 'node:crypto'
 import * as orm from 'drizzle-orm'
 import dedent from 'string-dedent'
 
-import { fetchThread, threadOfSession, type Bot } from './bot.ts'
+import { fetchConversation, threadOfSession, type Bot } from './bot.ts'
 import { parseDuration } from './duration.ts'
 import { ConfigError, DbError } from './errors.ts'
 import { asSubtext } from './format-parts.ts'
@@ -21,6 +21,8 @@ const logger = createLogger('TASK')
 
 const WAKE_RETRY_MS = 30_000
 const WAKE_MAX_ATTEMPTS = 5
+// Longer sleeps let the prompt cache expire: past ~45 minutes, keep-alives (0.1x input each) cost more than one cache write at the wake (1.25x).
+const WARM_SLEEP_MAX_MS = 45 * 60_000
 
 type SleepRow = typeof schema.session_sleeps.$inferSelect
 
@@ -58,7 +60,7 @@ export function sleepOutput({ wakeAt, reason }: { wakeAt: number; reason: string
   return [
     `Sleeping until ${utcLabel(wakeAt)}.${reason ? ` Reason: ${reason}.` : ''}`,
     'This result is not a wake. Do not continue the waited work. Do not run more commands.',
-    'Reply with one short line that you are waiting until that time, then stop.',
+    'If this turn has no text yet that answers the user, write your full answer now: text you only planned in your reasoning never reaches Discord. Then write one short line that you are waiting until that time, and stop.',
     'The real wake is a later message that starts with "Woke after sleeping until". Only then continue the wait reason.',
     'A new user message in this thread cancels the sleep. If you still need that later wake after answering, run kimaki sleep again with --until set to the same UTC time.',
     'When monitoring something slow (email replies, PR reviews), wait 2h or more and never post a status report on a wake where nothing changed.',
@@ -144,6 +146,19 @@ export async function createSleep(
   return { sessionId: root, threadId, wakeAt: new Date(wakeAt).toISOString(), output: sleepOutput({ wakeAt, reason: why }) }
 }
 
+// The session waits for a wake at most 45 minutes after its sleep started: the plugin
+// keeps its prompt cache warm until then (plugin/coordinator.ts, `session.warmup` route).
+export async function sleepsWarm(bot: Bot, sessionId: string): Promise<DbError | boolean> {
+  const row = await bot.db.query.session_sleeps
+    .findFirst({ where: { session_id: sessionId, status: 'planned' } })
+    .catch((cause) => new DbError({ operation: 'read session_sleeps', cause }))
+  if (row instanceof Error) return row
+  // Sleeps imported from V1 may have no start time.
+  if (!row?.created_at) return false
+  const wakeAt = row.wake_at.getTime()
+  return wakeAt > bot.clock.now() && wakeAt - row.created_at.getTime() <= WARM_SLEEP_MAX_MS
+}
+
 // Delivers a due wake if it is still the planned sleep and its retry delay
 // passed. The prompt ID comes from the delivery ID, so a retried wake cannot
 // deliver twice: OpenCode returns the existing inbox item for a repeated ID
@@ -184,7 +199,7 @@ async function wake(bot: Bot, row: SleepRow): Promise<Error | void> {
       return settle('failed')
     }
     const sent = await (async () => {
-      const thread = await fetchThread(bot, threadId)
+      const thread = await fetchConversation(bot, threadId)
       if (thread instanceof Error) return thread
       return prompt(bot, {
         sessionId,
@@ -196,6 +211,8 @@ async function wake(bot: Bot, row: SleepRow): Promise<Error | void> {
         author: { id: bot.discord.user!.id, username: 'kimaki' },
         messageId: deliveryId,
         id: `msg_sleep_${deliveryId}`,
+        // The session asked for this wake itself.
+        sender: { sessionId },
       })
     })()
     if (!(sent instanceof Error)) return settle('consumed')

@@ -330,7 +330,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
 
   // Bot lines in the text chat of the voice channel, through the same FIFO as session output.
   function post(bot: Bot, { channelId, text, markdown = false }: { channelId: string; text: string; markdown?: boolean }) {
-    bot.effects.run(channelId, [markdown ? { type: 'markdown', text, blankLineBefore: false } : { type: 'send', text }])
+    bot.effects.run(channelId, [markdown ? { type: 'markdown', text, blankLineBefore: false, replyTo: null } : { type: 'send', text }])
   }
 
   // Errors during a call go to the log and to the text chat of the voice channel.
@@ -349,7 +349,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     const states = guild.voiceStates.cache.filter((state) => state.channelId === channelId && state.id !== bot.discord.user?.id)
     const users = new Map<string, Author>()
     for (const state of states.values()) {
-      if (!(await canUseKimaki({ guild, userId: state.id }))) continue
+      if (!(await canUseKimaki(bot, { guild, userId: state.id }))) continue
       const user = await bot.discord.users.fetch(state.id).catch(() => null)
       users.set(state.id, { id: state.id, username: user?.username ?? state.id })
     }
@@ -505,7 +505,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
                 sent.push(threadId)
                 current.started.add(threadId)
                 if (waits) current.waiting.add(threadId)
-                post(bot, { channelId: current.channelId, text: asSubtext(`⬦ ${started} <#${threadId}>`) })
+                post(bot, { channelId: current.channelId, text: asSubtext(`${started} <#${threadId}>`) })
               }
             : undefined
           const run = runShell(bot, { call: current, command: input.command, timeoutMs, onLine }).then((result) => {
@@ -668,8 +668,8 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     }
     listen(bot, call)
     logger.info(`voice call started in ${channelId}, voice ${settings.voice}`)
-    post(bot, { channelId, text: `-# ⬦ voice call started ⋅ gpt-live ⋅ ${settings.voice}` })
-    if (settings.voiceNotice) post(bot, { channelId, text: asSubtext(`⬦ ${settings.voiceNotice}`) })
+    post(bot, { channelId, text: `-# voice call started ⋅ gpt-live ⋅ ${settings.voice}` })
+    if (settings.voiceNotice) post(bot, { channelId, text: asSubtext(settings.voiceNotice) })
     live.append({ text: 'The call started. Greet the users by name in one short sentence.', channel: 'speakable' })
   }
 
@@ -684,7 +684,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     call.speaker.stop()
     if (call.connection.state.status !== VoiceConnectionStatus.Destroyed) call.connection.destroy()
     logger.info(`voice call ended in ${call.channelId}${reason ? `: ${reason}` : ''}`)
-    post(bot, { channelId: call.channelId, text: `-# ⬦ voice call ended${reason ? `: ${reason}` : ''}` })
+    post(bot, { channelId: call.channelId, text: `-# voice call ended${reason ? `: ${reason}` : ''}` })
   }
 
   async function onVoiceState(bot: Bot, { before, after }: { before: VoiceState; after: VoiceState }) {
@@ -727,7 +727,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     if (!call || call.ending) return
     const url = `https://discord.com/channels/${thread.guildId}/${threadId}`
     const state = error === null ? 'finished' : 'failed'
-    post(bot, { channelId: call.channelId, text: asSubtext(`⬦ thread ${state}: ${thread.name} ⋅ ${url} ⋅ ${sessionId}`) })
+    post(bot, { channelId: call.channelId, text: asSubtext(`thread ${state}: ${thread.name} ⋅ ${url} ⋅ ${sessionId}`) })
     const failure = error === null ? '' : ` Error: ${error}`
     const notice = `<system>Thread ${state}: "${thread.name}". Thread ID ${threadId}, session ID ${sessionId}, URL ${url}.${failure}</system>`
     // Answer only for threads started in this call. A pending kimaki send --wait brings the transcript next.

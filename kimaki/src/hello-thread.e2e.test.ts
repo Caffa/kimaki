@@ -29,6 +29,8 @@ let bot: BotHandle
 let dataDir: string
 let helloThreadId: string
 
+const MEDIA_URL = 'https://cdn.discordapp.com/attachments/1012345678900020080/1234567891233211234/shot.png?ex=65d903de&is=65c68ede&hm=2481f30d&'
+
 beforeAll(async () => {
   dataDir = tempDataDir()
   ;[server, twin] = await Promise.all([
@@ -56,6 +58,19 @@ beforeAll(async () => {
               { type: 'text-start', id: 't2' },
               { type: 'text-delta', id: 't2', delta: 'Second answer, same session.' },
               { type: 'text-end', id: 't2' },
+              { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+            ],
+          },
+        },
+        {
+          id: 'media',
+          priority: 10,
+          when: { latestUserTextIncludes: 'media-marker' },
+          then: {
+            parts: [
+              { type: 'text-start', id: 't3' },
+              { type: 'text-delta', id: 't3', delta: `Here is the screenshot: ${MEDIA_URL}` },
+              { type: 'text-end', id: 't3' },
               { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
             ],
           },
@@ -106,12 +121,12 @@ test('channel message creates a thread with reply and footer, follow-up continue
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Hello from the deterministic model.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again please second-marker
     --- from: assistant (TestBot)
     Second answer, same session.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(thread.name).toBe('Say hello hello-marker')
 
@@ -139,7 +154,7 @@ test('channel message creates a thread with reply and footer, follow-up continue
       {
         "silent": false,
         "suppressEmbeds": true,
-        "text": "-# *project ⋅ main ⋅",
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
       },
       {
         "silent": true,
@@ -149,7 +164,7 @@ test('channel message creates a thread with reply and footer, follow-up continue
       {
         "silent": false,
         "suppressEmbeds": true,
-        "text": "-# *project ⋅ main ⋅",
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
       },
     ]
   `)
@@ -170,11 +185,85 @@ test('channel message creates a thread with reply and footer, follow-up continue
   expect(session.time.idle).toBeGreaterThan(0)
 })
 
+test('a reply with a Discord media URL keeps its embed, other lines stay suppressed', async () => {
+  const { discord, channelId } = twin
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Show the shot media-marker' })
+  const thread = await discord.channel(channelId).waitForThread({ predicate: (thread) => thread.name?.startsWith('Show the shot') ?? false })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Show the shot media-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    Here is the screenshot: https://cdn.discordapp.com/attachments/1012345678900020080/1234567891233211234/shot.png?ex=65d903de&is=65c68ede&hm=2481f30d&
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+
+  const messages = await discord.thread(thread.id).getMessages()
+  const flags = messages
+    .filter((message) => message.author.bot)
+    .map((message) => ({
+      text: message.content.slice(0, 20),
+      suppressEmbeds: Boolean((message.flags ?? 0) & MessageFlags.SuppressEmbeds),
+    }))
+  expect(flags).toMatchInlineSnapshot(`
+    [
+      {
+        "suppressEmbeds": true,
+        "text": "-# *using determinis",
+      },
+      {
+        "suppressEmbeds": false,
+        "text": "Here is the screensh",
+      },
+      {
+        "suppressEmbeds": true,
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
+      },
+    ]
+  `)
+})
+
 test('message from a user without permission creates no thread', async () => {
   const { discord, channelId } = twin
   const before = (await discord.channel(channelId).getThreads()).length
   await discord.channel(channelId).user(OTHER_USER_ID).sendMessage({ content: 'let me in hello-marker' })
   await expectNoNewThread({ channelId, before })
+})
+
+test('another bot needs the Kimaki role, and no-kimaki still denies it', async () => {
+  const { discord, channelId } = twin
+  const helperBotId = '200000000000000050'
+  const guildId = discord.guildId
+  await discord.prisma.user.create({ data: { id: helperBotId, username: 'helper-bot', bot: true } })
+  await discord.prisma.guildMember.create({ data: { guildId, userId: helperBotId } })
+  const member = { guildId_userId: { guildId, userId: helperBotId } }
+  const helper = discord.channel(channelId).user(helperBotId)
+
+  const before = (await discord.channel(channelId).getThreads()).length
+  await helper.sendMessage({ content: 'no role bot-marker hello-marker' })
+  await expectNoNewThread({ channelId, before })
+
+  const guild = await bot.discord.guilds.fetch(guildId)
+  const kimakiRole = await guild.roles.create({ name: 'Kimaki' })
+  const denyRole = await guild.roles.create({ name: 'no-kimaki' })
+  await discord.prisma.guildMember.update({ where: member, data: { roles: JSON.stringify([kimakiRole.id]) } })
+  await helper.sendMessage({ content: 'with role bot-marker hello-marker' })
+  const thread = await discord.channel(channelId).waitForThread({ predicate: (thread) => thread.name?.startsWith('with role bot-marker') ?? false })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (helper-bot)
+    with role bot-marker hello-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    Hello from the deterministic model.
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+
+  const withRole = (await discord.channel(channelId).getThreads()).length
+  await discord.prisma.guildMember.update({ where: member, data: { roles: JSON.stringify([kimakiRole.id, denyRole.id]) } })
+  await helper.sendMessage({ content: 'denied bot-marker hello-marker' })
+  await expectNoNewThread({ channelId, before: withRole })
 })
 
 test('message in a channel without a project creates no thread', async () => {

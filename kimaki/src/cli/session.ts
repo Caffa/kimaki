@@ -11,7 +11,7 @@ import { wrapJsonSchema, type Goke } from 'goke'
 import { parseDuration } from '../duration.ts'
 import { OpenCodeError } from '../errors.ts'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.ts'
-import { allMessages, allSessions, readSessionMarkdown, sessionEventsFile } from '../session-events.ts'
+import { allMessages, allSessions, readSessionMarkdown, sessionEventsFile, syncTranscripts, transcriptsDir } from '../session-events.ts'
 import {
   action,
   DATA_DIR_HELP,
@@ -26,12 +26,12 @@ import {
   SESSION_HELP,
   resolveTarget,
   targetOrEnv,
-  waitAndPrintSession,
+  waitAndPrintSessions,
 } from './shared.ts'
 
 const execFileAsync = promisify(execFile)
 
-// list, search, wait, editors, diff, url
+// list, sync, wait, editors, diff, url
 export function registerSessionQueryCommands(cli: Goke) {
   cli.command('session list', 'List sessions with native status and token counts')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -44,8 +44,11 @@ export function registerSessionQueryCommands(cli: Goke) {
       const errorCode = options.active ? 64 : 1
       const client = await readClient(errorCode)
       const directory = options.all ? undefined : await projectDirectory({ project: options.project, channel: undefined, dataDir: options.dataDir })
+      // By project ID, not directory: sessions in linked worktrees of the same clone belong to the project too.
+      const location = directory ? await client.location.get({ location: { directory } }).catch((error: Error) => error) : undefined
+      if (location instanceof Error) fail(location, errorCode)
       const [sessions, active, forms, permissions] = await Promise.all([
-        allSessions({ client, directory }),
+        allSessions({ client, project: location?.project.id }),
         client.session.active().catch((error: Error) => error),
         client.form.list().catch((error: Error) => error),
         client.permission.request.list().catch((error: Error) => error),
@@ -65,65 +68,47 @@ export function registerSessionQueryCommands(cli: Goke) {
       if (options.active && rows.length === 0) process.exitCode = 1
     })
 
-  cli.command('session search <query>', 'Search titles, then real message content')
+  cli.command('session sync', 'Write session transcripts to <data-dir>/transcripts for rg; skips current ones')
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--project <path>', 'Project (default: current directory)')
-    .option('-c, --channel <id>', 'Project of this Discord channel')
-    .option('--all', 'All projects')
-    .option('--days <n>', 'Recent days (default: 14; 0 = all)')
+    .option('--days <n>', 'Sessions updated in the last n days (default: 14)')
+    .option('--all', 'All sessions, any age')
+    .option('--rebuild', 'Write transcripts again, also current ones')
     .option('--json', 'Output as JSON')
-    .action(async (query, options) => {
-      const client = await readClient()
-      const directory = options.all ? undefined : await projectDirectory({ project: options.project, channel: options.channel, dataDir: options.dataDir })
-      const sessions = await allSessions({ client, directory })
-      if (sessions instanceof Error) fail(sessions)
-      // `/pattern/flags` is a regular expression, anything else a case-insensitive substring.
-      const pattern = query.match(/^\/(.*)\/([dgimsuvy]*)$/)
-      const expression = pattern ? new RegExp(pattern[1]!, pattern[2]) : null
-      const matches = (text: string) => {
-        if (!expression) return text.toLowerCase().includes(query.toLowerCase())
-        expression.lastIndex = 0
-        return expression.test(text)
-      }
-      const days = Number(options.days ?? 14)
+    .action(async (options) => {
+      const days = options.all ? 0 : Number(options.days ?? 14)
       if (!Number.isFinite(days) || days < 0) fail(new Error('--days must be a non-negative number'))
-      const recent = sessions.filter((session) => !days || session.time.updated >= Date.now() - days * 86400000)
-      // OpenCode has no content search API: scan pages newest first, stop at the first hit.
-      const hit = async (session: (typeof sessions)[number]) => {
-        if (matches(session.title ?? '')) return true
-        const scan = async (cursor: string | undefined): Promise<OpenCodeError | boolean> => {
-          const page = await client.message.list({ sessionID: session.id, limit: 200, ...(cursor ? { cursor } : { order: 'desc' as const }) })
-            .catch((cause) => new OpenCodeError({ operation: 'message.list', cause }))
-          if (page instanceof Error) return page
-          if (page.data.some((message) => matches(message.type === 'user' ? message.text : JSON.stringify(message)))) return true
-          return page.cursor.next ? scan(page.cursor.next) : false
-        }
-        return scan(undefined)
-      }
-      // 8 sessions at a time.
-      const results: boolean[] = new Array(recent.length)
-      const next = { index: 0 }
-      await Promise.all(Array.from({ length: Math.min(8, recent.length) }, async () => {
-        while (next.index < recent.length) {
-          const index = next.index++
-          const result = await hit(recent[index]!)
-          if (result instanceof Error) fail(result)
-          results[index] = result
-        }
-      }))
-      const found = recent.filter((_, index) => results[index])
-      printRows({ json: options.json, rows: found, line: (session) => `${session.id} ${session.title}` })
+      const dataDir = dataDirOrDefault(options.dataDir)
+      const result = await syncTranscripts({ client: await readClient(), dataDir, days, rebuild: Boolean(options.rebuild) })
+      if (result instanceof Error) fail(result)
+      if (result.failed > 0) process.exitCode = 1
+      if (options.json) return printJson({ dir: transcriptsDir({ dataDir }), ...result })
+      process.stdout.write(`${transcriptsDir({ dataDir })}: ${result.written} written, ${result.skipped} skipped, ${result.failed} failed\n`)
     })
 
-  cli.command('session wait <id>', 'Wait until idle or waiting for input, then print the session')
+  cli.command('session wait [...ids]', 'Wait until every session is idle or waits for the user, then print each one and why it returned')
+    .example('kimaki session wait ses_abc 1495130000000000000')
+    .example(`kimaki session wait $(kimaki session list --all --active | awk '{print $1}')`)
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--timeout <duration>', 'Timeout, for example 30m or 2h')
-    .action(async (id, options) => {
-      const { sessionId } = await resolveTarget(id, options.dataDir)
+    .option('--timeout <duration>', 'Timeout, for example 30m or 2h; exit 1 when a session still runs')
+    .action(async (ids, options) => {
       const timeout = options.timeout ? parseDuration(options.timeout) : undefined
       if (timeout instanceof Error) fail(new Error('Use --timeout 30m, 2h, or another positive duration'))
+      // Empty when `$(kimaki session list --active)` found nothing.
+      if (ids.length === 0) {
+        process.stdout.write('No sessions to wait for\n')
+        return
+      }
+      const sessionIds: string[] = []
+      for (const id of ids) sessionIds.push((await resolveTarget(id, options.dataDir)).sessionId)
       const client = await readClient()
-      await waitAndPrintSession({ client, sessionId, signal: timeout === undefined ? undefined : AbortSignal.timeout(timeout) })
+      const done = await waitAndPrintSessions({
+        client,
+        sessionIds: [...new Set(sessionIds)],
+        dataDir: options.dataDir,
+        signal: timeout === undefined ? undefined : AbortSignal.timeout(timeout),
+        timeout: options.timeout ?? '',
+      })
+      if (!done) process.exitCode = 1
     })
 
   cli.command('session editors <file>', 'List sessions that last edited a file, newest first')
@@ -180,7 +165,7 @@ export function registerSessionQueryCommands(cli: Goke) {
     })
 }
 
-// abort, archive, title, queue, command, shell, btw, fork, resume: all through the bot.
+// abort, archive, compact, title, queue, command, shell, btw, fork, resume: all through the bot.
 export function registerSessionActionCommands(cli: Goke) {
   cli.command('session abort [id]', 'Stop the running turn and clear its queue')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -189,6 +174,10 @@ export function registerSessionActionCommands(cli: Goke) {
   cli.command('session archive [id]', 'Archive a session thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .action(async (id, options) => action({ route: 'session.archive', dataDir: options.dataDir, input: targetOrEnv(id) }))
+
+  cli.command('session compact [id]', 'Summarize the session history after its current turn (default: this session)')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .action(async (id, options) => action({ route: 'session.compact', dataDir: options.dataDir, input: targetOrEnv(id) }))
 
   cli.command('session title <title>', 'Rename the session and its Discord thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -257,10 +246,11 @@ export function registerSessionHistoryCommands(cli: Goke) {
       await pipeline(fs.createReadStream(file), process.stdout)
     })
 
-  cli.command('session read <id>', 'Print the messages of a session from OpenCode as markdown')
+  cli.command('session read <id>', 'Print the prompts and final answers of a session as markdown')
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--thinking', 'Include reasoning')
-    .option('--verbose', 'Include full tool inputs and outputs')
+    .option('--full', 'Every message with tool calls')
+    .option('--thinking', 'Full output with reasoning')
+    .option('--verbose', 'Full output with tool inputs and outputs')
     .option('--json', 'Print raw OpenCode messages')
     .action(async (id, options) => {
       // Subagent sessions are not in SQLite: resolveTarget keeps their ID.
@@ -271,7 +261,7 @@ export function registerSessionHistoryCommands(cli: Goke) {
         if (messages instanceof Error) fail(messages)
         return printJson(messages)
       }
-      const markdown = await readSessionMarkdown({ client, sessionId, thinking: options.thinking, verbose: options.verbose })
+      const markdown = await readSessionMarkdown({ client, sessionId, full: options.full, thinking: options.thinking, verbose: options.verbose })
       if (markdown instanceof Error) fail(markdown)
       process.stdout.write(`${markdown}\n`)
     })

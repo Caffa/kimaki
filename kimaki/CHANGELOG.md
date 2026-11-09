@@ -1,5 +1,285 @@
 # Changelog
 
+## 1.5.0
+
+1. **Coordinator channels, on by default.** A project channel is now a chat with one long coordinator session: you write in the channel, it answers in the channel, and it starts a worker thread for each piece of work.
+
+   ```
+   #my-app
+     you: fix the flaky login test
+     (thread "Fix flaky login test" starts)
+     Fixed in #fix-flaky-login-test: the test now awaits the session cookie.
+   ```
+
+   Turn it off for one channel with `/toggle-coordinator` (the choice is saved), or for every channel without its own choice:
+
+   ```bash
+   kimaki --coordinator false
+   ```
+
+   - Workers start silently. When a run the coordinator prompted ends, its answer wakes the coordinator, which reports the outcome with the thread link and the critique diff URLs. It reviews each diff (`<critique url>.patch`) before it reports.
+   - Every `kimaki send` of the coordinator waits up to 5 seconds, so quick runs are reported at once. It speaks before a run ends only for an answer, a decision or a blocker. A turn with nothing for you answers `IDLE`, which Kimaki hides with no footer.
+   - The channel shows the typing indicator while any of its worker threads runs.
+   - The coordinator keeps its prompt cache warm while it or a worker runs (at most 1.5 hours after its last turn), and is compacted while still warm once its context passes 100k tokens. New coordinator and worker instructions reach existing sessions after an upgrade, without breaking the cache.
+   - It reads the repo itself and delegates edits, builds, tests and long research to visible worker threads. Worker prompts quote your words verbatim. Project memory lives in a tracked `MEMORY.md`.
+   - When you write in a worker thread yourself, the coordinator is not woken; it gets a silent note it reads at your next message.
+   - An agent pick in the channel (`/<agent>-agent` with a prompt, or a voice message naming an agent) starts a new thread with that agent. The coordinator keeps its own agent and model; change it with `/agent`, `/model` or `/<agent>-agent` without a prompt.
+   - `/reset-coordinator` starts a fresh coordinator at the next message. The old session stays in OpenCode.
+   - Your first answer to each message is a Discord reply to it (no ping), so you can see where each answer starts.
+   - Onboarding answers in the `#kimaki` channel instead of a thread.
+
+2. **Diagrams as images.** Agents draw diagrams with the new `kimaki diagram` command instead of ASCII art, then post the PNG with `kimaki upload-to-discord`:
+
+   ```bash
+   kimaki diagram flow.mmd -o flow.png
+   kimaki diagram flow.mmd -o flow.png --dark
+   ```
+
+   It renders Mermaid (flowchart, sequence, state, ER, gitGraph, mindmap, charts and more) locally in Node with [pele](https://pele.run) and resvg, no browser needed. Diagrams are light by default with color classes like `:::blue`, and Kimaki picks the layout closest to square so Discord does not shrink the text. The `--disable-prompt` section `ascii-diagrams` is now called `diagrams`.
+
+3. **Local Whisper transcription.** Set `KIMAKI_WHISPER_URL` and voice messages go to your own Whisper server instead of a cloud provider:
+
+   ```bash
+   KIMAKI_WHISPER_URL=http://127.0.0.1:8000/v1 kimaki
+   ```
+
+   Any server with the standard `/v1/audio/transcriptions` API works (speaches, faster-whisper-server, whisper.cpp server, LocalAI). When the URL is set it is the only transcriber, so audio never goes to a cloud provider. Optional: `KIMAKI_WHISPER_MODEL` (default `whisper-1`) and `KIMAKI_WHISPER_API_KEY`. Contributed by [@Xipzer](https://github.com/Xipzer) in #248.
+
+4. **`kimaki session wait` takes many sessions and says why each one returned.**
+
+   ```bash
+   kimaki session wait ses_abc 1495130000000000000 https://discord.com/channels/<guild>/<thread>
+
+   # wait for every other running session, in every project
+   kimaki session wait $(kimaki session list --all --active | awk '{print $1}')
+   ```
+
+   Each session starts with a header line, so agents no longer treat a paused session as done:
+
+   ```
+   === ses_abc finished its run ===
+   === ses_def is paused: it waits for the user to answer a question, so its work is not done ===
+   === ses_ghi is paused: it showed buttons (Commit, Discard) and waits for the user to click one, so its work may not be done ===
+   ```
+
+   With `--timeout`, sessions that still run get an `is still running after 30m` header and the command exits 1.
+
+5. **`kimaki send --wait` takes an optional number of seconds.** Bare `--wait` works like before (up to 1 day).
+
+   ```bash
+   kimaki send --thread <thread_id> --prompt 'Did the tests pass?' --wait 5
+   # still running: === ses_abc is still running after 5s. Run kimaki session wait ses_abc to wait for the rest ===
+   ```
+
+6. **New `kimaki session compact [id]`**, so agents can compact a session like `/compact`. It runs after the current turn ends.
+
+   ```bash
+   kimaki session compact              # the calling session
+   kimaki session compact <thread ID>  # another thread
+   ```
+
+7. **Context size and run time of sessions.** `kimaki session read` prints a usage line, and agents use it to start a fresh session instead of waking a cold long one (more than 400k tokens and idle for over 10 minutes):
+
+   ```
+   context: 412k tokens, last run took 12m 30s, last active 23m ago (2026-10-31T10:00:00.000Z)
+   ```
+
+   `kimaki session read` now prints only prompts and final answers. Use `--full` for every tool call, or `--thinking` for tool calls and reasoning. Agents read Discord session links with `--thinking`.
+
+8. **`/context-usage` shows whether the session is still working**, from OpenCode's message timestamps:
+
+   ```
+   **Status:** running for 4m 12s, running shell for 3m 50s
+   **Last activity:** 3m 50s ago, shell
+   ```
+
+9. **`/new-session` no longer needs a prompt.** Without one it creates an empty thread; your first message there starts the session with the agent picked in the command. The agent renames the thread on its first turn.
+
+   ```
+   /new-session agent:plan
+   ```
+
+10. **The model knows how much time passed** since its last reply. Prompts after an assistant reply reach the model with a note like `[2h 5m since your last message]`. The gap is stored in the prompt metadata, so the prompt cache keeps hitting and the TUI shows the clean prompt.
+
+11. **New `kimaki -V` / `kimaki --version`.**
+
+12. **New `--no-autostart` flag, and no more stray autostart Terminal windows.** The plugin now opens `autostart.command` only when the bot port refuses a TCP connection, so a busy bot no longer counts as missing. Bots run by launchd, systemd or pm2 can turn autostart off:
+
+    ```bash
+    kimaki --no-autostart
+    ```
+
+13. **Sleeping sessions.**
+    - A `kimaki sleep` of 45 minutes or less keeps the prompt cache warm until the wake (one keep-alive request every 4 minutes), so the wake reads the cache instead of writing it again.
+    - When an agent needs you to do something outside the chat (a sudo or permission dialog, a login), it asks, sleeps 5 minutes and checks again, so the work continues even if you forget to reply.
+    - Agents no longer lose their answer when a turn ends with `kimaki sleep` or `kimaki buttons`: they run the command first and write the answer right after it.
+
+14. **More concise replies.** Agents lead with the answer and write short, plain, complete sentences instead of fragments and "label: value" lines. After creating or editing a routine, the agent quotes its exact prompt with the schedule, agent and model.
+
+15. **Shorter footers.** The branch shows only when it is not the repo's default branch, the folder only when the session works outside the channel's project folder, and the agent only when it differs from the channel's default agent. Turns that posted nothing visible get no footer.
+
+    ```
+    -# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-5-5 ⋅ opus*   <- before
+    -# *2m 30s ⋅ 71% ⋅ claude-opus-5-5*                               <- now, on main
+    -# *kimaki-fix-login ⋅ fix-login ⋅ 40s ⋅ 12% ⋅ claude-opus-5-5 ⋅ plan*   <- worktree on another agent
+    ```
+
+16. **Prompts in threads are grey subtext and shown in full.** `kimaki send` prompts, follow-ups sent with `kimaki send --thread`, routines, TUI prompts, voice transcriptions and slash command prompts show as `-# » **CLI:** ...`. Long prompts and voice transcripts are split into several messages instead of being cut at 1900 characters (voice part by [@Xipzer](https://github.com/Xipzer) in #250). Queued prompts are shown once: when one starts, Kimaki replies `Queued message sent` to it instead of posting its text again.
+
+17. **Model and agent switches show in the thread**, for example `-# Switched model to Claude Opus 5.5 (high)`. A session also keeps the model picked with `/model` when a message names its current agent again (#249 by [@Xipzer](https://github.com/Xipzer)).
+
+18. **Quieter status lines.** After an automatic compaction the thread shows `context compacted to 179k tokens (18%)`. `prompt cache miss` shows only when a step wrote at least 50% of its prompt to the cache. Status lines no longer start with ⬦.
+
+19. **Discord media links show their preview** (`cdn.discordapp.com`, `media.discordapp.net`), for example an image uploaded in another thread.
+
+20. **`kimaki send` starts sessions about 3x faster**: the model starts right after the thread exists, while member adds and the prompt line are posted in the background.
+
+21. **`kimaki session list --active` includes sessions in linked worktrees** of the same project.
+
+22. **A stuck voice transcription no longer blocks the thread.** It gives up after 2 minutes (attachment downloads after 1 minute) and shows the error.
+
+23. **The `kimaki` command keeps working in agent shells after a Node upgrade** (`brew upgrade node`): the shim uses the `node` on `PATH` instead of a versioned Cellar path.
+
+24. **Windows agent shells work** in PowerShell, cmd.exe and Git Bash: env vars instead of a POSIX `export` prefix, a Git Bash `kimaki` script, and double quotes in `kimaki.cmd`.
+
+## 1.4.0
+
+1. **New `--disable-prompt <section>` flag** removes static parts of the Kimaki system prompt from new sessions. Repeat the flag or pass a comma separated list:
+
+   ```bash
+   kimaki --disable-prompt critique-diffs --disable-prompt discord-callouts
+   kimaki --disable-prompt markdown-formatting,ascii-diagrams,search-result-urls
+   ```
+
+   Sections: `discord-permissions`, `kimaki-debugging`, `file-upload-requests`, `action-buttons`, `session-sleep`, `session-abort`, `cross-project-commands`, `waiting-sessions`, `critique-diffs`, `markdown-formatting`, `discord-callouts`, `search-result-urls`, `ascii-diagrams`. `kimaki --help` lists them. Use it to drop rules you replace with your own AGENTS.md, for example a different diff tool than critique. Existing sessions keep their prompt.
+
+   The tunnel hint moves out of the system prompt into the `kimaki-tunnel` skill description, so `--disable-skills kimaki-tunnel` now removes all tunnel instructions.
+
+2. **Removed the `kimaki --message-tool` mode** added in 1.3.0. Agents no longer get a `send_message` tool, and Discord shows the agent's normal text replies again. Remove `--message-tool` from your start command.
+
+3. **`kimaki tunnel` works with Vite without `server.allowedHosts`.** Requests now go through a small loopback proxy that sets `Host: localhost:<port>`, like traforo did. Vite HMR WebSockets go through the proxy too. The public host is still available to the app:
+
+   ```
+   Host:              localhost:5173
+   X-Forwarded-Host:  my-app.<id>.opentunnel.xyz
+   X-Forwarded-Proto: https
+   ```
+
+   You can remove `allowedHosts: ['.opentunnel.xyz']` from your Vite config.
+
+4. **`kimaki tunnel` accepts traforo-style tunnel IDs and fails fast on conflicts.**
+   - `-t` names and tuistory session IDs map to a valid subdomain. `-t My_App` gives `https://my-app.<id>.opentunnel.xyz`, so a tuistory session like `Holocron_Dev` keeps `holocron-dev` across restarts.
+   - `-t <id>` fails at once when another process already serves that ID, instead of waiting 60 seconds.
+   - `--kill` works on Windows (`netstat`).
+   - Agents are told to validate with the `Local:` URL, which is much faster than the tunnel URL.
+
+5. **Searchable transcripts hold more of each session** (`<data-dir>/transcripts/<session id>.md`): thinking text, tool inputs up to 5000 chars, and readable compaction summaries, synthetic and system messages. Tool outputs stay out. Rewrite old transcripts once:
+
+   ```bash
+   kimaki session sync --all --rebuild
+   ```
+
+6. **Fewer prompt cache misses.** Compaction and OpenCode `warming` requests now get the same prompt changes as normal turns. You can enable session warming in `opencode.json` to keep the Anthropic cache alive between messages:
+
+   ```json
+   { "warming": { "duration": "30 minutes" } }
+   ```
+
+7. **Blockquotes with empty lines stay one quote in Discord**, instead of showing literal `>` characters between quote blocks.
+
+## 1.3.0
+
+1. **New `kimaki --message-tool` mode.** Discord shows only a concise reply that the agent sends with a `send_message` tool. Off by default.
+
+   ```bash
+   kimaki --message-tool
+   ```
+
+   The agent still writes its normal text, so the session stays fully readable in the OpenCode TUI. Threads skip "I'll read the file" narration and show only real updates and results.
+
+   ```
+   model text             ──▶ OpenCode TUI (hidden in Discord)
+   send_message({ text }) ──▶ Discord message, rendered as markdown
+   ```
+
+   - Only root sessions of the thread get the tool. Subagents and your own OpenCode TUI sessions never see it.
+   - The tool list and system text stay the same for the whole session, so the prompt cache keeps hitting.
+   - If a turn ends without a `send_message` call, Kimaki posts the last plain text, so a turn is never silent.
+   - Autostart and `kimaki restart` keep the flag.
+
+2. **`kimaki tunnel` uses [opentunnel.xyz](https://opentunnel.xyz) instead of traforo.** TLS ends on your machine, so the relay never sees the traffic.
+
+   ```bash
+   kimaki tunnel -- pnpm dev
+   # Local:  http://localhost:5173
+   # Tunnel: https://3f9c2a71d04be6e8.7bnpwpr25iaa.opentunnel.xyz
+   ```
+
+   - URLs are `https://<name>.<machine id>.opentunnel.xyz`. `-t <name>` sets a fixed name.
+   - The child process gets `KIMAKI_TUNNEL_URL`. `TRAFORO_URL` is still set to the same URL, so existing setups keep working:
+
+     ```bash
+     kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$KIMAKI_TUNNEL_URL exec pnpm dev'
+     ```
+
+   - The first run on a machine creates its tunnel and waits up to a minute for a certificate. The identity is shared with the `opentunnel` CLI (`~/.local/share/opentunnel/default`).
+   - Vite rejects unknown `Host` headers: set `server.allowedHosts: ['.opentunnel.xyz']`.
+
+3. **Bots with the Kimaki role can use Kimaki again**, as in 0.31 and as the docs say. This restores multi-agent setups where one bot sends prompts to Kimaki.
+   - A bot needs the `Kimaki` role. Administrator, Manage Server and `--allow-all-users` do not let a bot in, so notifier bots never start sessions by accident.
+   - The `no-kimaki` role still blocks a bot.
+   - Webhook messages and Kimaki's own messages are still ignored, except `kimaki send` remote envelopes.
+
+## 1.2.0
+
+1. **`--allow-all-users` is back.** Every member of the server can use the bot, without the Kimaki role, Administrator or Manage Server. Useful for public demo servers:
+
+   ```bash
+   kimaki --allow-all-users
+   ```
+
+   The `no-kimaki` role still blocks a user. `/login` and `/transcription-key` stay limited to the server owner and Administrators. The flag is also kept in the autostart script.
+
+## 1.1.0
+
+1. **Session transcripts you search with `rg`** (replaces `kimaki session search`). Kimaki writes one markdown file per session to `<data-dir>/transcripts/<session id>.md` when a run ends: user messages, assistant text and short tool inputs. No tool outputs, no thinking.
+
+   ```bash
+   rg -il 'auth timeout' ~/.kimaki/transcripts          # sessions that mention it; the file name is the session ID
+   rg -i -C3 'auth timeout' ~/.kimaki/transcripts/ses_xxx.md
+   ```
+
+   Sessions Kimaki did not run, and old sessions, are written by the new sync command. It skips current transcripts, so running it again is cheap:
+
+   ```bash
+   kimaki session sync                # last 14 days
+   kimaki session sync --days 60
+   kimaki session sync --all          # every session, any age
+   kimaki session sync --rebuild      # write all again
+   ```
+
+2. **Exact file and image order, numbered.** `kimaki upload-to-discord` takes many files in one call and posts them in argument order, each with a numbered label, so you and the agent can point at "image 2":
+
+   ```bash
+   kimaki upload-to-discord before.png report.pdf after.png
+   ```
+
+   Files you attach to a Discord message reach the model as one numbered `<attachments>` list in the order you attached them, inline images included.
+
+3. **Built-in `kimaki-debug` and `kimaki-tunnel` skills, and `--disable-skills`.** The debugging docs (logs, profiling, `kimaki login`, bug reports) and the `kimaki tunnel` docs moved out of the agent prompt into skills that load on demand. Built-in skills do not show as Discord slash commands.
+
+   ```bash
+   kimaki --disable-skills kimaki-tunnel   # turn off one
+   kimaki --disable-skills all             # turn off all
+   ```
+
+4. **`/model` shows the real OpenCode default.** When no channel or global model is set, `/model` shows `Current (OpenCode default): provider/model` instead of a vague "OpenCode default".
+5. **Fixed autostart on Node 22.** The bot crashed with `SyntaxError: Unexpected identifier 'cleanup'`. The autostart window now also explains why it opened, which Node it uses and how to stop the bot. If the Node that last ran the bot was removed, autostart falls back to `node` from `PATH`.
+6. **Fixed `/model` saying "No providers with credentials found"** the first time it runs for a project that OpenCode has not loaded yet.
+7. **One plugin less in your OpenCode config folder.** The `OpenCode session ID: ses_...` line now comes from the `kimaki` plugin. On start the bot removes the old `~/.config/opencode/plugins/kimaki-session-id` shim. If you listed `kimaki/dist/plugin/session-id` in `opencode.json`, remove that entry.
+8. **OpenCode 1 error points to the older Kimaki** (`npx kimaki@0`) for users who must stay on OpenCode 1.
+9. **OpenCode client and plugin packages updated to 2.0.29.**
+
 ## 1.0.0
 
 Kimaki 1.0 is a rewrite on top of **OpenCode 2**. The Discord side looks the same as before: one channel per project, one thread per session, same footer, same slash commands. What changed is underneath, and most of it is good news for your sessions, your cache and your OpenCode setup. A few things were removed, listed at the end.

@@ -138,14 +138,14 @@ test('single question answered from the dropdown', async () => {
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text({ showInteractions: true })).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Pick a color ask-one
+    -# » **CLI:** Pick a color ask-one
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
     ✓ _Blue_
     [user selects dropdown: 1]
     answers received ask-one
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -163,7 +163,7 @@ test('two questions: the form is answered after both, multi-select keeps options
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Two questions ask-two
+    -# » **CLI:** Two questions ask-two
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -172,7 +172,7 @@ test('two questions: the form is answered after both, multi-select keeps options
     Which fruits do you like?
     ✓ _Apple, Kiwi, Banana_
     answers received ask-two
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const sessionId = bot.store.getState().roots[thread.id]!
   const messages = await (await server.client()).message.list({ sessionID: sessionId })
@@ -189,13 +189,13 @@ test('Other opens a modal and sends the typed answer', async () => {
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Custom color ask-other
+    -# » **CLI:** Custom color ask-other
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
     ✓ _Teal_
     answers received ask-other
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -246,10 +246,10 @@ test('OpenCode forms without the question tool (web search setup, yes/no) show l
   `)
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Hello instead-marker
+    -# » **CLI:** Hello instead-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     did the other thing
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     **Web Search**
     Allow OpenCode to search the web for up-to-date information?
     ✓ _Disable web search_
@@ -266,7 +266,7 @@ test('a new message cancels the pending question and is answered', async () => {
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Ask then change ask-cancel
+    -# » **CLI:** Ask then change ask-cancel
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -275,7 +275,7 @@ test('a new message cancels the pending question and is answered', async () => {
     Forget it instead-marker
     --- from: assistant (TestBot)
     did the other thing
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -294,7 +294,7 @@ test('a restarted bot shows the pending question again and it still works', asyn
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Survive restart ask-restart
+    -# » **CLI:** Survive restart ask-restart
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -302,7 +302,7 @@ test('a restarted bot shows the pending question again and it still works', asyn
     Which color do you prefer?
     ✓ _Red_
     answers received ask-restart
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -318,7 +318,7 @@ test('Kimaki sessions hide the question tool by default', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     answers received ask-denied
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(thread.id).getMessages()
   expect(messages.flatMap(selectsOf)).toEqual([])

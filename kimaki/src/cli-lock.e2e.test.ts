@@ -34,16 +34,23 @@ test('CLI send starts and continues a session through the authenticated bot API'
   const first = await cli(['send', '--channel', twin.channelId, '--prompt', 'CLI first'])
   const ids = JSON.parse(first.stdout) as { threadId: string; sessionId: string }
   await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  // Follow-ups into an idle thread have no Discord message: the thread must still show them.
   await cli(['send', '--thread', ids.threadId, '--prompt', 'CLI second. queue'])
   await waitForFooter({ discord: twin.discord, threadId: ids.threadId, count: 2 })
+  await cli(['send', '--thread', ids.threadId, '--prompt', 'CLI third'])
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId, count: 3 })
   expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** CLI first
+    -# » **CLI:** CLI first
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **CLI:** CLI second
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **CLI:** CLI third
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(ids.sessionId).toMatch(/^ses_/)
   const tokenFile = path.join(dataDir, 'lock-token')
@@ -57,12 +64,58 @@ test('CLI send starts and continues a session through the authenticated bot API'
   expect(invalid.status).toBe(400)
 })
 
+test('CLI send shows a prompt over 2000 chars in full, split into messages', async () => {
+  const prompt = Array.from({ length: 30 }, (_, index) => `line ${String(index).padStart(2, '0')}: ${'x'.repeat(70)}`).join('\n')
+  const sent = await cli(['send', '--channel', twin.channelId, '--prompt', prompt])
+  const ids = JSON.parse(sent.stdout) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    -# » **CLI:** line 00: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 01: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 02: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 03: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 04: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 05: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 06: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 07: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 08: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 09: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 10: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 11: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 12: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 13: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 14: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 15: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 16: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 17: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 18: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 19: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 20: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 21: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 22: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 23: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 24: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 25: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 26: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 27: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 28: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# line 29: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  const messages = await twin.discord.thread(ids.threadId).getMessages()
+  expect(messages.every((message) => message.content.length <= 2000)).toBe(true)
+})
+
 test('CLI help documents the supported P7 commands', async () => {
   const output = await cli(['--help'])
   expect(output.stdout).toContain('send')
   expect(output.stdout).toContain('upload-request')
-  expect(output.stdout).toMatchInlineSnapshot(`
-    "kimaki
+  // The header is `kimaki/<version>`; keep the snapshot stable across releases.
+  expect(output.stdout.replace(/^kimaki\/[^\n]+/, 'kimaki/<version>')).toMatchInlineSnapshot(`
+    "kimaki/<version>
 
     Usage:
       $ kimaki [options]
@@ -89,17 +142,16 @@ test('CLI help documents the supported P7 commands', async () => {
         --exclude <id>                  Exclude session (repeatable)
         --json                          Output as JSON
 
-      session search <query>            Search titles, then real message content
+      session sync                      Write session transcripts to <data-dir>/transcripts for rg; skips current ones
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --project <path>                Project (default: current directory)
-        -c, --channel <id>              Project of this Discord channel
-        --all                           All projects
-        --days <n>                      Recent days (default: 14; 0 = all)
+        --days <n>                      Sessions updated in the last n days (default: 14)
+        --all                           All sessions, any age
+        --rebuild                       Write transcripts again, also current ones
         --json                          Output as JSON
 
-      session wait <id>                 Wait until idle or waiting for input, then print the session
+      session wait [...ids]             Wait until every session is idle or waits for the user, then print each one and why it returned
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --timeout <duration>            Timeout, for example 30m or 2h
+        --timeout <duration>            Timeout, for example 30m or 2h; exit 1 when a session still runs
 
       session editors <file>            List sessions that last edited a file, newest first
         --data-dir <path>               Data directory (default: ~/.kimaki)
@@ -133,6 +185,9 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
       session archive [id]              Archive a session thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+
+      session compact [id]              Summarize the session history after its current turn (default: this session)
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
       session title <title>             Rename the session and its Discord thread
@@ -183,7 +238,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              Destination channel (default: channel of the session folder)
 
-      buttons                           Show 1-3 action buttons. Call last, after visible text
+      buttons                           Show 1-3 action buttons. Explain them in your text
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -b, --button <spec>             Repeatable: Label[:white|blue|green|red]
@@ -213,7 +268,7 @@ test('CLI help documents the supported P7 commands', async () => {
         -d, --project <path>            Project directory of the new thread
         --thread <id>                   Continue this thread (ID or URL)
         -s, --session <id>              Continue this session: session ID, thread ID or thread URL
-        -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported
+        -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported (required)
         -f, --file <path>               Attach a local file (repeatable)
         -n, --name <text>               Thread name
         --agent <name>                  Agent ID
@@ -225,7 +280,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --parent-session <id>           Record the parent session in session metadata
         --permission <rule>             Repeatable: tool[:pattern]:allow|deny|ask
         --notify-only                   Post a notification thread without a model turn
-        --wait                          Wait until idle or input is needed, then print the session
+        --wait [seconds]                Wait until idle or input is needed (at most this many seconds, default 1 day), then print the session
         --send-at <when>                Schedule: UTC ISO date ending in Z, or cron expression (UTC)
         --pre-run <command>             Scheduled only: run first in the project. Exit 0 starts, stdout is appended
         --allow-concurrency             Scheduled only: allow overlapping runs of this routine
@@ -233,10 +288,11 @@ test('CLI help documents the supported P7 commands', async () => {
       session events <id>               Print the recorded OpenCode events of a thread as JSONL (root + subagents)
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      session read <id>                 Print the messages of a session from OpenCode as markdown
+      session read <id>                 Print the prompts and final answers of a session as markdown
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --thinking                      Include reasoning
-        --verbose                       Include full tool inputs and outputs
+        --full                          Every message with tool calls
+        --thinking                      Full output with reasoning
+        --verbose                       Full output with tool inputs and outputs
         --json                          Print raw OpenCode messages
 
       session cwd [directory]           Show or change the working directory at a native safe boundary
@@ -296,7 +352,7 @@ test('CLI help documents the supported P7 commands', async () => {
       routine run <routineId>           Run a routine now
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      sleep                             Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes
+      sleep                             Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes. When blocked on a user action outside the chat (a sudo or permission dialog, a login), ask for it, assume they will do it, and sleep 5m, then check and continue on your own
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --duration <duration>           Relative wait, e.g. 30m, 2h, 1d
         --until <date>                  UTC ISO date ending in Z
@@ -316,15 +372,19 @@ test('CLI help documents the supported P7 commands', async () => {
         -q, --query <text>              Name filter
         --json                          Output as JSON
 
-      upload-to-discord <...files>      Attach local files to a session thread or the Kimaki voice channel chat
+      upload-to-discord <...files>      Attach local files to a session thread or the Kimaki voice channel chat. Pass many files in one call: Discord shows them numbered in argument order
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -c, --channel <id>              Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)
 
+      diagram <input>                   Render a Mermaid diagram (file path, or - for stdin) to a light themed PNG. Upload it with upload-to-discord
+        -o, --output <path>             PNG file to write (default: input path with .png, or a temp file for stdin)
+        --dark                          Dark theme instead of light
+
       Tools:
-      tunnel                            Run a command and expose its local port with a public URL. The child gets TRAFORO_URL
+      tunnel                            Run a command and expose its local port with a public opentunnel.xyz URL. The child gets KIMAKI_TUNNEL_URL
         -p, --port <port>               Local port (default: read from the command output)
-        -t, --tunnel-id <id>            Fixed tunnel ID (default: random). Only for public-safe services
+        -t, --tunnel-id <id>            Fixed subdomain (default: random). Only for public-safe services
         --host <host>                   Local host (default: localhost)
         -k, --kill                      Kill the process on --port first
 
@@ -378,10 +438,16 @@ test('CLI help documents the supported P7 commands', async () => {
       --machine-name <name>         Name in this machine's category "Kimaki <name>" (default: hostname)
       --restart-onboarding          Choose credentials again
       --worktrees                   Use a fresh Git worktree for new sessions unless the channel overrides it
+      --allow-all-users             Every server member can use the bot (role "no-kimaki" still denies; provider login stays admin-only)
       --voice <name>                Voice of voice calls, saved for later starts (e.g. cove, juniper, sol). "default" resets it
+      --disable-skills <list>       Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)
+      --disable-prompt <section>    System prompt section to remove from new sessions (repeatable): discord-permissions, kimaki-debugging, file-upload-requests, action-buttons, session-sleep, session-abort, cross-project-commands, waiting-sessions, critique-diffs, markdown-formatting, discord-callouts, search-result-urls, diagrams
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
+      --coordinator [enabled]       Channel messages go to one long coordinator session that starts threads for the work. "false" turns it off (/toggle-coordinator sets one channel) (default: true)
+      --no-autostart                Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message
+      -V, --version                 Display version number
     "
   `)
 })
@@ -408,16 +474,20 @@ test('CLI registry shares thread actions, preferences, title and archive', async
   await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.threadId])
   await expect(cli(['session', 'queue', 'list', '--session', 'not-an-id'])).rejects.toThrow('Not a session ID, Discord thread ID or thread URL: not-an-id')
   await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
+  // The deterministic model writes no summary template, so the compaction runs and fails.
+  expect(JSON.parse((await cli(['session', 'compact', started.threadId])).stdout)).toEqual({ sessionId: started.sessionId, queued: true })
   await cli(['session', 'abort', started.sessionId])
   await cli(['session', 'archive', started.threadId])
   expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Registry first
+    -# » **CLI:** Registry first
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **CLI:** Registry queued
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*
+    ✗ compaction failed: Compaction summary did not match the required template"
   `)
   expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
 })
@@ -430,10 +500,10 @@ test('send settings reach native session creation; notifications create no sessi
   await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
   expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Send settings
+    -# » **CLI:** Send settings
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *subfolder ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *subfolder ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ build*"
   `)
   const info = await (await server.client()).session.get({ sessionID: ids.sessionId })
   expect(info.location.directory).toBe(subdir)

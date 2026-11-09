@@ -5,12 +5,13 @@
 //        ├─ table                ──▶ table segment (Components V2 later)
 //        ├─ heading depth > 3    ──▶ clamped to ###
 //        ├─ list with code items ──▶ code lifted after its item
+//        ├─ blockquote           ──▶ bare ">" lines become "> "
 //        └─ other nodes          ──▶ original source slices, packed into ≤ limit
 //
 // Text is sliced from the original source by node offsets, never
 // re-serialized, so the model's markdown reaches Discord unchanged. Only
 // oversized nodes are split: code by lines (each piece a valid fence), lists
-// by items, paragraphs by sentences, then words.
+// by items, paragraphs by lines, sentences, then words.
 
 import type { Code, List, ListItem, Root, RootContent, Table } from 'mdast'
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -162,16 +163,17 @@ function codePieces(source: string, code: Code, limit: number): string[] {
   return codeBlocks({ fence, lang: code.lang ?? '', value: code.value, limit })
 }
 
-// Sentences first, then words, then a hard cut.
+// Lines first, then sentences, then words, then a hard cut.
 function splitText(text: string, limit: number): string[] {
   if (text.length <= limit) return [text]
-  const units = text.split(/(?<=[.!?])\s+/)
-  const byWords = units.flatMap((unit) => (unit.length <= limit ? [unit] : unit.split(/(?<=\s)/)))
+  // Every unit keeps its trailing whitespace, so packing joins them as they were.
+  const units = text.split(/(?<=\n)/).flatMap((line) => (line.length <= limit ? [line] : line.split(/(?<=[.!?]\s+)(?=\S)/)))
+  const byWords = units.flatMap((unit) => (unit.length <= limit ? [unit] : unit.split(/(?<=\s)(?=\S)/)))
   const parts = byWords.flatMap((unit) => {
     if (unit.length <= limit) return [unit]
     return Array.from({ length: Math.ceil(unit.length / limit) }, (_, index) => unit.slice(index * limit, (index + 1) * limit))
   })
-  return pack(parts, limit, ' ')
+  return pack(parts, limit, '')
 }
 
 function pack(parts: string[], limit: number, separator: string): string[] {
@@ -217,7 +219,8 @@ function nodePieces(source: string, node: RootContent, limit: number): string[] 
     return unnestList(source, node, limit).flatMap((piece) => (piece.length <= limit ? [piece] : splitText(piece, limit)))
   }
   if (node.type === 'code') return codePieces(source, node, limit)
-  const text = slice(source, node)
+  // Discord quotes need "> " plus a space; a bare ">" line shows as a literal ">".
+  const text = node.type === 'blockquote' ? slice(source, node).replace(/^( *>)$/gm, '$1 ') : slice(source, node)
   if (text.length <= limit) return [text]
   if (node.type === 'list') {
     const items = node.children.map((item) => slice(source, item))

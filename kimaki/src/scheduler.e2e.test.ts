@@ -12,10 +12,13 @@ import {
   manualClock,
   schedulingKit,
   seedProjectChannel,
+  slowTextMatcher,
   startOpencodeTestServer,
   startTestBot,
   startTwin,
   tempDataDir,
+  textParts,
+  waitForBotMessageContaining,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
@@ -30,7 +33,10 @@ let bot: BotHandle
 const { cli, schedule, tick, listTasks, request } = schedulingKit({ suite: () => ({ bot, twin, server }), dataDir, clock })
 
 beforeAll(async () => {
-  ;[server, twin] = await Promise.all([startOpencodeTestServer(), startTwin()])
+  ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers: [
+    slowTextMatcher({ marker: 'slow-marker', text: 'slow-done', delayMs: 800 }),
+    { id: 'report', priority: 50, when: { latestUserTextIncludes: 'Report when done' }, then: { parts: textParts('report ok') } },
+  ] }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   bot = await startTestBot({ dataDir, twin, server, clock, schedulerIntervalMs: null })
   await warmUp({ server })
@@ -51,10 +57,10 @@ test('a one-shot routine starts a thread at its time, then is gone', async () =>
   await waitForFooter({ discord: twin.discord, threadId: threadId! })
   expect(await twin.discord.thread(threadId!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **routine #1:** Check the deploy once
+    -# » **routine #1:** Check the deploy once
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   const thread = (await twin.discord.channel(twin.channelId).getThreads()).find((candidate) => candidate.id === threadId)
   expect(thread?.name).toBe('Deploy check')
@@ -93,10 +99,10 @@ test('a cron routine fires once per occurrence, in a new thread each time', asyn
   expect([first.length, second.length]).toEqual([1, 1])
   expect(await twin.discord.thread(second[0]!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **routine #2:** Hourly report
+    -# » **routine #2:** Hourly report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((row) => row.id === task.routineId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T13:00:00.000Z' })
   await request('task.delete', { id: task.routineId })
@@ -114,16 +120,16 @@ test('a routine for an existing thread prompts that thread, with or without . qu
   await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 3 })
   expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Thread for a reminder
+    -# » **CLI:** Thread for a reminder
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    » **routine #3:** Reminder: check the logs
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **routine #3:** Reminder: check the logs
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    » **routine #4:** Then summarize them
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# » **routine #4:** Then summarize them
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })
 
@@ -136,14 +142,12 @@ test('--pre-run: a failing command skips the run, output is appended to the prom
   await waitForFooter({ discord: twin.discord, threadId: created[0]! })
   expect(await twin.discord.thread(created[0]!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **routine #6:** Summarize the new issues
-
-    ## Pre-run command output
-
-    issue 42 is new
+    -# » **routine #6:** Summarize the new issues
+    -# **Pre-run command output**
+    -# issue 42 is new
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   // A skipped one-shot is done too, like V1.
   expect((await listTasks()).filter((row) => row.id === skipped.routineId || row.id === ran.routineId)).toEqual([])
@@ -162,14 +166,14 @@ test('recurring worktree routines get a fresh checkout on every run', async () =
   const normalize = (text: string) => text.replace(/report-[a-f0-9]{8}/g, 'report-ID')
   expect(normalize(await twin.discord.thread(first[0]!).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **routine #7:** Isolated recurring report
+    -# » **routine #7:** Isolated recurring report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(normalize(await twin.discord.thread(second[0]!).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **routine #7:** Isolated recurring report
+    -# » **routine #7:** Isolated recurring report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
@@ -179,4 +183,26 @@ test('recurring worktree routines get a fresh checkout on every run', async () =
   expect(new Set(directories).size).toBe(2)
   expect(directories.every((directory) => directory !== server.projectDirectory)).toBe(true)
   await request('task.delete', { id: task.routineId })
+})
+
+// Without --allow-concurrency a thread routine waits until the thread is idle, then runs at once.
+test('a . queue routine with --allow-concurrency that fires while its thread is busy waits in the queue, then gets its reply', async () => {
+  const started = await send(bot, { channelId: twin.channelId, prompt: 'Long work slow-marker' })
+  if (started instanceof Error) throw started
+  await waitForBotMessageContaining({ discord: twin.discord, threadId: started.threadId, text: '*using ' })
+  await request('send', { threadId: started.threadId, prompt: 'Report when done. queue', sendAt: '2030-01-01T19:00:00Z', allowConcurrency: true })
+  expect(await tick('2030-01-01T19:00:00Z')).toEqual([])
+  await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
+  expect(await twin.discord.thread(started.threadId).text({ showReplies: true })).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    -# » **CLI:** Long work slow-marker
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# » **routine #8:** Report when done
+    slow-done
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to TestBot: -# » **routine #8:** Report when done]
+    -# Queued message sent
+    report ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
 })

@@ -6,7 +6,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { SessionMetadata } from '@opencode/client'
-import type { TextChannel, ThreadChannel } from 'discord.js'
+import type { TextChannel } from 'discord.js'
 import * as orm from 'drizzle-orm'
 
 import {
@@ -14,6 +14,7 @@ import {
   globalModel,
   oc,
   parseModel,
+  projectChannelOf,
   projectOf,
   readMarker,
   rootSession,
@@ -22,6 +23,7 @@ import {
   textChannel,
   type Author,
   type Bot,
+  type Conversation,
   type ModelChoice,
   type PromptFile,
 } from './bot.ts'
@@ -29,10 +31,11 @@ import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableE
 import { SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
-import { prompt, runInSession } from './prompt.ts'
+import { prompt, runInSession, type Sender } from './prompt.ts'
 import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
+import { disabledSkillRules } from './builtin-skills.ts'
 import { baseInstructions, INSTRUCTION_KEY, type ScheduledRun } from './system-prompt.ts'
 import { createWorktree, resolveWorkingDirectory } from './worktrees.ts'
 
@@ -72,14 +75,14 @@ export function btwPrompt({
   ].join('\n')
 }
 
-// Project channel, project directory and current cwd of a session thread.
-export async function threadProject(bot: Bot, thread: ThreadChannel) {
-  const channelId = thread.parentId
-  if (!channelId) return new DiscordError({ operation: `find the channel of thread ${thread.id}` })
+// Project channel, project directory and current cwd of a conversation's root session.
+export async function conversationProject(bot: Bot, conversation: Conversation) {
+  const channelId = projectChannelOf(conversation)
+  if (!channelId) return new DiscordError({ operation: `find the channel of conversation ${conversation.id}` })
   const row = await projectOf(bot, channelId)
   if (row instanceof Error) return row
   if (!row) return new DiscordError({ operation: `find the project of channel ${channelId}` })
-  const sessionId = rootSession(bot, thread.id)
+  const sessionId = rootSession(bot, conversation.id)
   if (sessionId instanceof Error) return sessionId
   const directory = await sessionDirectory(bot, sessionId)
   if (directory instanceof Error) return directory
@@ -88,8 +91,8 @@ export async function threadProject(bot: Bot, thread: ThreadChannel) {
 
 // /cwd and `kimaki session cwd`: show the cwd, or move the session to a
 // project subfolder or linked worktree.
-export async function sessionCwd(bot: Bot, { thread, directory }: { thread: ThreadChannel; directory?: string }) {
-  const project = await threadProject(bot, thread)
+export async function sessionCwd(bot: Bot, { conversation, directory }: { conversation: Conversation; directory?: string }) {
+  const project = await conversationProject(bot, conversation)
   if (project instanceof Error) return project
   if (!directory) return { directory: project.directory }
   const destination = await resolveWorkingDirectory({
@@ -99,7 +102,7 @@ export async function sessionCwd(bot: Bot, { thread, directory }: { thread: Thre
   if (destination instanceof Error) return destination
   const plugin = await bot.features.waitForPlugin(destination)
   if (plugin instanceof Error) return plugin
-  const sessionId = rootSession(bot, thread.id)
+  const sessionId = rootSession(bot, conversation.id)
   if (sessionId instanceof Error) return sessionId
   const moved = await oc(bot, 'session.move', (client) => client.session.move({ sessionID: sessionId, directory: destination, delivery: 'steer' }))
   if (moved instanceof Error) return moved
@@ -127,70 +130,65 @@ export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string
   if (ready instanceof Error) return ready
 }
 
-export type AgentListItem = Awaited<ReturnType<OpenCodeClient['agent']['list']>>['data'][number]
+// Agents a session may switch to (not subagents, not hidden ones). OpenCode lists
+// its default agent (`default_agent`, else build) first: core/src/agent.ts `list`.
+export async function primaryAgents(bot: Pick<Bot, 'opencode'>, directory: string) {
+  const ready = await catalogReady(bot, directory)
+  if (ready instanceof Error) return ready
 
-// Agents a session may switch to (not subagents, not hidden ones).
-// Callers that already waited for plugin activation (startSession via waitForPlugin)
-// can skip the redundant integration.list round-trip.
-export async function primaryAgents(
-  bot: Bot,
-  directory: string,
-  { skipCatalogReady = false }: { skipCatalogReady?: boolean } = {},
-) {
-  if (!skipCatalogReady) {
-    const ready = await catalogReady(bot, directory)
-    if (ready instanceof Error) return ready
-  }
   const agents = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
   if (agents instanceof Error) return agents
   return agents.data.filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
 }
 
-export async function agentSelection(
-  bot: Bot,
-  { directory, agent, agents }: { directory: string; agent: string; agents?: AgentListItem[] },
-): Promise<
-  ConfigError | OpenCodeUnavailableError | OpenCodeError | { agent: string; model: ModelChoice | null; agents?: AgentListItem[] }
-> {
-  const wanted = (candidate: AgentListItem) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase()
-  const toResult = (list: AgentListItem[]) => {
-    const selected = list.find(wanted)
-    if (!selected) return null
-    const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
-    return { agent: selected.id, model, agents: list }
-  }
+// What a new session of the channel starts with: its project folder, and the channel agent or OpenCode's default agent.
+export async function channelDefaults(bot: Pick<Bot, 'db' | 'opencode'>, channelId: string) {
+  const row = await bot.db.query.channel_directories
+    .findFirst({ where: { channel_id: channelId }, with: { channel_agent: true } })
+    .catch((cause) => new DbError({ operation: 'read channel defaults', cause }))
+  if (row instanceof Error) return row
+  if (!row) return null
+  if (row.channel_agent) return { projectDirectory: row.directory, defaultAgent: row.channel_agent.agent_name }
+  const agents = await primaryAgents(bot, row.directory)
+  if (agents instanceof Error) return agents
+  return { projectDirectory: row.directory, defaultAgent: agents[0]?.id ?? null }
+}
 
-  if (agents && agents.some(wanted)) {
-    const found = toResult(agents)
-    if (found) return found
-  }
-
-  let lastList: AgentListItem[] | null = null
-  let lastError: ConfigError | OpenCodeUnavailableError | OpenCodeError | null = null
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if (attempt > 0) await sleep(200)
-    const list = await primaryAgents(bot, directory)
-    if (list instanceof Error) {
-      lastError = list
-      continue
-    }
-    lastList = list
-    const found = toResult(list)
-    if (found) return found
-  }
-  if (lastList) {
-    return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
-  }
-  return lastError ?? new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
+export async function agentSelection(bot: Bot, { directory, agent }: { directory: string; agent: string }) {
+  const agents = await primaryAgents(bot, directory)
+  if (agents instanceof Error) return agents
+  const selected = agents.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
+  if (!selected) return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
+  const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
+  return { agent: selected.id, model }
 }
 
 // OpenCode switches the agent and model separately, including the configured variant.
 export async function switchAgent(
   bot: Bot,
-  { sessionId, directory, agent, model }: { sessionId: string; directory: string; agent: string; model?: ModelChoice | null },
+  {
+    sessionId,
+    directory,
+    agent,
+    model,
+    reselect = false,
+  }: {
+    sessionId: string
+    directory: string
+    agent: string
+    model?: ModelChoice | null
+    // An explicit agent pick by the user (/agent, /<agent>-agent): apply the agent's model even when unchanged.
+    reselect?: boolean
+  },
 ) {
   const selected = await agentSelection(bot, { directory, agent })
   if (selected instanceof Error) return selected
+  // naming the session's current agent again (agents pass --agent <current_agent>
+  // on every send) keeps the model the session runs on, e.g. one set with /model.
+  if (!model && !reselect) {
+    const info = await oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId }))
+    if (!(info instanceof Error) && info.agent === selected.agent) return { ...selected, model: null }
+  }
   const choice = model ?? selected.model
   if (choice) {
     const switched = await oc(bot, 'session.switchModel', (client) => client.session.switchModel({
@@ -209,7 +207,7 @@ async function putInstructions(
   bot: Bot,
   {
     sessionId,
-    thread,
+    conversation,
     channel,
     directory,
     userId,
@@ -218,7 +216,7 @@ async function putInstructions(
     agents: providedAgents,
   }: {
     sessionId: string
-    thread: ThreadChannel
+    conversation: Conversation
     channel: TextChannel
     directory: string
     userId: string
@@ -227,14 +225,14 @@ async function putInstructions(
     agents?: AgentListItem[]
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
-  // The agent list is optional prompt context: a failure must not strand the thread.
-  const found = providedAgents ?? (await primaryAgents(bot, directory))
+  // The agent list is optional prompt context: a failure must not strand the conversation.
+  const found = await primaryAgents(bot, directory)
   if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
   const value = baseInstructions({
     sessionId,
-    threadId: thread.id,
+    threadId: conversation.id,
     channelId: channel.id,
     guildId: channel.guildId,
     userId,
@@ -243,6 +241,9 @@ async function putInstructions(
     agents,
     parentSessionId,
     scheduledTask,
+    // Derived from where the session lives, never from bindings that can be stale.
+    coordinator: conversation.id === channel.id,
+    disabled: bot.disabledPrompt,
   })
   const put = await oc(bot, 'instructions.entry.put', (client) =>
     client.session.instructions.entry.put({ sessionID: sessionId, key: INSTRUCTION_KEY, value }),
@@ -264,6 +265,7 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
     if (endpoint && active.get(endpoint)?.has(directory)) return
     const location = { directory }
     const deadline = Date.now() + 10_000
+    let loadError: string | undefined
     while (Date.now() < deadline) {
       const endpoint = bot.opencode.endpoint
       if (!endpoint) return new OpenCodeUnavailableError({ reason: 'not connected' })
@@ -279,7 +281,17 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
         active.set(endpoint, (active.get(endpoint) ?? new Set()).add(directory))
         return
       }
+      // A plugin that fails to load has no ID: find the shim directory by its path.
+      const failed = plugins.data.find((plugin) => plugin.source.type === 'local' && path.basename(plugin.source.path) === 'kimaki')
+      loadError = failed?.state.status === 'failed' ? (failed.state.ref ?? failed.state.error) : undefined
       await sleep(200)
+    }
+    if (loadError) {
+      // TODO: remove the restart hint once OpenCode's Bun evicts failed ESM loads; Bun 1.4.4 keeps
+      // them forever, so a reload during `pnpm build` stays broken after the build ends.
+      return new ConfigError({
+        reason: `Kimaki plugin failed to load in OpenCode (${loadError}); the OpenCode log has the cause. If it names code that no longer exists, OpenCode kept a stale failed load: run \`opencode service restart\``,
+      })
     }
     return new ConfigError({
       reason: `Kimaki plugin is not active in OpenCode for ${directory}. Kimaki writes it to <OpenCode config dir>/plugins/kimaki/ on start; check \`opencode plugin list\` and the OpenCode logs`,
@@ -296,13 +308,13 @@ export async function ensureSessionMarker(
   bot: Bot,
   {
     sessionId,
-    thread,
+    conversation,
     channelId,
     directory,
     userId,
   }: {
     sessionId: string
-    thread: ThreadChannel
+    conversation: Conversation
     channelId: string
     directory: string
     userId: string
@@ -316,13 +328,13 @@ export async function ensureSessionMarker(
   if (marker && marker.dataDir === bot.dataDir && marker.lockPort === bot.lockPort) return
   // Instructions first: the marker means "set up", so a failure here is retried on the next input.
   if (!marker) {
-    logger.log(`adopting legacy session ${sessionId} of thread ${thread.id}`)
+    logger.log(`adopting legacy session ${sessionId} of conversation ${conversation.id}`)
     const channel = await textChannel(bot, channelId)
     if (channel instanceof Error) return channel
-    const instructions = await putInstructions(bot, { sessionId, thread, channel, directory, userId })
+    const instructions = await putInstructions(bot, { sessionId, conversation, channel, directory, userId })
     if (instructions instanceof Error) return instructions
   }
-  const kimaki = { ...marker?.fields, source: 'discord', ...cliContext(bot), threadId: thread.id, channelId }
+  const kimaki = { ...marker?.fields, source: 'discord', ...cliContext(bot), threadId: conversation.id, channelId }
   const updated = await oc(bot, 'session.update', (client) =>
     client.session.update({ sessionID: sessionId, metadata: { ...info.metadata, kimaki } }),
   )
@@ -350,6 +362,37 @@ export async function refreshCliContext(bot: Bot) {
   }
 }
 
+type ChannelDefaults = {
+  channel_model?: { model_id: string; variant: string | null } | null
+  channel_agent?: { agent_name: string } | null
+}
+
+// Agent and model of a new session: an agent the input asked for, else the
+// channel agent; the model from the input, that agent, the channel, the global default.
+async function agentAndModel(
+  bot: Bot,
+  { defaults, route, directory, explicitModel }: { defaults: ChannelDefaults | undefined; route: Route; directory: string; explicitModel?: ModelChoice },
+) {
+  let requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name || null
+  // Bot-level default agent (--default-agent): only when no route or channel preference exists.
+  const useDefault = !requestedAgent && !!bot.defaultAgent
+  if (useDefault) requestedAgent = bot.defaultAgent
+  const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
+  if (selected instanceof Error) {
+    if (useDefault) logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, selected)
+    else return selected
+  }
+  const picked = selected instanceof Error ? null : selected
+  const agentModel = (route.kind === 'steer' && route.agent) ? picked?.model : null
+  const global = await globalModel(bot)
+  if (global instanceof Error) return global
+  const choice = explicitModel ?? agentModel ?? parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant) ?? picked?.model ?? global
+  const model = choice
+    ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
+    : undefined
+  return { model, agent: picked?.agent }
+}
+
 export async function startSession(
   bot: Bot,
   {
@@ -357,6 +400,7 @@ export async function startSession(
     directory: requestedDirectory,
     route,
     author,
+    members = [],
     messageId,
     startMessageId = messageId,
     showInput = startMessageId === null,
@@ -365,6 +409,7 @@ export async function startSession(
     model: explicitModel,
     permissions,
     parentSessionId,
+    sender,
     task,
     worktree,
     baseBranch,
@@ -375,6 +420,8 @@ export async function startSession(
     // The first input: a prompt, a shell command or an OpenCode command.
     route: Exclude<Route, { kind: 'btw' | 'new-session' | 'queue' }>
     author: Author
+    // More Discord users to add to the thread, next to the author (`kimaki send --user`).
+    members?: readonly string[]
     // The Discord message this input came from; it keys the prompt id.
     messageId: string
     // The thread starts from this message; null for a thread without one.
@@ -389,12 +436,13 @@ export async function startSession(
     model?: ModelChoice
     permissions?: PermissionRules
     parentSessionId?: string
+    sender?: Sender
     // A scheduled run (scheduler.ts): marks the session as started by this task.
     task?: ScheduledRun
     // undefined uses the channel default; false explicitly reuses an existing cwd.
     worktree?: string | false
     baseBranch?: string
-    // false: only set up the thread (/new-worktree), no first input.
+    // false: only set up the thread (/new-worktree, /new-session without a prompt), no first input.
     run?: boolean
   },
 ): Promise<Error | { threadId: string; sessionId: string }> {
@@ -407,7 +455,7 @@ export async function startSession(
   const useWorktree = typeof worktree === 'string' || (worktree !== false && channelWorktrees)
   const textSlug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-|-$/g, '') || 'session'
   const slug = typeof worktree === 'string' && worktree ? worktree : `${textSlug}-${crypto.randomBytes(4).toString('hex')}`
-  const threadName = explicitName ?? (useWorktree ? `⬦ ${slug}` : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
+  const threadName = explicitName ?? (useWorktree ? slug : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
 
   // The thread shows in Discord while the checkout, plugin, agent and model are resolved.
   const creating = (async () => {
@@ -417,8 +465,11 @@ export async function startSession(
       .create({ name: threadName, autoArchiveDuration: 1440, ...(startMessageId && { startMessage: startMessageId }) })
       .catch((cause) => new DiscordError({ operation: 'create thread', cause }))
     if (thread instanceof Error) return thread
-    // Discord only adds the thread creator (the bot); the user must be added to see it in the sidebar.
-    if (author.id !== bot.discord.user?.id) await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member`, e))
+    // Discord only adds the thread creator (the bot); users must be added to see it in the sidebar.
+    // Not awaited: the session does not need them, and each add is a Discord round trip.
+    for (const id of new Set([author.id, ...members])) {
+      if (id !== bot.discord.user?.id) void thread.members.add(id).catch((e: Error) => logger.warn(`add member ${id}`, e))
+    }
     return { channel, thread }
   })()
   const setup = await (async () => {
@@ -429,37 +480,9 @@ export async function startSession(
     const directory = checkout?.directory ?? requestedDirectory
     const plugin = await bot.features.waitForPlugin(directory)
     if (plugin instanceof Error) return plugin
-    // waitForPlugin already waits for plugin/markdown-agent activation via
-    // integration.list, so the catalog is usually complete. Read it once and
-    // reuse it; if the requested agent is missing, agentSelection refreshes the
-    // catalog and returns the list it actually used.
-    const initialAgents = await primaryAgents(bot, directory, { skipCatalogReady: true })
-    const agentsAvailable = !(initialAgents instanceof Error)
-    const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
-    const selected = await (async () => {
-      if (requestedAgent) return initialAgents instanceof Error ? initialAgents : agentSelection(bot, { directory, agent: requestedAgent, agents: initialAgents })
-      // Bot-level default agent (local fork, --default-agent): only when no
-      // route or channel preference exists. Unavailable here → warn and start
-      // stock, so a stale default never breaks session creation.
-      if (!bot.defaultAgent) return null
-      const fallback = initialAgents instanceof Error ? initialAgents : await agentSelection(bot, { directory, agent: bot.defaultAgent, agents: initialAgents })
-      if (fallback instanceof Error) {
-        logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, fallback)
-        return null
-      }
-      return fallback
-    })()
-    if (selected instanceof Error) return selected
-    const refreshedAgents = selected && 'agents' in selected && selected.agents ? selected.agents : (agentsAvailable ? initialAgents : null)
-    const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
-    const global = await globalModel(bot)
-    if (global instanceof Error) return global
-    const choice = explicitModel ?? agentModel ?? parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant) ?? selected?.model ?? global
-    const model = choice
-      ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
-      : undefined
-    const agents = refreshedAgents instanceof Error ? null : refreshedAgents
-    return { checkout, directory, model, agent: selected?.agent, agents }
+    const chosen = await agentAndModel(bot, { defaults, route, directory, explicitModel })
+    if (chosen instanceof Error) return chosen
+    return { checkout, directory, ...chosen }
   })()
   const created = await creating
   if (created instanceof Error) return created
@@ -475,6 +498,7 @@ export async function startSession(
     channelId,
     source: task ? 'task' : 'discord',
     ...(task && { taskId: task.id, task }),
+    ...(bot.warmupTimers && { warmup: bot.warmupTimers }),
     ...cliContext(bot),
     ...(parentSessionId && { parentSessionId }),
   }
@@ -484,7 +508,7 @@ export async function startSession(
       location: { directory },
       ...(model && { model }),
       ...(agent && { agent }),
-      permissions: [NO_QUESTION_TOOL, ...(permissions ?? [])],
+      permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills), ...(permissions ?? [])],
       metadata: { kimaki },
     }),
   )
@@ -493,7 +517,7 @@ export async function startSession(
 
   const instructions = await putInstructions(bot, {
     sessionId: session.id,
-    thread,
+    conversation: thread,
     channel,
     directory,
     userId: author.id,
@@ -506,9 +530,10 @@ export async function startSession(
   const bound = await bindThread(bot, { threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
   if (bound instanceof Error) return bound
   if (!run) {
+    const ready = checkout ? `Worktree ready: \`${directory}\`\nBranch: \`${checkout.branch ?? 'detached'}\`\n` : ''
     const posted = await thread
       .send({
-        content: `Worktree ready: \`${directory}\`\nBranch: \`${checkout?.branch ?? 'detached'}\`\nSend a message to start working.`,
+        content: `${ready}Send a message to start working.`,
         allowedMentions: { parse: [] },
         flags: SILENT_MESSAGE_FLAGS,
       })
@@ -519,25 +544,88 @@ export async function startSession(
   if (showInput) {
     const names = files.map((file) => file.name).join(', ')
     const shown = names ? `${text}\nFiles: ${names}` : text
-    const echo = await thread
-      .send({ content: formatEcho({ username: author.username, text: shown }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
-      .catch((cause) => new DiscordError({ operation: 'send first input', cause }))
-    if (echo instanceof Error) return echo
+    // Through the thread's effect queue, so the prompt does not wait for Discord,
+    // the echo comes before the session output and a long prompt is split.
+    bot.effects.run(thread.id, [{ type: 'send', text: formatEcho({ username: author.username, text: shown }), echo: true }])
   }
 
-  const first = route.kind === 'steer' ? { kind: 'steer' as const, text: route.text } : route
+  const base = { sessionId: session.id, threadId: thread.id, threadName, author, messageId, files, sender }
+  // A new session has no run, question or permission to cancel: prompt directly instead of steer().
+  const sent = route.kind === 'steer'
+    ? await prompt(bot, { ...base, text: route.text, delivery: 'steer' })
+    : await runInSession(bot, { ...base, directory, route })
+  if (sent instanceof Error) return sent
+  return { threadId: thread.id, sessionId: session.id }
+}
+
+// The first message of a coordinator channel: one long session that lives in the
+// channel itself, bound like a thread with the channel ID as its conversation.
+export async function startCoordinator(
+  bot: Bot,
+  {
+    channel,
+    route,
+    author,
+    messageId,
+    files = [],
+  }: {
+    channel: TextChannel
+    route: Exclude<Route, { kind: 'btw' | 'new-session' | 'queue' }>
+    author: Author
+    messageId: string
+    files?: readonly PromptFile[]
+  },
+): Promise<Error | { threadId: string; sessionId: string }> {
+  const defaults = await bot.db.query.channel_directories
+    .findFirst({ where: { channel_id: channel.id }, with: { channel_model: true, channel_agent: true } })
+    .catch((cause) => new DbError({ operation: 'read channel defaults', cause }))
+  if (defaults instanceof Error) return defaults
+  if (!defaults) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
+  const directory = defaults.directory
+  const plugin = await bot.features.waitForPlugin(directory)
+  if (plugin instanceof Error) return plugin
+  const chosen = await agentAndModel(bot, { defaults, route, directory })
+  if (chosen instanceof Error) return chosen
+  const title = `coordinator: ${channel.name}`
+  const session = await oc(bot, 'session.create', (client) =>
+    client.session.create({
+      title,
+      location: { directory },
+      ...(chosen.model && { model: chosen.model }),
+      ...(chosen.agent && { agent: chosen.agent }),
+      permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills)],
+      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.warmupTimers && { warmup: bot.warmupTimers }), ...cliContext(bot) } },
+    }),
+  )
+  if (session instanceof Error) return session
+  bot.analytics.track('session_created', { has_worktree: false, source: 'discord' })
+  const instructions = await putInstructions(bot, { sessionId: session.id, conversation: channel, channel, directory, userId: author.id })
+  if (instructions instanceof Error) return instructions
+  const bound = await bindThread(bot, { threadId: channel.id, sessionId: session.id, channelId: channel.id, directory, isNew: true })
+  if (bound instanceof Error) return bound
   const sent = await runInSession(bot, {
     sessionId: session.id,
-    threadId: thread.id,
-    threadName,
+    threadId: channel.id,
+    threadName: channel.name,
     directory,
-    route: first,
+    route,
     author,
     messageId,
     files,
   })
   if (sent instanceof Error) return sent
-  return { threadId: thread.id, sessionId: session.id }
+  return { threadId: channel.id, sessionId: session.id }
+}
+
+// /reset-coordinator: the channel forgets its coordinator. The next message starts a fresh
+// one; the old session stays in OpenCode for /resume.
+export async function endCoordinator(bot: Bot, channelId: string): Promise<DbError | void> {
+  const deleted = await bot.db
+    .delete(schema.thread_sessions)
+    .where(orm.eq(schema.thread_sessions.thread_id, channelId))
+    .catch((cause) => new DbError({ operation: 'delete coordinator binding', cause }))
+  if (deleted instanceof Error) return deleted
+  bot.eventLoop.unbind(channelId)
 }
 
 // --- Sessions that get a new thread: /resume, /fork, /fork-subagent, btw.
@@ -595,14 +683,14 @@ async function adoptSession(
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }
     // A session with its own question rule (a fork, or --permission) keeps it.
     const rules = session.permissions ?? []
-    const permissions = rules.some((rule) => rule.action === 'question') ? rules : [NO_QUESTION_TOOL, ...rules]
+    const permissions = rules.some((rule) => rule.action === 'question') ? rules : [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills), ...rules]
     const marked = await oc(bot, 'session.update', (client) =>
       client.session.update({ sessionID: sessionId, metadata: { ...session.metadata, kimaki }, permissions }),
     )
     if (marked instanceof Error) return marked
     const instructions = await putInstructions(bot, {
       sessionId,
-      thread,
+      conversation: thread,
       channel,
       directory: session.location.directory,
       userId: author.id,
@@ -703,7 +791,7 @@ export async function resume(bot: Bot, { channelId, sessionId, author }: { chann
 export async function fork(
   bot: Bot,
   {
-    sourceThread,
+    source,
     sessionId,
     before,
     subagent,
@@ -711,7 +799,7 @@ export async function fork(
     author,
     worktree,
   }: {
-    sourceThread: ThreadChannel
+    source: Conversation
     sessionId: string
     before?: string
     // Thread name; default is OpenCode's fork title.
@@ -723,7 +811,7 @@ export async function fork(
     worktree?: { name: string; baseBranch?: string }
   },
 ) {
-  const root = rootSession(bot, sourceThread.id)
+  const root = rootSession(bot, source.id)
   if (root instanceof Error) return root
   if (sessionId !== root) {
     const info = await oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId }))
@@ -732,7 +820,7 @@ export async function fork(
       return new ConfigError({ reason: "This session is not the thread's root or a direct subagent. Run /fork or /fork-subagent in the session's own thread." })
     }
   }
-  const project = await threadProject(bot, sourceThread)
+  const project = await conversationProject(bot, source)
   if (project instanceof Error) return project
   const channel = await textChannel(bot, project.channelId)
   if (channel instanceof Error) return channel
@@ -770,13 +858,13 @@ export async function fork(
   }
   const intro = subagent
     ? `**Forked subagent session created!**\nAgent: \`${subagent.agent}\`\nTask: ${subagent.description || 'No description'}\nFrom: \`${sessionId}\`\nNew session: \`${forked.id}\``
-    : `**Forked session created!**\nFrom: <#${sourceThread.id}> (\`${sessionId}\`)\nNew session: \`${forked.id}\``
+    : `**Forked session created!**\nFrom: <#${source.id}> (\`${sessionId}\`)\nNew session: \`${forked.id}\``
   return adoptSession(bot, {
     channel,
     session: relocated,
     discard,
     // OpenCode titles forks "<title> (fork #1)".
-    threadName: name ?? (forked.title || `Fork: ${subagent?.description || sourceThread.name}`),
+    threadName: name ?? (forked.title || `Fork: ${subagent?.description || source.name}`),
     intro,
     note: 'You can now continue the conversation from this point.',
     author,
@@ -789,31 +877,36 @@ export async function fork(
 export async function forkBtw(
   bot: Bot,
   {
-    sourceThread,
+    source,
     text,
     author,
     messageId,
     files = [],
     agent,
+    parentSessionId,
+    sender,
   }: {
-    sourceThread: ThreadChannel
+    source: Conversation
     text: string
     author: Author
     messageId: string
     files?: readonly PromptFile[]
     // A voice message asked for this agent.
     agent?: string
+    // Explicit `kimaki send --parent-session`, recorded in the fork's marker.
+    parentSessionId?: string
+    sender?: Sender
   },
 ): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
-  const parentSessionId = rootSession(bot, sourceThread.id)
-  if (parentSessionId instanceof Error) return parentSessionId
-  const project = await threadProject(bot, sourceThread)
+  const sourceSessionId = rootSession(bot, source.id)
+  if (sourceSessionId instanceof Error) return sourceSessionId
+  const project = await conversationProject(bot, source)
   if (project instanceof Error) return project
   const channel = await textChannel(bot, project.channelId)
   if (channel instanceof Error) return channel
 
   const [forked, thread] = await Promise.all([
-    oc(bot, 'session.fork', (client) => client.session.fork({ sessionID: parentSessionId })),
+    oc(bot, 'session.fork', (client) => client.session.fork({ sessionID: sourceSessionId })),
     channel.threads
       .create({ name: `btw: ${text.replace(/\s+/g, ' ')}`.slice(0, 100), autoArchiveDuration: 1440 })
       .catch((cause) => new DiscordError({ operation: 'create btw thread', cause })),
@@ -829,9 +922,16 @@ export async function forkBtw(
     return thread
   }
 
-  const kimaki = { threadId: thread.id, channelId: project.channelId, source: 'discord', ...cliContext(bot) }
+  const kimaki = { threadId: thread.id, channelId: project.channelId, source: 'discord', ...cliContext(bot), ...(parentSessionId && { parentSessionId }) }
+  const fromCoordinator = !source.isThread()
   const marked = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: forked.id, metadata: { kimaki } }))
   if (marked instanceof Error) return marked
+  // A fork of a thread keeps its copied instructions (prompt cache); a fork of a coordinator gets thread
+  // ones. The plugin makes it a worker (plugin/coordinator.ts).
+  if (fromCoordinator) {
+    const instructions = await putInstructions(bot, { sessionId: forked.id, conversation: thread, channel, directory: project.directory, userId: author.id, parentSessionId: sourceSessionId })
+    if (instructions instanceof Error) return instructions
+  }
   const bound = await bindThread(bot, {
     threadId: thread.id,
     sessionId: forked.id,
@@ -842,7 +942,7 @@ export async function forkBtw(
   if (bound instanceof Error) return bound
   await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member`, e))
   const intro = await thread
-    .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
+    .send({ content: `Reusing context from <#${source.id}> to answer prompt...\n${text}`.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
     .catch((cause) => new DiscordError({ operation: 'send btw intro', cause }))
   if (intro instanceof Error) return intro
   if (agent) {
@@ -854,11 +954,12 @@ export async function forkBtw(
     sessionId: forked.id,
     threadId: thread.id,
     threadName: thread.name,
-    text: btwPrompt({ text, parentSessionId, sourceThreadId: sourceThread.id, sessionId: forked.id, threadId: thread.id }),
+    text: btwPrompt({ text, parentSessionId: sourceSessionId, sourceThreadId: source.id, sessionId: forked.id, threadId: thread.id }),
     author,
     messageId,
     delivery: 'steer',
     files,
+    sender,
   })
   if (sent instanceof Error) return sent
   return { threadId: thread.id, sessionId: forked.id }

@@ -44,14 +44,14 @@ If the session is **busy**, the message waits and Kimaki replies with its positi
 
 If the session is **idle** and nothing else waits, the message runs at once, like a normal message.
 
-The queue only exists in a session thread. In a project channel, a queued message starts a new session.
+The queue exists in a session thread and in a coordinator channel. In a project channel with coordinator mode off, a queued message starts a new session.
 
 ## When a queued message is sent
 
-When the run finishes, OpenCode starts the next queued message. Kimaki changes the position reply to `Queued message sent` and shows the message in the thread:
+When the run finishes, OpenCode starts the next queued message. Kimaki changes the position reply to `Queued` and replies to your message, so the answer below it is easy to find. The text is not posted again:
 
 ```
-» Tommy: commit everything with a descriptive message
+↳ -# Queued message sent
 ```
 
 ## Editing a queued message

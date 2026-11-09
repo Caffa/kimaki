@@ -32,6 +32,7 @@ function reply(marker: string, text: string, extra: DeterministicMatcher['when']
 const matchers: DeterministicMatcher[] = [
   reply('new-marker', 'saw the file', { rawPromptIncludes: 'file-body-marker' }),
   reply('first-marker', 'first answer'),
+  reply('empty-marker', 'started on the first message'),
   reply('second-marker', 'second answer', {}, 510),
   reply('tui-marker', 'tui answer'),
   reply('resumed-marker', 'resumed answer'),
@@ -137,14 +138,40 @@ test('/new-session starts a thread with attached files and an agent', async () =
   `)
   expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **tommy:** Read it new-marker
-    Files: notes.txt
+    -# » **tommy:** Read it new-marker
+    -# Files: notes.txt
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     saw the file
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
   // A slash command thread has no start message: the user must be added explicitly.
   expect(await discord.channel(thread.id).getMemberIds()).toContain(TEST_USER_ID)
+})
+
+test('/new-session without a prompt waits for the first thread message', async () => {
+  const { discord, channelId } = twin
+  const user = discord.channel(channelId).user(TEST_USER_ID)
+  const client = await server.client()
+  const thread = await newThread(() =>
+    user.runSlashCommand({ name: 'new-session', options: [{ name: 'agent', type: 3, value: 'plan' }] }),
+  )
+  await waitFor({ label: 'ready note', check: async () => (await discord.thread(thread.id).text()).includes('Send a message') })
+  const sessionId = bot.store.getState().roots[thread.id]
+  if (!sessionId) throw new Error('thread has no session')
+  expect((await client.message.list({ sessionID: sessionId, order: 'asc', limit: 10 })).data).toEqual([])
+  await discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'Go empty-marker' })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    Send a message to start working.
+    --- from: user (tommy)
+    Go empty-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ plan*
+    started on the first message
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+  `)
+  expect(thread.name).toBe('Kimaki session')
 })
 
 test('/resume binds an existing session to a new thread and moves the binding', async () => {
@@ -180,10 +207,10 @@ test('/resume binds an existing session to a new thread and moves the binding', 
     Go on resumed-marker
     --- from: assistant (TestBot)
     resumed answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    » **user:** Back in the TUI tui-marker
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# » **user:** Back in the TUI tui-marker
     tui answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   // Resuming again moves the session: the old thread stops following it.
@@ -229,7 +256,7 @@ test('/fork forks before a user message into a new thread', async () => {
     Check fork-check
     --- from: assistant (TestBot)
     fork has only the first message
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(hide(await discord.thread(source.id).text())).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -237,12 +264,12 @@ test('/fork forks before a user message into a new thread', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     first answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Then second-marker
     --- from: assistant (TestBot)
     second answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Session forked! Continue in <#THREAD>"
   `)
 })
@@ -296,7 +323,7 @@ test('/fork-subagent forks a subagent session into a new thread', async () => {
     More child-followup
     --- from: assistant (TestBot)
     child fork continues
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ general*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ general*"
   `)
 })
 
@@ -321,6 +348,6 @@ test('/resume of a session waiting on a question shows the question in the new t
     Which color?
     ✓ _Red_
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })

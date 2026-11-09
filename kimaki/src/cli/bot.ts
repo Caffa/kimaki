@@ -1,6 +1,6 @@
 // Bot lifecycle and setup: the root command (start + onboarding), provider
 // login, tools (tunnel, tts), and bot status, logs, credentials and keys.
-// main.ts, onboarding.ts, traforo, SQLite and voice are loaded only by the
+// main.ts, onboarding.ts, tunnel.ts, SQLite and voice are loaded only by the
 // commands that run them (see the note in shared.ts).
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -8,11 +8,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import dedent from 'string-dedent'
-import type { Goke } from 'goke'
+import { wrapJsonSchema, type Goke } from 'goke'
 
-import { distCliEntry, writeAutostartScript } from '../autostart.ts'
+import { distCliEntry, removeAutostartScript, stableNodePath, writeAutostartScript } from '../autostart.ts'
 import { ASR_SERVICE_URL, shouldAutoStartAsr } from '../asr-service-manager.ts'
 import { printLocalBanner } from '../banner.ts'
+import { parseDisabledPromptSections, parseDisabledSkills, PROMPT_SECTIONS } from '../builtin-skills.ts' 
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
@@ -61,8 +62,10 @@ async function supervise(): Promise<never> {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => state.child?.kill('SIGTERM'))
   }
+  // Resolved before any Node upgrade: `kimaki restart` must not spawn the deleted binary.
+  const node = stableNodePath()
   while (true) {
-    const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    const child = spawn(node, [...process.execArgv, ...process.argv.slice(1)], {
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: { ...process.env, KIMAKI_SUPERVISED: '1' },
     })
@@ -92,8 +95,13 @@ export function registerStartCommand(cli: Goke) {
     .option('--machine-name <name>', 'Name in this machine\'s category "Kimaki <name>" (default: hostname)')
     .option('--restart-onboarding', 'Choose credentials again')
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
+    .option('--allow-all-users', 'Every server member can use the bot (role "no-kimaki" still denies; provider login stays admin-only)')
     .option('--voice <name>', 'Voice of voice calls, saved for later starts (e.g. cove, juniper, sol). "default" resets it')
+    .option('--disable-skills <list>', 'Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)')
+    .option('--disable-prompt <section>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: `System prompt section to remove from new sessions (repeatable): ${PROMPT_SECTIONS.join(', ')}` }))
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
+    .option('--coordinator [enabled]', wrapJsonSchema<boolean>({ type: 'boolean', default: true, description: 'Channel messages go to one long coordinator session that starts threads for the work. "false" turns it off (/toggle-coordinator sets one channel)' }))
+    .option('--no-autostart', 'Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
       // The IPC check ignores a KIMAKI_SUPERVISED leaked into a shell by an older bot.
@@ -105,7 +113,7 @@ export function registerStartCommand(cli: Goke) {
       // Bot code loads only here: the other subcommands start without it.
       const [
         { startBot },
-        { ensureOpencode, kimakiShellCommand, runOnboarding, startCaffeinate },
+        { ensureOpencode, runOnboarding, startCaffeinate },
         { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
         { openDb },
         { createAnalytics },
@@ -146,6 +154,10 @@ export function registerStartCommand(cli: Goke) {
       })()
       if (defaultAgent) process.stderr.write(`Default agent for new sessions: ${defaultAgent}\n`)
       const urls = gatewayUrlsFromEnv()
+      const disabledSkills = parseDisabledSkills(options.disableSkills)
+      if (disabledSkills instanceof Error) fail(disabledSkills)
+      const disabledPrompt = parseDisabledPromptSections(options.disablePrompt)
+      if (disabledPrompt instanceof Error) fail(disabledPrompt)
       const machine = options.machineName ?? defaultMachineName()
       // Validated before the lock, so a typo never stops the running bot. null: reset to the default.
       const voice = (() => {
@@ -215,14 +227,13 @@ export function registerStartCommand(cli: Goke) {
       // The agent calls this same install. Prefer the built dist entry, so agent
       // commands skip the tsx loader also when the bot runs from src.
       const distCli = distCliEntry()
-      const kimaki = kimakiShellCommand({
-        command: fs.existsSync(distCli)
-          ? [process.execPath, distCli]
-          : [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki'],
-      })
+      const node = stableNodePath()
+      const kimakiArgv = fs.existsSync(distCli)
+        ? [node, distCli]
+        : [node, ...process.execArgv, process.argv[1] ?? 'kimaki']
 
       const bot = await startBot({
-        kimakiCommand: kimaki,
+        kimakiArgv,
         dataDir,
         token: credentials.token,
         appId: credentials.appId,
@@ -239,6 +250,10 @@ export function registerStartCommand(cli: Goke) {
         defaultAgent,
         analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
         autoWorktrees: Boolean(options.worktrees),
+        allowAllUsers: Boolean(options.allowAllUsers),
+        disabledSkills,
+        disabledPrompt,
+        coordinator: options.coordinator,
       })
       if (bot instanceof Error) failStartup(bot)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
@@ -251,22 +266,30 @@ export function registerStartCommand(cli: Goke) {
       process.once('disconnect', shutdown)
 
       const gateway = credentials.mode === 'gateway'
-      const onboarded = await runOnboarding({ bot, dataDir, guildId: options.guild ?? install?.guildId, installUrl, kimaki, gateway, installerId: install?.installerId, machine })
+      const onboarded = await runOnboarding({ bot, dataDir, guildId: options.guild ?? install?.guildId, installUrl, gateway, installerId: install?.installerId, machine })
       // The bot keeps running; the next start retries onboarding.
       if (onboarded instanceof Error) {
         logger.error(`onboarding failed`, onboarded)
         if (!process.stdin.isTTY) emitEvent({ type: 'error', message: `Onboarding failed: ${onboarded.message}. The bot is running; restart kimaki to retry.` })
         return
       }
-      if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${onboarded.guildId}/${onboarded.threadId}\n`)
+      if (onboarded) process.stderr.write(`Onboarding: https://discord.com/channels/${onboarded.guildId}/${onboarded.threadId}\n`)
       const voiceChannels = await ensureVoiceChannels(bot, { machine })
       if (voiceChannels instanceof Error) logger.warn('cannot create the Kimaki voice channel', voiceChannels)
-      // Only the default port: the plugin checks that one. Runtime flags only;
-      // credentials, onboarding and --voice are saved in SQLite.
-      if (lock.port === DEFAULT_LOCK_PORT) {
+      // --no-autostart removes the script on every start, so the opt-out sticks while
+      // launchd or systemd passes the flag. Only the default port: the plugin checks
+      // that one. Runtime flags only; credentials, onboarding and --voice are saved in SQLite.
+      if (options.noAutostart) {
+        const removed = await removeAutostartScript({ dataDir })
+        if (removed instanceof Error) logger.warn('cannot remove the autostart script', removed)
+      } else if (lock.port === DEFAULT_LOCK_PORT) {
         const autostart = await writeAutostartScript({ dataDir, args: [
           ...(options.worktrees ? ['--worktrees'] : []),
+          ...(options.allowAllUsers ? ['--allow-all-users'] : []),
+          ...(options.disableSkills ? ['--disable-skills', options.disableSkills] : []),
+          ...disabledPrompt.flatMap((section) => ['--disable-prompt', section]),
           ...(options.noAnalytics ? ['--no-analytics'] : []),
+          ...(options.coordinator ? [] : ['--coordinator', 'false']),
           ...(options.machineName ? ['--machine-name', options.machineName] : []),
         ] })
         if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)
@@ -301,9 +324,9 @@ export function registerLoginCommands(cli: Goke) {
 
 // tunnel, tts
 export function registerToolCommands(cli: Goke) {
-  cli.command('tunnel', 'Run a command and expose its local port with a public URL. The child gets TRAFORO_URL')
+  cli.command('tunnel', 'Run a command and expose its local port with a public opentunnel.xyz URL. The child gets KIMAKI_TUNNEL_URL')
     .option('-p, --port <port>', 'Local port (default: read from the command output)')
-    .option('-t, --tunnel-id <id>', 'Fixed tunnel ID (default: random). Only for public-safe services')
+    .option('-t, --tunnel-id <id>', 'Fixed subdomain (default: random). Only for public-safe services')
     .option('--host <host>', 'Local host (default: localhost)')
     .option('-k, --kill', 'Kill the process on --port first')
     .example('kimaki tunnel -- pnpm dev')
@@ -312,8 +335,9 @@ export function registerToolCommands(cli: Goke) {
       const port = options.port ? Number(options.port) : undefined
       if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) fail(new Error(`Invalid --port ${options.port}`))
       if (!port && command.length === 0) fail(new Error('Pass a command after --, or --port <port>. Example: kimaki tunnel -- pnpm dev'))
-      const { runTunnel } = await import('traforo/run-tunnel')
-      await runTunnel({ port, command: command.length > 0 ? command : undefined, tunnelId: options.tunnelId, localHost: options.host, baseDomain: 'kimaki.dev', kill: options.kill })
+      const { runTunnel } = await import('../tunnel.ts')
+      const result = await runTunnel({ port, command: command.length > 0 ? command : undefined, name: options.tunnelId, host: options.host, kill: options.kill })
+      if (result instanceof Error) fail(result)
     })
 
   cli.command('tts [text]', 'Text to speech with OpenAI or Gemini. Reads stdin if no text is given')

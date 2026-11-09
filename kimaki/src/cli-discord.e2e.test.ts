@@ -37,6 +37,15 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   const threads = await cli(['thread', 'list', '--channel', twin.channelId, '--json'])
   const users = await cli(['user', 'list', '--guild', twin.discord.guildId, '--query', 'tommy', '--json'])
   await cli(['upload-to-discord', path.join(server.root, 'report.txt'), '--session', started.sessionId])
+  // Many files keep argument order, numbered, images and files mixed.
+  fs.mkdirSync(path.join(server.root, 'other'), { recursive: true })
+  for (const name of ['b.png', 'my shot.png', 'other/b.png']) fs.writeFileSync(path.join(server.root, name), 'png')
+  const uploaded = await cli(['upload-to-discord', ...['b.png', 'report.txt', 'my shot.png', 'other/b.png'].map((name) => path.join(server.root, name)), '--session', started.sessionId])
+  // Each file with its Discord URL, in argument order, so a coordinator can repost them (the twin uses data: URLs).
+  expect(uploaded.stdout).toMatchInlineSnapshot(`
+    "{"uploaded":[{"name":"b.png","url":"data:application/octet-stream;base64,cG5n"},{"name":"report.txt","url":"data:application/octet-stream;base64,cmVwb3J0"},{"name":"my shot.png","url":"data:application/octet-stream;base64,cG5n"},{"name":"b.png","url":"data:application/octet-stream;base64,cG5n"}]}
+    "
+  `)
   // The agent learns that nothing was posted.
   const missing = await cli(['upload-to-discord', path.join(server.root, 'missing.png'), '--session', started.sessionId]).catch((error: { stderr: string }) => error)
   expect(missing.stderr.replace(server.root, '<root>')).toMatchInlineSnapshot(`
@@ -47,11 +56,24 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   const install = await cli(['bot', 'install-url'])
   expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Discord CLI flow
+    -# » **CLI:** Discord CLI flow
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    [attachment: report.txt]"
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    [file: data:application/octet-stream;base64,cmVwb3J0]
+    [attachment: report.txt]
+    -# 1. \`b.png\`
+    [media: data:application/octet-stream;base64,cG5n]
+    -# 2. \`report.txt\`
+    [file: data:application/octet-stream;base64,cmVwb3J0]
+    -# 3. \`my shot.png\`
+    [media: data:application/octet-stream;base64,cG5n]
+    -# 4. \`b.png\`
+    [media: data:application/octet-stream;base64,cG5n]
+    [attachment: b.png]
+    [attachment: report.txt]
+    [attachment: my_shot.png]
+    [attachment: 4-b.png]"
   `)
   expect(threads.stdout).toContain(started.threadId)
   expect(users.stdout).toContain(TEST_USER_ID)

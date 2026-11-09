@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1
+
+1. **Newer models in the default fallback ranking:** `openai/gpt-6.1-sol`, `xai/grok-4.7`, then `opencode-go/kimi-k3`. Copilot now falls back to `github-copilot/gpt-6.1-sol`. Set `options.models` to use your own ranking.
+
+## 0.2.0
+
+1. **Switches accounts, not only models.** On a rate limit, quota, overload or auth error the plugin now moves to your next saved account of the same provider before it falls back to the next model.
+
+   ```
+   429 on opus (account 1) ──▶ opus (account 2) ──▶ 429 ──▶ gpt-6-sol ──▶ turn finishes
+   ```
+
+   Add a second account with `opencode auth login anthropic`. The account switch is global for that provider: a blocked account is not used by any session until its reset time.
+
+2. **Requires OpenCode 2.0.28 or newer.** The plugin calls `ctx.credential.activate`, added in 2.0.28. The peer dependency is now `@opencode/plugin >= 2.0.28`. Update OpenCode before you update the plugin.
+
 ## 0.1.0
 
 1. **New OpenCode 2 plugin that keeps sessions running through rate limits, usage limits and overloaded providers.**

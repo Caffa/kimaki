@@ -485,7 +485,7 @@ so prompt cache stays warm. Forks copy it byte for byte.
 | scheduling | `--send-at` UTC/cron, `--pre-run`, `--allow-concurrency`, task files in `tasks/`, notification policy, `kimaki task list/edit/delete` |
 | worktrees | only when asked, `kimaki send --worktree`, `--cwd` |
 | reading sessions | `session list/search/read`, Discord links, `session editors` |
-| cross-project | `kimaki project list/add/create`, "plan first" |
+| cross-project | `kimaki project list/add/create`, concise prompts |
 | waiting | `--wait`, `session wait`, 20+ min bash timeout, active-session loop |
 | critique | (if enabled) run critique after edits, include URL |
 | tunnels | `kimaki tunnel` + tuistory for dev servers |
@@ -675,7 +675,7 @@ Principles:
 | `session.execution.failed` | stop typing, `✗ error message` (max 400 chars), no footer |
 | `session.execution.interrupted` | stop typing, no footer, no error |
 | `session.inbox.enqueued` (queue) | reply `Queued (position N)` on the source message, no button |
-| `session.inbox.delivered` | queued item: post `» Tommy: prompt preview`; the ack says `Queued message sent` |
+| `session.inbox.delivered` | queued item: reply `Queued message sent` to the user message (or to the ack without one), no second copy of the text; the ack says `Queued` |
 | `session.inbox.cancelled` | remove queued ack |
 | `form.created` (question) | stop typing, dropdowns after preceding text is rendered |
 | `form.replied` / `.cancelled` | disable dropdowns |
@@ -1643,7 +1643,7 @@ removed). `--mention-mode` becomes the `channels.mention_only` default.
 | `user list --guild --query` | mention IDs |
 | `upload-to-discord --session files…` | attach files to the thread |
 | `tts text -o file` | speech via OpenAI / Gemini |
-| `tunnel [-t id] -- cmd` | traforo public URL, `TRAFORO_URL` env |
+| `tunnel [-t id] -- cmd` | opentunnel.xyz public URL, `KIMAKI_TUNNEL_URL` env |
 | `screenshare` | noVNC over tunnel |
 | `merge-worktree` | CLI version of `/merge-worktree` |
 | `bot install-url / token / status set / status clear`, `discord-install-url` | bot admin |

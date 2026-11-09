@@ -6,12 +6,14 @@
 //        ─▶ tool call { transcription, route, agent? } ─▶ parseVoiceMessage ─▶ Route
 //
 // Order: the local parakeet ASR service (asr-service/, or another machine via
-// ASR_SERVICE_URL — plain dictation, route is always steer), then OpenAI
+// ASR_SERVICE_URL) — plain dictation, route is always steer; then OpenAI
 // (bot_api_keys, then OPENAI_API_KEY), the ChatGPT subscription credential
 // stored by OpenCode (billed to the plan), Gemini (bot_api_keys, then
 // GEMINI_API_KEY), then the free kimaki.dev Whisper endpoint on gateway
-// installs. A failing provider falls through to the next one. Parakeet,
-// ChatGPT and Whisper have no tool call: the route is always steer.
+// installs. KIMAKI_WHISPER_URL replaces the whole cloud list with a local
+// Whisper server, so audio never reaches a cloud provider. A failing
+// provider falls through to the next one. Parakeet, ChatGPT and Whisper have
+// no tool call: the route is always steer.
 // Plain fetch, no AI SDK: we parse provider bodies ourselves so transient
 // bad responses keep their details and can be retried.
 
@@ -52,6 +54,8 @@ const GEMINI_MODEL = 'gemini-flash-latest'
 const TOOL_NAME = 'transcriptionResult'
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 500
+// Later messages of the conversation wait for the transcription (ingress.ts): cap all providers and retries.
+const TRANSCRIPTION_TIMEOUT_MS = 2 * 60_000
 
 export class TranscriptionError extends errore.createTaggedError({
   name: 'TranscriptionError',
@@ -381,11 +385,12 @@ async function openAIAudio({ audio, mediaType }: { audio: Buffer; mediaType: str
 
 // --- requests
 
-async function postJson({ url, headers, body }: { url: string; headers: Record<string, string>; body: unknown }) {
+async function postJson({ url, headers, body, signal }: { url: string; headers: Record<string, string>; body: unknown; signal: AbortSignal }) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
+    signal,
   }).catch((cause) => new TranscriptionError({ reason: `request to ${url} failed`, cause }))
   if (response instanceof Error) return response
   const text = await response.text().catch((cause) => new TranscriptionError({ reason: 'reading the response failed', cause }))
@@ -396,8 +401,9 @@ async function postJson({ url, headers, body }: { url: string; headers: Record<s
 
 type Tool = ReturnType<typeof buildTranscriptionTool>
 
-async function requestGemini({ apiKey, baseUrl, prompt, audio, mediaType, tool }: ProviderRequest) {
+async function requestGemini({ apiKey, baseUrl, prompt, audio, mediaType, tool, signal }: ProviderRequest) {
   const raw = await postJson({
+    signal,
     url: `${baseUrl}/models/${GEMINI_MODEL}:generateContent`,
     headers: { 'x-goog-api-key': apiKey },
     body: {
@@ -413,10 +419,11 @@ async function requestGemini({ apiKey, baseUrl, prompt, audio, mediaType, tool }
 
 // TODO: use the ChatGPT subscription token here once OpenAI allows it. Today chat/completions
 // rejects it (missing model.request scope), so the subscription only gets dictation without routing.
-async function requestOpenAI({ apiKey, baseUrl, prompt, audio, mediaType, tool }: ProviderRequest) {
+async function requestOpenAI({ apiKey, baseUrl, prompt, audio, mediaType, tool, signal }: ProviderRequest) {
   const input = await openAIAudio({ audio, mediaType })
   if (input instanceof Error) return input
   const raw = await postJson({
+    signal,
     url: `${baseUrl}/chat/completions`,
     headers: { authorization: `Bearer ${apiKey}` },
     body: {
@@ -440,7 +447,7 @@ async function requestOpenAI({ apiKey, baseUrl, prompt, audio, mediaType, tool }
   return parseOpenAIResponse(raw)
 }
 
-type ProviderRequest = { apiKey: string; baseUrl: string; prompt: string; audio: Buffer; mediaType: string; tool: Tool }
+type ProviderRequest = { apiKey: string; baseUrl: string; prompt: string; audio: Buffer; mediaType: string; tool: Tool; signal: AbortSignal }
 
 // Retries transient failures: network, 408/409/429/5xx, bad bodies. Never
 // bad keys, refusals or an empty transcription.
@@ -451,11 +458,11 @@ function isRetryable(error: TranscriptionFailure): boolean {
   return status === 408 || status === 409 || status === 429 || status >= 500
 }
 
-async function withRetries(attempt: () => Promise<TranscriptionFailure | TranscriptionResult>) {
+async function withRetries({ signal, attempt }: { signal: AbortSignal; attempt: () => Promise<TranscriptionFailure | TranscriptionResult> }) {
   for (let number = 1; ; number++) {
     const result = await attempt()
     if (!(result instanceof Error)) return result
-    const retry = number < MAX_ATTEMPTS && isRetryable(result)
+    const retry = number < MAX_ATTEMPTS && !signal.aborted && isRetryable(result)
     logger.warn(`transcription attempt ${number}/${MAX_ATTEMPTS} failed${retry ? ', retrying' : ''}`, result)
     if (!retry) return result
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * number))
@@ -464,16 +471,18 @@ async function withRetries(attempt: () => Promise<TranscriptionFailure | Transcr
 
 // Free Whisper through kimaki.dev, authenticated with the gateway client
 // credentials (website POST /api/transcribe). No routing: always steer.
-async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }: {
+async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret, signal }: {
   audio: Buffer
   mediaType: string
   clientId: string
   clientSecret: string
+  signal: AbortSignal
 }): Promise<TranscriptionFailure | TranscriptionResult> {
   const response = await fetch(new URL('/api/transcribe', gatewayUrlsFromEnv().website), {
     method: 'POST',
     headers: { authorization: `Bearer ${clientId}:${clientSecret}`, 'content-type': mediaType },
     body: new Uint8Array(audio),
+    signal,
   }).catch((cause) => new TranscriptionError({ reason: 'kimaki.dev transcription not reachable', cause }))
   if (response instanceof Error) return response
   const body = await response.text().catch(() => '')
@@ -524,6 +533,7 @@ type ChatGPTCredential = { accessToken: string; accountId: string | null }
 // Multipart uploads use one canonical file extension per media type.
 const UPLOAD_EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' }
 
+
 // Same claim the Codex CLI sends as chatgpt-account-id.
 function chatGPTAccountId(accessToken: string): string | null {
   const payload = accessToken.split('.')[1] ?? ''
@@ -557,11 +567,16 @@ export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: 
   return null
 }
 
-async function transcribeViaChatGPT({ credential, baseUrl, audio, mediaType }: {
-  credential: ChatGPTCredential
-  baseUrl: string
+// Multipart `file` (plus `fields`) in, `{ text }` out: ChatGPT dictation and Whisper servers.
+async function transcribeFile({ name, url, headers, fields = {}, audio, mediaType, signal }: {
+  // For the error when the server is not reachable.
+  name: string
+  url: string
+  headers: Record<string, string>
+  fields?: Record<string, string>
   audio: Buffer
   mediaType: string
+  signal: AbortSignal
 }): Promise<TranscriptionFailure | TranscriptionResult> {
   const form = new FormData()
   form.append('file', new File([new Uint8Array(audio)], `voice.${UPLOAD_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
@@ -573,12 +588,63 @@ async function transcribeViaChatGPT({ credential, baseUrl, audio, mediaType }: {
     },
     body: form,
   }).catch((cause) => new TranscriptionError({ reason: 'ChatGPT transcription not reachable', cause }))
+
   if (response instanceof Error) return response
   const body = await response.text().catch(() => '')
   if (!response.ok) return new TranscriptionApiError({ status: String(response.status), body: body.slice(0, 300) })
   const parsed = parseJsonObject(body)
   if (parsed instanceof Error) return parsed
   return toTranscriptionResult({ transcription: parsed['text'] })
+}
+
+function transcribeViaChatGPT({ credential, baseUrl, audio, mediaType, signal }: {
+  credential: ChatGPTCredential
+  baseUrl: string
+  audio: Buffer
+  mediaType: string
+  signal: AbortSignal
+}) {
+  return transcribeFile({
+    name: 'ChatGPT transcription',
+    url: `${baseUrl}/transcribe`,
+    headers: {
+      authorization: `Bearer ${credential.accessToken}`,
+      ...(credential.accountId && { 'chatgpt-account-id': credential.accountId }),
+    },
+    audio,
+    mediaType,
+    signal,
+  })
+}
+
+// --- Local Whisper (KIMAKI_WHISPER_URL)
+//
+// Any server with the standard OpenAI speech-to-text API: speaches, faster-whisper-server,
+// whisper.cpp server, LocalAI. POST <url>/audio/transcriptions with multipart `file` + `model`.
+// https://platform.openai.com/docs/api-reference/audio/createTranscription
+
+type LocalWhisper = { url: string; model: string; apiKey: string | null }
+
+function localWhisperFromEnv(): LocalWhisper | null {
+  const url = process.env['KIMAKI_WHISPER_URL']?.trim().replace(/\/+$/, '')
+  if (!url) return null
+  return {
+    url,
+    model: process.env['KIMAKI_WHISPER_MODEL']?.trim() || 'whisper-1',
+    apiKey: process.env['KIMAKI_WHISPER_API_KEY']?.trim() || null,
+  }
+}
+
+function transcribeViaLocalWhisper({ whisper, audio, mediaType, signal }: { whisper: LocalWhisper; audio: Buffer; mediaType: string; signal: AbortSignal }) {
+  return transcribeFile({
+    name: `Whisper server at ${whisper.url}`,
+    url: `${whisper.url}/audio/transcriptions`,
+    headers: whisper.apiKey ? { authorization: `Bearer ${whisper.apiKey}` } : {},
+    fields: { model: whisper.model },
+    audio,
+    mediaType,
+    signal,
+  })
 }
 
 // --- routing
@@ -614,12 +680,14 @@ type Transcriber =
   | { kind: 'openai' | 'gemini'; apiKey: string }
   | { kind: 'chatgpt'; credential: ChatGPTCredential }
   | { kind: 'gateway'; clientId: string; clientSecret: string }
+  | { kind: 'local-whisper'; whisper: LocalWhisper }
 
 // Best first: the local parakeet ASR service (no key, no subscription), then
 // the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
 // key, then hosted Whisper. Parakeet, ChatGPT and Whisper only transcribe, so
 // the route is always steer.
 async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: KimakiDb; token: string; opencodeDbFile: string; parakeet: { baseUrl: string; autoStart: boolean } | null }): Promise<DbError | Transcriber[]> {
+
   const [row, credential] = await Promise.all([
     db.query.bot_tokens
       .findFirst({ where: { token }, with: { api_keys: true } })
@@ -686,6 +754,7 @@ export async function transcribe({
   const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
     ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
     : ''
+  const signal = AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)
   const run = (entry: Transcriber) => {
     if (entry.kind === 'parakeet') return withRetries(() => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType }))
     if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry })
@@ -693,9 +762,11 @@ export async function transcribe({
     const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool }
     if (entry.kind === 'openai') return withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
     return withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
+
   }
   let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
   for (const entry of list) {
+    if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${TRANSCRIPTION_TIMEOUT_MS / 60_000} minutes` })
     const result = await run(entry)
     if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
     logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)

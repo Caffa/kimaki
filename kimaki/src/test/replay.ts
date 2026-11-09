@@ -25,9 +25,11 @@ export function rootSessionId(events: V2Event[]): string {
   return created.data.sessionID
 }
 
+const REPLAY_PROJECT = '/project'
+
 export const DEFAULT_PREFS: Prefs = {
   verbosity: 'tools',
-  contextLimits: { 'openai/gpt-6-luna': 400_000 },
+  models: { 'openai/gpt-6-luna': { name: 'GPT 6 Luna', context: 400_000 } },
 }
 
 export function replay({
@@ -44,8 +46,9 @@ export function replay({
     emptyView({
       sessionId: rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.'))),
       channelId: 'channel',
-      directory: '/project',
+      directory: REPLAY_PROJECT,
       isNew: true,
+      coordinator: false,
     })
   return events.reduce<{ view: ThreadView; effects: Effect[] }>(
     (acc, event) => {
@@ -74,15 +77,18 @@ export function effectLines(effects: Effect[]): string[] {
     if (effect.type === 'viewed') return []
     if (effect.type === 'typing') return `[typing ${effect.on ? 'on' : 'off'}]`
     if (effect.type === 'attachments') return `[attachments ${effect.files.map((file) => file.name).join(', ')}]`
-    if (effect.type === 'markdown') return `${effect.blankLineBefore ? '\\n' : ''}${effect.text}`
+    if (effect.type === 'markdown') return `${effect.replyTo ? `[reply to ${effect.replyTo}] ` : ''}${effect.blankLineBefore ? '\\n' : ''}${effect.text}`
     if (effect.type === 'show') {
       const reply = effect.replyTo ? ` reply to ${effect.replyTo}` : ''
       return `[show ${effect.key}${reply}] ${effect.messages.map(uiLine).join(' | ')}`
     }
-    if (effect.type === 'edit') return `[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`
-    // Tests have no git checkout: the branch is always main.
+    if (effect.type === 'edit') {
+      const reply = effect.reply === undefined ? [] : [`[reply to ${effect.replyTo ?? effect.key}] ${effect.reply}`]
+      return [`[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`, ...reply]
+    }
+    // Tests have no git checkout: the branch is always main. The channel runs build in /project.
     if (effect.type === 'footer') {
-      const footer = formatFooter({ ...effect, folder: path.basename(effect.directory), branch: 'main' })
+      const footer = formatFooter({ ...effect, branch: 'main', defaultBranch: null, projectDirectory: REPLAY_PROJECT, defaultAgent: 'build' })
       return effect.notify ? footer : `[silent] ${footer}`
     }
     return effect.text.replace(/^\n/, '\\n')

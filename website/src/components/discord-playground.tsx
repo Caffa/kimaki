@@ -1,5 +1,5 @@
 /**
- * Interactive Discord playground for the homepage hero.
+ * Interactive Discord playground for the homepage Playground section.
  * Scripted Kimaki sessions (voice, queue, permissions, selects, worktrees)
  * with Discord UI. Sizes are em-based so the parent font-size scales the window.
  */
@@ -830,10 +830,11 @@ export function DiscordPlayground() {
     !ui.queueRemoved &&
     !ui.queueDrained
   const showTyping = drainingQueue || (!waitingOnUser && !lastMessage?.footer)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' })
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [selectedThreadId, messages.length])
 
   useEffect(() => {
@@ -891,10 +892,10 @@ export function DiscordPlayground() {
           'Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif',
         fontWeight: 400,
         fontSynthesis: 'none',
-        fontSize: 'clamp(11px, 1.35cqw, 13px)',
+        fontSize: 'clamp(10px, 1.1cqw, 12px)',
         containerType: 'inline-size',
-        aspectRatio: '1.5 / 1',
-        minHeight: '32em',
+        aspectRatio: '1.85 / 1',
+        minHeight: '28em',
       }}
     >
       <div className='flex h-[2.25em] shrink-0 items-center bg-[#1e1f22] pl-[0.875em]'>
@@ -906,17 +907,17 @@ export function DiscordPlayground() {
       </div>
 
       <div className='flex min-h-0 flex-1'>
-        <div className='flex w-[4.5em] shrink-0 flex-col items-center bg-[#1e1f22] pt-[0.25em] pb-[0.5em]'>
-          <div className='flex size-[3em] items-center justify-center rounded-[1em] bg-[#313338] text-[#dbdee1]'>
+        <div className='flex w-[3.75em] shrink-0 flex-col items-center bg-[#1e1f22] pt-[0.25em] pb-[0.5em] text-[0.8em]'>
+          <div className='flex size-[2.75em] items-center justify-center rounded-[0.85em] bg-[#313338] text-[#dbdee1]'>
             <ClydeIcon />
           </div>
-          <div className='my-[0.5em] h-[0.125em] w-[2em] rounded-full bg-[#35363c]' />
+          <div className='my-[0.5em] h-[0.125em] w-[1.6em] rounded-full bg-[#35363c]' />
           <div className='relative flex w-full justify-center'>
-            <span className='absolute top-1/2 left-[0.25em] h-[2em] w-[0.25em] -translate-y-1/2 rounded-full bg-white' />
+            <span className='absolute top-1/2 left-0 h-[1.6em] w-[0.2em] -translate-y-1/2 rounded-r-full bg-white' />
             <img
               src='/logo.jpeg'
               alt='Kimaki'
-              className='size-[3em] rounded-[1em] object-cover'
+              className='m-0 size-[2.75em] rounded-[0.85em] object-cover'
             />
           </div>
         </div>
@@ -1041,7 +1042,7 @@ export function DiscordPlayground() {
             </div>
           </div>
 
-          <div className='min-h-0 flex-1 overflow-y-auto pt-[1em]'>
+          <div ref={scrollRef} className='min-h-0 flex-1 overflow-y-auto pt-[1em]'>
             <div className='px-[1em] pb-[1em]'>
               <div className='mb-[0.5em] flex size-[4em] items-center justify-center rounded-[1em] bg-[#41434a] text-[#dbdee1]'>
                 <ThreadIcon size='2.25em' />
@@ -1164,7 +1165,6 @@ export function DiscordPlayground() {
                 </div>
               )
             })}
-            <div ref={messagesEndRef} />
           </div>
 
           <div className='shrink-0 px-[1em] pb-[1.5em] pt-[0.25em]'>

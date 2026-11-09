@@ -67,6 +67,15 @@ function collectComponentText({
       lines.push('---')
       continue
     }
+    // Components V2 media, in the order the message places it.
+    if (component.type === ComponentType.MediaGallery && 'items' in component && Array.isArray(component.items)) {
+      for (const item of component.items) lines.push(`[media: ${item?.media?.url ?? ''}]`)
+      continue
+    }
+    if (component.type === ComponentType.File && 'file' in component && component.file && typeof component.file === 'object') {
+      lines.push(`[file: ${'url' in component.file ? String(component.file.url) : ''}]`)
+      continue
+    }
     if (
       'content' in component &&
       typeof component.content === 'string' &&
@@ -1191,8 +1200,11 @@ export class ChannelScope {
    *   [user clicks button] and [user selects dropdown: value] at the
    *   chronological position of interaction events. Defaults to false so
    *   existing snapshots are not affected.
+   * @param showReplies - When true, a reply starts with a
+   *   `[reply to Username: first words]` line naming the message it replies
+   *   to. Defaults to false so existing snapshots are not affected.
    */
-  async text({ deterministicFooters = true, showTyping = false, showInteractions = false }: { deterministicFooters?: boolean; showTyping?: boolean; showInteractions?: boolean } = {}): Promise<string> {
+  async text({ deterministicFooters = true, showTyping = false, showInteractions = false, showReplies = false }: { deterministicFooters?: boolean; showTyping?: boolean; showInteractions?: boolean; showReplies?: boolean } = {}): Promise<string> {
     const messages = await this.getMessages()
 
     // Build timeline entries: messages + optional typing events
@@ -1276,6 +1288,12 @@ export class ChannelScope {
         lines.push(`--- from: ${role} (${msg.author.username})`)
       }
       lastAuthorId = msg.author.id
+      const referenceId = msg.message_reference?.message_id
+      if (showReplies && referenceId) {
+        const target = messages.find((candidate) => candidate.id === referenceId)
+        const preview = target ? getMessageVisibleText(target).replace(/\s+/g, ' ').slice(0, 40) : ''
+        lines.push(target ? `[reply to ${target.author.username}: ${preview}]` : '[reply to unknown message]')
+      }
       const visibleText = getMessageVisibleText(msg)
       if (visibleText) {
         let content = visibleText

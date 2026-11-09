@@ -16,11 +16,23 @@ import {
 import { z } from 'zod'
 
 import type { Verbosity } from './db.ts'
+import { formatDuration, formatTokens } from './session-events.ts'
 
-// Bot messages never show link previews. Only messages that need the user
+// Bot messages hide link previews (session output: see embedFlags). Only messages that need the user
 // (errors, prompts, the end of a turn) skip SuppressNotifications.
 export const SILENT_MESSAGE_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications
 export const NOTIFY_MESSAGE_FLAGS = MessageFlags.SuppressEmbeds
+
+// Discord CDN links (attachments from other threads, avatars, emojis) only
+// show the media through their embed. Signed attachment URLs (?ex=&is=&hm=)
+// are refreshed by the Discord client, so old ones still render.
+// https://docs.discord.com/developers/reference#signed-attachment-cdn-urls
+export const DISCORD_MEDIA_URL = /https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/\S/
+
+// Session output hides link previews, except in messages with Discord media.
+export function embedFlags(content: string | undefined): MessageFlags.SuppressEmbeds | 0 {
+  return content && DISCORD_MEDIA_URL.test(content) ? 0 : MessageFlags.SuppressEmbeds
+}
 
 export function asSubtext(text: string): string {
   return `-# ${text}`
@@ -108,45 +120,59 @@ export function selectedPage(value: string): number | null {
   return Number(value.slice(PAGE_PREFIX.length)) || 0
 }
 
-export function formatDuration(ms: number): string {
-  if (ms < 1_000) return '<1s'
-  const seconds = Math.floor(ms / 1_000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-}
-
 export type ModelRef = { providerID: string; id: string }
 
-export function formatBanner({ model, agent }: { model: ModelRef & { variant?: string }; agent: string }): string {
+const COORDINATOR_NOTICE = 'Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with `--coordinator false`.'
+
+export function formatBanner({ model, agent, coordinator = false }: { model: ModelRef & { variant?: string }; agent: string; coordinator?: boolean }): string {
   // OpenCode reports `default` when no variant is selected.
   const variant = model.variant && model.variant !== 'default' ? ` ${model.variant}` : ''
-  return asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
+  const banner = asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
+  return coordinator ? `${banner}\n${asSubtext(COORDINATOR_NOTICE)}` : banner
 }
 
+// "Switched model to Claude Opus 5.5 (high)", for a root session switch after its banner.
+export function formatModelSwitched({ name, variant }: { name: string; variant?: string }): string {
+  return asSubtext(`Switched model to ${name}${variant && variant !== 'default' ? ` (${variant})` : ''}`)
+}
+
+const agentLabel = (agent: string) => agent.charAt(0).toUpperCase() + agent.slice(1)
+
+export function formatAgentSwitched({ agent, previous }: { agent: string; previous?: string }): string {
+  return asSubtext(`Switched agent ${previous ? `from ${agentLabel(previous)} ` : ''}to ${agentLabel(agent)}`)
+}
+
+// The folder, branch and agent only show when they differ from the defaults.
+// `projectDirectory` / `defaultBranch` / `defaultAgent`: null when unknown, then they show.
 export function formatFooter({
-  folder,
+  directory,
+  projectDirectory,
   branch,
+  defaultBranch,
   durationMs,
   contextPercent,
   model,
   agent,
+  defaultAgent,
 }: {
-  folder: string
+  directory: string
+  projectDirectory: string | null
   branch: string | null
+  defaultBranch: string | null
   durationMs: number
   contextPercent: number | null
   model: ModelRef | null
   agent: string | null
+  defaultAgent: string | null
 }): string {
+  const inProject = projectDirectory !== null && path.resolve(directory) === path.resolve(projectDirectory)
   const parts = [
-    folder,
-    branch,
+    inProject ? null : path.basename(directory),
+    branch === defaultBranch ? null : branch,
     formatDuration(durationMs),
     contextPercent === null ? null : `${contextPercent}%`,
     model?.id ?? null,
-    agent && agent !== 'build' ? agent : null,
+    agent && agent.toLowerCase() !== defaultAgent?.toLowerCase() ? agent : null,
   ].filter((part): part is string => Boolean(part))
   return asSubtext(`*${parts.join(' ⋅ ')}*`)
 }
@@ -162,12 +188,17 @@ export function formatError(message: string): string {
 // The provider error is the whole point: "retrying" alone says nothing.
 export function formatRetry({ attempt, delayMs, message }: { attempt: number; delayMs: number; message: string }): string {
   const seconds = Math.max(1, Math.ceil(delayMs / 1_000))
-  return asSubtext(`⬦ retrying in ${seconds}s (attempt ${attempt}): ${inline(message, 200)}`)
+  return asSubtext(`retrying in ${seconds}s (attempt ${attempt}): ${inline(message, 200)}`)
+}
+
+// `tokens`: prompt size of the first step after the compaction, null when no step ran yet (`/compact`).
+export function formatCompacted({ tokens, percent }: { tokens: number | null; percent: number | null }): string {
+  if (tokens === null) return asSubtext('context compacted')
+  return asSubtext(`context compacted to ${formatTokens(tokens)} tokens${percent === null ? '' : ` (${percent}%)`}`)
 }
 
 export function formatCacheMiss({ read, expected, idleMs }: { read: number; expected: number; idleMs: number }): string {
-  const k = (tokens: number) => (tokens < 1_000 ? String(tokens) : `${Math.round(tokens / 1_000)}k`)
-  return asSubtext(`⬦ prompt cache miss: ${k(read)} of ${k(expected)} tokens cached, ${formatDuration(idleMs)} after the last request`)
+  return asSubtext(`prompt cache miss: ${formatTokens(read)} of ${formatTokens(expected)} tokens cached, ${formatDuration(idleMs)} after the last request`)
 }
 
 // One line, no markdown control characters, so `_x_` and `*x*` stay intact.
@@ -350,7 +381,7 @@ export function formatToolFailed({ name, message, label }: { name: string; messa
 }
 
 export function formatSubagentFinished({ agent, description }: { agent: string; description: string }): string {
-  return asSubtext(`⬦ ${inline(agent)} finished: ${inline(description)}`)
+  return asSubtext(`${inline(agent)} finished: ${inline(description)}`)
 }
 
 // `state` is OpenCode's job state; any value other than "completed" is shown.
@@ -370,7 +401,7 @@ export function formatShellFinished({
     state && state !== 'completed' ? inline(state) : null,
     exit !== null && exit !== 0 ? `exit ${exit}` : null,
   ].filter((note) => note !== null)
-  return asSubtext(`⬦ ${prefix}background shell finished${description ? `: _${inline(description)}_` : ''}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`)
+  return asSubtext(`${prefix}background shell finished${description ? `: _${inline(description)}_` : ''}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`)
 }
 
 const SHELL_OUTPUT_LIMIT = 1_800

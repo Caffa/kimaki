@@ -16,11 +16,19 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { type Client, type MessageCreateOptions, type MessageFlags, type SendableChannels } from 'discord.js'
+import {
+  ComponentType,
+  MessageFlags,
+  type APIMessageTopLevelComponent,
+  type Client,
+  type MessageCreateOptions,
+  type SendableChannels,
+} from 'discord.js'
 
-import { formatFooter, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS, type UiMessage } from './format-parts.ts'
+import { DISCORD_MEDIA_URL, embedFlags, formatFooter, SILENT_MESSAGE_FLAGS, type UiMessage } from './format-parts.ts'
 import { createLogger } from './logger.ts'
-import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
+import { echoPayloads } from './queue.ts'
+import { markdownPayloads, segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
 import { DiscordError } from './errors.ts'
 import type { Effect, UploadFile } from './thread-reducer.ts'
@@ -35,10 +43,45 @@ async function gitBranch(directory: string): Promise<string | null> {
   return result?.stdout.trim() || null
 }
 
-async function footerText(effect: Extract<Effect, { type: 'footer' }>): Promise<string> {
-  const { directory, durationMs, contextPercent, model, agent } = effect
-  const branch = await gitBranch(directory)
-  return formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent })
+async function readDefaultBranch(directory: string): Promise<string | null> {
+  const git = (args: string[]) => execFileAsync('git', args, { cwd: directory, timeout: 5_000 }).then((r) => r.stdout.trim(), () => '')
+  const remoteHead = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
+  if (remoteHead) return remoteHead.replace(/^origin\//, '')
+  // No origin/HEAD (repo never cloned, or no remote): fall back to a local main or master.
+  const local = await git(['for-each-ref', '--format=%(refname:short)', 'refs/heads/main', 'refs/heads/master'])
+  return local.split('\n')[0] || null
+}
+
+// Directory -> default branch, read once per process: it almost never changes.
+const defaultBranches = new Map<string, Promise<string | null>>()
+
+function defaultBranch(directory: string): Promise<string | null> {
+  const cached = defaultBranches.get(directory)
+  if (cached) return cached
+  const lookup = readDefaultBranch(directory)
+  defaultBranches.set(directory, lookup)
+  return lookup
+}
+
+// Project folder and default agent of a channel, read when a footer is posted. null: not a project channel.
+export type FooterDefaults = (channelId: string) => Promise<Error | null | { projectDirectory: string; defaultAgent: string | null }>
+
+async function footerText({ effect, footerDefaults }: { effect: Extract<Effect, { type: 'footer' }>; footerDefaults: FooterDefaults }): Promise<string> {
+  const { channelId, directory, durationMs, contextPercent, model, agent } = effect
+  const [branch, mainBranch, defaults] = await Promise.all([gitBranch(directory), defaultBranch(directory), footerDefaults(channelId)])
+  if (defaults instanceof Error) logger.warn(`footer defaults of channel ${channelId} failed`, defaults)
+  const known = defaults instanceof Error ? null : defaults
+  return formatFooter({
+    directory,
+    projectDirectory: known?.projectDirectory ?? null,
+    branch,
+    defaultBranch: mainBranch,
+    durationMs,
+    contextPercent,
+    model,
+    agent,
+    defaultAgent: known?.defaultAgent ?? null,
+  })
 }
 
 // post() adds the notification flags to the payload's own flag.
@@ -83,6 +126,45 @@ function uploadBatches(files: readonly UploadFile[]): UploadFile[][] {
   return batches.map((batch) => batch.files)
 }
 
+// Media Gallery takes images and videos; everything else is a File component.
+const GALLERY_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.webm', '.mov'])
+
+// Plain `files` let the Discord client group images into a mosaic apart from
+// other files. Components V2 place each file explicitly, so the thread shows
+// them in argument order. With several files each one gets a numbered label,
+// so the user and the agent can point at "file 3".
+// https://docs.discord.com/developers/components/reference#media-gallery
+function uploadMessage({ files, first, numbered }: { files: readonly UploadFile[]; first: number; numbered: boolean }) {
+  const used = new Set<string>()
+  const components: APIMessageTopLevelComponent[] = []
+  const attachments = files.map((file, index) => {
+    const number = first + index
+    // attachment:// needs a unique name Discord keeps as is.
+    const safe = file.name.replace(/[^\w.-]/g, '_') || 'file'
+    const name = used.has(safe) ? `${number}-${safe}` : safe
+    used.add(name)
+    if (numbered) components.push({ type: ComponentType.TextDisplay, content: `-# ${number}. \`${file.name}\`` })
+    const media = { url: `attachment://${name}` }
+    components.push(
+      GALLERY_EXTENSIONS.has(path.extname(name).toLowerCase())
+        ? { type: ComponentType.MediaGallery, items: [{ media }] }
+        : { type: ComponentType.File, file: media },
+    )
+    return { attachment: file.path, name }
+  })
+  return { files: attachments, components, flags: MessageFlags.IsComponentsV2 | SILENT_MESSAGE_FLAGS }
+}
+
+// Components V2 messages come back with an empty `attachments` list: Discord
+// resolves each attachment:// URL inside the components instead, in upload order.
+function mediaUrls(components: readonly APIMessageTopLevelComponent[]): string[] {
+  return components.flatMap((component) => {
+    if (component.type === ComponentType.MediaGallery) return component.items.map((item) => item.media.url)
+    if (component.type === ComponentType.File) return [component.file.url]
+    return []
+  })
+}
+
 // Effects that will never run: an upload still waits for its answer.
 function drop(effects: readonly Effect[]) {
   for (const effect of effects) {
@@ -92,7 +174,7 @@ function drop(effects: readonly Effect[]) {
 
 export type MarkViewed = (input: { sessionId: string; idle: number }) => Promise<Error | void>
 
-export function createEffectsRunner({ discord, markViewed }: { discord: Client; markViewed: MarkViewed }) {
+export function createEffectsRunner({ discord, markViewed, footerDefaults }: { discord: Client; markViewed: MarkViewed; footerDefaults: FooterDefaults }) {
   const workers = new Map<string, ThreadWorker>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
@@ -128,38 +210,40 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
     thread.typing = null
   }
 
-  async function post({ threadId, options, notify }: { threadId: string; options: PostOptions; notify: boolean }) {
+  // `mentions: false` for user text (prompt echoes): it must never ping.
+  async function post({ threadId, options, notify, mentions = true }: { threadId: string; options: PostOptions; notify: boolean; mentions?: boolean }) {
     if (lifecycle.closed) return null
     const channel = await sendableChannel(threadId)
     if (!channel || lifecycle.closed) return null
-    const flags = (options.flags ?? 0) | (notify ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS)
-    const sent = await channel.send({ ...options, flags, allowedMentions: { parse: ['users'] } }).catch((e: Error) => e)
+    const flags = (options.flags ?? 0) | embedFlags(options.content) | (notify ? 0 : MessageFlags.SuppressNotifications)
+    // Replies never ping their author: the footer is what notifies.
+    const sent = await channel.send({ ...options, flags, allowedMentions: { parse: mentions ? ['users'] : [], repliedUser: false } }).catch((e: Error) => e)
     if (!(sent instanceof Error)) return sent.id
     logger.error(`send failed in ${threadId}`, sent)
     return null
   }
 
   // Unlike post(), the error goes back to the agent that uploaded.
-  async function postFiles(threadId: string, files: readonly UploadFile[]): Promise<Error | null> {
+  async function postFiles(threadId: string, files: readonly UploadFile[]): Promise<Error | string[]> {
+    let first = 1
+    const urls: string[] = []
     for (const batch of uploadBatches(files)) {
       if (lifecycle.closed) return new DiscordError({ operation: 'upload (bot stopped)' })
       const channel = await sendableChannel(threadId)
       if (!channel) return new DiscordError({ operation: `upload to thread ${threadId}` })
       const sent = await channel
-        .send({
-          files: batch.map((file) => ({ attachment: file.path, name: file.name })),
-          flags: SILENT_MESSAGE_FLAGS,
-          allowedMentions: { parse: [] },
-        })
+        .send({ ...uploadMessage({ files: batch, first, numbered: files.length > 1 }), allowedMentions: { parse: [] } })
         .catch((cause: Error) => new DiscordError({ operation: `upload of ${batch.map((file) => file.name).join(', ')} (${cause.message})`, cause }))
       if (sent instanceof Error) return sent
+      urls.push(...mediaUrls(sent.components.map((component) => component.toJSON())))
+      first += batch.length
     }
-    return null
+    return urls
   }
 
   async function edit({ channel, messageId, message }: { channel: SendableChannels; messageId: string; message: UiMessage }) {
     const edited = await channel.messages
-      .edit(messageId, { content: message.content, components: [...message.components] })
+      .edit(messageId, { content: message.content, components: [...message.components], flags: DISCORD_MEDIA_URL.test(message.content) ? [] : MessageFlags.SuppressEmbeds })
       .catch((e: Error) => e)
     if (edited instanceof Error) logger.warn(`edit of ${messageId} failed`, edited)
   }
@@ -194,15 +278,19 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
       return
     }
     if (effect.type === 'edit') {
-      const ids = thread.prompts.get(effect.key)
+      const ids = thread.prompts.get(effect.key) ?? []
       thread.prompts.delete(effect.key)
-      if (!ids || ids.length === 0) return
-      const channel = await sendableChannel(threadId)
-      if (!channel || lifecycle.closed) return
+      const channel = ids.length > 0 ? await sendableChannel(threadId) : null
+      if (lifecycle.closed) return
       for (const [index, messageId] of ids.entries()) {
         const message = effect.messages[index] ?? effect.messages[effect.messages.length - 1]
-        if (message) await edit({ channel, messageId, message })
+        if (channel && message) await edit({ channel, messageId, message })
       }
+      if (effect.reply === undefined) return
+      // A key from before a restart: the reply still marks the moment, without a reference.
+      const replyTo = effect.replyTo ?? ids[0]
+      await post({ threadId, options: { content: effect.reply, ...(replyTo && { reply: { messageReference: replyTo, failIfNotExists: false } }) }, notify: false })
+      await refreshTyping(threadId)
       return
     }
     if (effect.type === 'show') {
@@ -217,6 +305,7 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
             ...(replyTo && { reply: { messageReference: replyTo, failIfNotExists: false } }),
           },
           notify: effect.notify,
+          mentions: !effect.echo,
         })
         if (id) ids.push(id)
       }
@@ -224,8 +313,9 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
       await refreshTyping(threadId)
       return
     }
-    for (const payload of markdownMessages(effect)) {
-      await post({ threadId, options: payload, notify: false })
+    for (const [index, payload] of markdownMessages(effect).entries()) {
+      const replyTo = index === 0 ? effect.replyTo : null
+      await post({ threadId, options: { ...payload, ...(replyTo && { reply: { messageReference: replyTo, failIfNotExists: false } }) }, notify: false })
     }
     await refreshTyping(threadId)
   }
@@ -236,13 +326,16 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
     const thread = worker(threadId)
     const generation = thread.generation
     const live = () => thread.generation === generation
-    // A merged message notifies when any of its lines does.
-    let lines: { text: string; notify: boolean } | null = null
+    // A merged message notifies when any of its lines does. Echoes and
+    // bot lines never merge, so an echo never pings and a bot line can.
+    // Lines with Discord media only merge with each other: their message
+    // shows embeds, so other links merged in would unfurl too.
+    let lines: { text: string; notify: boolean; mentions: boolean; media: boolean } | null = null
     const flush = async () => {
       const pending = lines
       lines = null
       if (pending === null || !live()) return
-      await post({ threadId, options: { content: pending.text }, notify: pending.notify })
+      await post({ threadId, options: { content: pending.text }, notify: pending.notify, mentions: pending.mentions })
       await refreshTyping(threadId)
     }
     for (const [index, effect] of batch.entries()) {
@@ -253,15 +346,28 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
         await runOne(threadId, effect)
         continue
       }
-      const text = effect.type === 'send' ? effect.text : await footerText(effect)
+      const text = effect.type === 'send' ? effect.text : await footerText({ effect, footerDefaults })
       const notify = effect.notify === true
+      const echo = effect.type === 'send' && effect.echo === true
+      const mentions = !echo
+      // A line over the limit (a long prompt echo) is split like model markdown.
+      if (text.length > DISCORD_TEXT_LIMIT) {
+        await flush()
+        for (const payload of echo ? echoPayloads(text) : markdownPayloads(text)) {
+          if (!live()) return drop(batch.slice(index + 1))
+          await post({ threadId, options: payload, notify, mentions })
+        }
+        await refreshTyping(threadId)
+        continue
+      }
+      const media = DISCORD_MEDIA_URL.test(text)
       const joined: string | null = lines === null ? null : `${lines.text}\n${text}`
-      if (lines !== null && joined !== null && joined.length <= DISCORD_TEXT_LIMIT) {
-        lines = { text: joined, notify: lines.notify || notify }
+      if (lines !== null && joined !== null && lines.mentions === mentions && lines.media === media && joined.length <= DISCORD_TEXT_LIMIT) {
+        lines = { text: joined, notify: lines.notify || notify, mentions, media }
         continue
       }
       await flush()
-      lines = { text, notify }
+      lines = { text, notify, mentions, media }
     }
     await flush()
   }

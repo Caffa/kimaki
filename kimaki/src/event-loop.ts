@@ -14,24 +14,26 @@
 //   cold thread      a bound thread without a view yet (bound in an earlier
 //                    bot run): read its project channel and directory once.
 
-import { DiscordAPIError, RESTJSONErrorCodes, type Client } from 'discord.js'
+import { ChannelType, DiscordAPIError, RESTJSONErrorCodes, type Client } from 'discord.js'
 
 import type { Analytics } from './analytics.ts'
 import { verbosityFromV1, type KimakiDb } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
 import { DbError, DiscordError, OpenCodeError } from './errors.ts'
-import { formatDuration } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
-import type { EventRecorder } from './session-events.ts'
+import { formatDuration, type EventRecorder } from './session-events.ts'
 import { queuedItems } from './queue.ts'
-import type { BotStore } from './store.ts'
+import type { BotStore, State } from './store.ts'
 import {
+  conversationTyping,
   emptyView,
   eventSessionId,
   isKimakiEvent,
   reduce,
+  type Effect,
   type KimakiEvent,
+  type Prefs,
   type SessionSnapshot,
   type ThreadEvent,
 } from './thread-reducer.ts'
@@ -68,6 +70,7 @@ export function createEventLoop({
   recorder,
   analytics,
   onRunEnded,
+  onTranscriptDue,
 }: {
   store: BotStore
   db: KimakiDb
@@ -77,39 +80,58 @@ export function createEventLoop({
   analytics: Analytics
   // Every finished or failed run of a thread's root session (voice call notifications).
   onRunEnded: (run: RunEnded) => void
+  // A root session stopped running (also after an interrupt): its transcript file is stale.
+  onTranscriptDue: (sessionId: string) => void
 }) {
   // The client of the current connection, set before hydration starts.
   const connection: { client: OpenCodeClient | null } = { client: null }
-  // Context window sizes ("providerID/modelID" -> tokens) by directory.
+  // Model names and context window sizes ("providerID/modelID" -> info) by directory.
   // Cleared on connect; reloaded when the catalog changes (a /login adds a
-  // provider). `limits` is null while the first load runs; a reload keeps the
-  // old limits until it finishes. Failed loads are removed so the next call retries.
-  const modelLimits = new Map<string, { load: Promise<void>; limits: Readonly<Record<string, number>> | null }>()
+  // provider). `models` is null while the first load runs; a reload keeps the
+  // old models until it finishes. Failed loads are removed so the next call retries.
+  const modelCatalog = new Map<string, { load: Promise<void>; models: Prefs['models'] | null }>()
   const coldThreads = new Map<string, Held>()
   const unknownSessions = new Map<string, Held>()
   const ignoredSessions = new Set<string>()
 
-  // Resolves when the limits of `directory` are known (or failed to load).
+  // Resolves when the models of `directory` are known (or failed to load).
   // `reload`: read them again even when cached or loading.
-  function loadModelLimits(directory: string, { reload = false } = {}): Promise<void> {
+  function loadModels(directory: string, { reload = false } = {}): Promise<void> {
     const client = connection.client
     if (!client) return Promise.resolve()
-    const existing = modelLimits.get(directory)
+    const existing = modelCatalog.get(directory)
     if (existing && !reload) return existing.load
     const models = client.model.list({ location: { directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
     const load = models.then((result) => {
       // A reconnect or a newer reload replaced this load: its result is stale.
-      if (modelLimits.get(directory)?.load !== load) return
+      if (modelCatalog.get(directory)?.load !== load) return
       if (result instanceof Error) {
-        modelLimits.delete(directory)
+        modelCatalog.delete(directory)
         logger.warn(result)
         return
       }
-      const limits = Object.fromEntries(result.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context]))
-      modelLimits.set(directory, { load, limits })
+      const models = Object.fromEntries(result.data.map((model) => [`${model.providerID}/${model.id}`, { name: model.name, context: model.limit.context }]))
+      modelCatalog.set(directory, { load, models })
     })
-    modelLimits.set(directory, { load, limits: existing?.limits ?? null })
+    modelCatalog.set(directory, { load, models: existing?.models ?? null })
     return load
+  }
+
+  // Every change of thread views goes through here. The reducer's typing only
+  // sees its own view; typing follows conversationTyping instead, which also
+  // changes in the coordinator of the thread's channel.
+  function commit({ threadId, effects: produced = [], update }: { threadId: string; effects?: readonly Effect[]; update: (state: State) => Partial<State> }) {
+    const before = store.getState().threads
+    store.setState(update)
+    const after = store.getState().threads
+    const typing = (id: string): Effect[] => {
+      const on = conversationTyping({ threads: after, threadId: id })
+      return conversationTyping({ threads: before, threadId: id }) === on ? [] : [{ type: 'typing', on }]
+    }
+    // A removed view: effects.dispose() already stopped its typing.
+    if (after[threadId]) effects.run(threadId, [...typing(threadId), ...produced.filter((effect) => effect.type !== 'typing')])
+    const channelId = (after[threadId] ?? before[threadId])?.channelId
+    if (channelId && channelId !== threadId) effects.run(channelId, typing(channelId))
   }
 
   // Folds one event into a loaded view.
@@ -118,11 +140,11 @@ export function createEventLoop({
     const view = state.threads[threadId]
     if (!view) return
     const verbosity = state.verbosity[view.channelId] ?? verbosityFromV1(null)
-    const contextLimits = modelLimits.get(view.directory)?.limits ?? {}
-    const result = reduce({ view, event, prefs: { verbosity, contextLimits } })
-    if (result.view !== view) store.setState((current) => ({ threads: { ...current.threads, [threadId]: result.view } }))
-    effects.run(threadId, result.effects)
-    if (event.type === 'session.moved' && event.data.sessionID === view.sessionId) void loadModelLimits(event.data.location.directory)
+    const models = modelCatalog.get(view.directory)?.models ?? {}
+    const result = reduce({ view, event, prefs: { verbosity, models } })
+    if (result.view === view) effects.run(threadId, result.effects)
+    else commit({ threadId, effects: result.effects, update: (current) => ({ threads: { ...current.threads, [threadId]: result.view } }) })
+    if (event.type === 'session.moved' && event.data.sessionID === view.sessionId) void loadModels(event.data.location.directory)
   }
 
   // One line per run start and end of a root session, so the log shows what each thread did.
@@ -159,6 +181,12 @@ export function createEventLoop({
     if ((event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed') && store.getState().roots[threadId] === event.data.sessionID) {
       onRunEnded({ threadId, sessionId: event.data.sessionID, error: event.type === 'session.execution.failed' ? event.data.error.message : null })
     }
+    if (
+      (event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed' || event.type === 'session.execution.interrupted') &&
+      store.getState().roots[threadId] === event.data.sessionID
+    ) {
+      onTranscriptDue(event.data.sessionID)
+    }
     if (store.getState().threads[threadId] && !coldThreads.has(threadId)) return fold(threadId, event)
     hold(coldThreads, threadId, event)
     void loadView(threadId)
@@ -175,7 +203,8 @@ export function createEventLoop({
       if (!sessionId) return null
       const thread = await discord.channels.fetch(threadId).catch((e) => e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel ? null : new DiscordError({ operation: `fetch thread ${threadId}`, cause: e }))
       if (thread instanceof Error) return thread
-      const channelId = thread?.isThread() ? thread.parentId : null
+      // A coordinator channel is its own conversation.
+      const channelId = thread?.isThread() ? thread.parentId : thread?.type === ChannelType.GuildText ? thread.id : null
       if (!channelId) return null
       const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } }).catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
       if (project instanceof Error) return project
@@ -184,7 +213,7 @@ export function createEventLoop({
       if (!client) return new OpenCodeError({ operation: 'load session directory while disconnected' })
       const info = await client.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'read session directory', cause }))
       if (info instanceof Error) return info
-      await loadModelLimits(info.location.directory)
+      await loadModels(info.location.directory)
       return { channelId, directory: info.location.directory }
     })()
     entry.loading = false
@@ -202,8 +231,8 @@ export function createEventLoop({
       return
     }
     if (!store.getState().threads[threadId]) {
-      const view = emptyView({ sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false })
-      store.setState((current) => ({ threads: { ...current.threads, [threadId]: view } }))
+      const view = emptyView({ sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false, coordinator: threadId === loaded.channelId })
+      commit({ threadId, update: (current) => ({ threads: { ...current.threads, [threadId]: view } }) })
     }
     for (const event of entry.events) fold(threadId, event)
   }
@@ -309,7 +338,7 @@ export function createEventLoop({
         const failed = sessions.find((session) => session instanceof Error)
         if (failed instanceof Error) return failed
         const directory = info?.location.directory ?? null
-        if (directory) await loadModelLimits(directory)
+        if (directory) await loadModels(directory)
         const event: ThreadSnapshot['event'] = {
           type: 'kimaki.snapshot',
           at,
@@ -339,19 +368,22 @@ export function createEventLoop({
   }
 
   return {
-    // Bindings and channel verbosity from SQLite. Several bindings can share a
+    // Bindings, channel verbosity and coordinator mode from SQLite. Several bindings can share a
     // session after V1 /resume; the most recently updated one wins.
     async load(): Promise<DbError | void> {
-      const [rows, verbosity] = await Promise.all([
+      const [rows, verbosity, coordinator] = await Promise.all([
         db.query.thread_sessions.findMany({ orderBy: { updated_at: 'asc' } }).catch((e) => new DbError({ operation: 'read thread_sessions', cause: e })),
         db.query.channel_verbosity.findMany().catch((e) => new DbError({ operation: 'read channel_verbosity', cause: e })),
+        db.query.channel_coordinator.findMany().catch((e) => new DbError({ operation: 'read channel_coordinator', cause: e })),
       ])
       if (rows instanceof Error) return rows
       if (verbosity instanceof Error) return verbosity
+      if (coordinator instanceof Error) return coordinator
       store.setState({
         roots: Object.fromEntries(rows.map((row) => [row.thread_id, row.session_id])),
         sessionThreads: Object.fromEntries(rows.map((row) => [row.session_id, row.thread_id])),
         verbosity: Object.fromEntries(verbosity.map((row) => [row.channel_id, verbosityFromV1(row.verbosity)])),
+        coordinator: Object.fromEntries(coordinator.map((row) => [row.channel_id, row.enabled === 1])),
       })
     },
 
@@ -376,26 +408,32 @@ export function createEventLoop({
     }): Promise<void> {
       ignoredSessions.delete(sessionId)
       coldThreads.delete(threadId)
-      store.setState((current) => ({
-        roots: { ...current.roots, [threadId]: sessionId },
-        sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
-        threads: { ...current.threads, [threadId]: emptyView({ sessionId, channelId, directory, isNew }) },
-      }))
+      commit({
+        threadId,
+        update: (current) => ({
+          roots: { ...current.roots, [threadId]: sessionId },
+          sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
+          threads: { ...current.threads, [threadId]: emptyView({ sessionId, channelId, directory, isNew, coordinator: threadId === channelId }) },
+        }),
+      })
       // Same synchronous turn as the routing change: no live event can come first.
       for (const event of first) deliver(threadId, event)
       // Before the first prompt, so its footer can show the context percent.
-      await loadModelLimits(directory)
+      await loadModels(directory)
     },
 
     // A thread loses its session (`/resume` moved the session to a new thread).
     unbind(threadId: string): void {
       coldThreads.delete(threadId)
       effects.dispose(threadId)
-      store.setState((current) => {
-        const { [threadId]: _root, ...roots } = current.roots
-        const { [threadId]: _view, ...threads } = current.threads
-        const sessionThreads = Object.fromEntries(Object.entries(current.sessionThreads).filter(([, mapped]) => mapped !== threadId))
-        return { roots, threads, sessionThreads }
+      commit({
+        threadId,
+        update: (current) => {
+          const { [threadId]: _root, ...roots } = current.roots
+          const { [threadId]: _view, ...threads } = current.threads
+          const sessionThreads = Object.fromEntries(Object.entries(current.sessionThreads).filter(([, mapped]) => mapped !== threadId))
+          return { roots, threads, sessionThreads }
+        },
       })
     },
 
@@ -417,7 +455,7 @@ export function createEventLoop({
     async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
       // A new connection may bring new providers, and old unrelated sessions are gone.
-      modelLimits.clear()
+      modelCatalog.clear()
       ignoredSessions.clear()
       const result = await snapshots({ client, signal })
       if (result instanceof Error) return result
@@ -432,9 +470,9 @@ export function createEventLoop({
     onEvent(event: V2Event): void {
       if (CATALOG_EVENTS.has(event.type)) {
         // Credential events have no location: they can change every directory.
-        const directories = event.location ? [event.location.directory] : [...modelLimits.keys()]
+        const directories = event.location ? [event.location.directory] : [...modelCatalog.keys()]
         for (const directory of directories) {
-          if (modelLimits.has(directory)) void loadModelLimits(directory, { reload: true })
+          if (modelCatalog.has(directory)) void loadModels(directory, { reload: true })
         }
         return
       }

@@ -1,4 +1,4 @@
-// Commands for the session of the current thread: run control (/abort,
+// Commands for the session of the current thread: run control (/abort, /reset-coordinator,
 // /queue, /queue-command, /clear-queue, /btw), history (/compact, /undo,
 // /redo) and info (/context-usage, /session-id, /diff). They only call the
 // writers in prompt.ts and sessions.ts; session output comes from events.
@@ -28,10 +28,11 @@ import {
   type InteractionRoutes,
   type SessionTarget,
 } from '../interaction-context.ts'
-import { shellQuote } from '../onboarding.ts'
+import { shellQuote } from '../lock-server.ts'
 import { abort, clearQueue, dispatch, redo, undo } from '../prompt.ts'
 import type { Route } from '../routes.ts'
-import { forkBtw } from '../sessions.ts'
+import { formatDuration, type Message } from '../session-events.ts'
+import { endCoordinator, forkBtw } from '../sessions.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -91,34 +92,52 @@ export function parseCritiqueOutput(output: string): { ok: true; url: string; id
 
 // --- Run control
 
-async function abortCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function abortCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   await interaction.deferReply()
-  const result = await abort(bot, { threadId: thread.id })
+  const result = await abort(bot, { threadId: conversation.id })
   if (result instanceof Error) return replyError(interaction, result)
   const note = result.cleared > 0 ? `, cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}` : ''
   await interaction.editReply({ content: `Request **aborted**${note}` })
 }
 
+// Also with coordinator mode off: the channel keeps its binding until a reset.
+async function resetCoordinatorCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  if (target.conversation?.isThread()) return replyError(interaction, new ConfigError({ reason: 'Use /reset-coordinator in the project channel, not in a thread' }))
+  const channelId = target.channelId
+  if (!bot.store.getState().roots[channelId]) {
+    await interaction.reply({ content: 'This channel has no coordinator session', flags: MessageFlags.Ephemeral })
+    return
+  }
+  await interaction.deferReply()
+  const stopped = await abort(bot, { threadId: channelId })
+  if (stopped instanceof Error) return replyError(interaction, stopped)
+  const ended = await endCoordinator(bot, channelId)
+  if (ended instanceof Error) return replyError(interaction, ended)
+  await interaction.editReply({ content: 'Coordinator context reset. The next message starts a new coordinator session' })
+}
+
 // /queue and /queue-command: the echo reply is the queued message the ack points at.
-async function queueInput(bot: Bot, { interaction, thread, route, echo }: { interaction: ChatInputCommandInteraction; thread: SessionTarget['thread']; route: Route; echo: string }) {
+async function queueInput(bot: Bot, { interaction, conversation, route, echo }: { interaction: ChatInputCommandInteraction; conversation: SessionTarget['conversation']; route: Route; echo: string }) {
   const author = authorOf(interaction)
   const reply = await replyWithEcho(interaction, { author, text: echo })
   if (reply instanceof Error) return replyError(interaction, reply)
-  const result = await dispatch(bot, { thread, route, author, messageId: reply.id })
+  const result = await dispatch(bot, { conversation, route, author, messageId: reply.id })
   if (result instanceof Error) return replyError(interaction, result)
 }
 
-async function queueCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function queueCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   const text = interaction.options.getString('message', true).trim()
-  return queueInput(bot, { interaction, thread, route: { kind: 'queue', text }, echo: text })
+  return queueInput(bot, { interaction, conversation, route: { kind: 'queue', text }, echo: text })
 }
 
-async function queueOpencodeCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function queueOpencodeCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   const name = interaction.options.getString('command')?.trim().replace(/^\//, '') ?? ''
   const args = (interaction.options.getString('arguments') ?? '').trim()
   if (!name) return replyError(interaction, new ConfigError({ reason: 'Pass a command name, for example /queue-command command:review' }))
   const echo = `/${name} ${args}`.trim()
-  return queueInput(bot, { interaction, thread, route: { kind: 'command', name, arguments: args, queue: true }, echo })
+  return queueInput(bot, { interaction, conversation, route: { kind: 'command', name, arguments: args, queue: true }, echo })
 }
 
 async function queueCommandChoices(bot: Bot, interaction: AutocompleteInteraction) {
@@ -135,19 +154,19 @@ async function queueCommandChoices(bot: Bot, interaction: AutocompleteInteractio
   )
 }
 
-async function clearQueueCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function clearQueueCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   await interaction.deferReply()
-  const result = await clearQueue(bot, { threadId: thread.id, position: interaction.options.getInteger('position') })
+  const result = await clearQueue(bot, { threadId: conversation.id, position: interaction.options.getInteger('position') })
   if (result instanceof Error) return replyError(interaction, result)
   const content =
     result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
   await interaction.editReply({ content })
 }
 
-async function btwCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function btwCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   const text = interaction.options.getString('prompt', true).trim()
   await interaction.deferReply()
-  const result = await forkBtw(bot, { sourceThread: thread, text, author: authorOf(interaction), messageId: interaction.id })
+  const result = await forkBtw(bot, { source: conversation, text, author: authorOf(interaction), messageId: interaction.id })
   if (result instanceof Error) return replyError(interaction, result)
   await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
 }
@@ -161,9 +180,9 @@ async function compactCommand(bot: Bot, interaction: ChatInputCommandInteraction
   await interaction.editReply({ content: 'Compacting the session context' })
 }
 
-async function undoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function undoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   await interaction.deferReply()
-  const result = await undo(bot, { threadId: thread.id })
+  const result = await undo(bot, { threadId: conversation.id })
   if (result instanceof Error) return replyError(interaction, result)
   if (!result.reverted) {
     await interaction.editReply({ content: 'No messages to undo' })
@@ -172,9 +191,9 @@ async function undoCommand(bot: Bot, interaction: ChatInputCommandInteraction, {
   await interaction.editReply({ content: 'Undone - removed the last turn from the session. File changes were kept' })
 }
 
-async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { thread }: SessionTarget) {
+async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   await interaction.deferReply()
-  const result = await redo(bot, { threadId: thread.id })
+  const result = await redo(bot, { threadId: conversation.id })
   if (result instanceof Error) return replyError(interaction, result)
   const content = {
     nothing: 'Nothing to redo - no previous undo found',
@@ -186,18 +205,62 @@ async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, {
 
 // --- Info
 
+// What the session does right now, from OpenCode's own message timestamps. Newest-first messages.
+function sessionStatus({ running, messages, now }: { running: boolean; messages: readonly Message[]; now: number }): string[] {
+  const ago = (time: number) => formatDuration(now - time)
+  const promptIndex = messages.findIndex((message) => message.type === 'user')
+  const replyIndex = messages.findIndex((message) => message.type === 'assistant')
+  const prompt = messages[promptIndex]
+  const latest = messages[replyIndex]
+  const reply = latest?.type === 'assistant' ? latest : undefined
+  const unanswered = prompt !== undefined && (reply === undefined || replyIndex > promptIndex)
+  if (!running) {
+    if (unanswered) return [`**Status:** idle, the last prompt (${ago(prompt.time.created)} ago) has no reply`]
+    return [reply ? `**Status:** idle for ${ago(reply.time.completed ?? reply.time.created)}` : '**Status:** idle']
+  }
+  // A run starts at a user prompt; synthetic items also arrive mid-run, so they count only without one.
+  const start = prompt ?? messages.find((message) => message.type === 'synthetic')
+  const status = start ? `**Status:** running for ${ago(start.time.created)}` : '**Status:** running'
+  if (unanswered || !reply) return [`${status}, waiting for the first model response`]
+  const tool = reply.content.findLast((part) => part.type === 'tool' && part.time.completed === undefined)
+  const reasoning = reply.content.findLast((part) => part.type === 'reasoning' && part.time !== undefined && part.time.completed === undefined)
+  const doing =
+    reply.time.completed !== undefined ? 'between steps'
+    : tool?.type === 'tool' ? `running ${tool.name} for ${ago(tool.time.ran ?? tool.time.created)}`
+    : reasoning?.type === 'reasoning' && reasoning.time ? `thinking for ${ago(reasoning.time.created)}`
+    : reply.time.streamed === undefined ? `waiting for the model for ${ago(reply.time.created)}`
+    : 'writing'
+  const activity = [
+    { at: reply.time.streamed, what: 'output' },
+    { at: reply.time.completed, what: 'step ended' },
+    ...reply.content.flatMap((part) => {
+      if (part.type === 'tool') return [{ at: part.time.completed ?? part.time.ran ?? part.time.created, what: part.name }]
+      if (part.type === 'reasoning') return [{ at: part.time?.completed ?? part.time?.created, what: 'thinking' }]
+      return []
+    }),
+  ]
+  const last = activity.reduce<{ at: number; what: string }>(
+    (latest, { at, what }) => (at !== undefined && at >= latest.at ? { at, what } : latest),
+    { at: reply.time.created, what: 'step started' },
+  )
+  return [`${status}, ${doing}`, `**Last activity:** ${ago(last.at)} ago, ${last.what}`]
+}
+
 async function contextUsageCommand(bot: Bot, interaction: ChatInputCommandInteraction, { sessionId, directory }: SessionTarget) {
   await interaction.deferReply()
-  const [info, messages, models] = await Promise.all([
+  const [info, messages, models, recent, active] = await Promise.all([
     oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId })),
     oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, type: 'assistant', order: 'desc', limit: 20 })),
     oc(bot, 'model.list', (client) => client.model.list({ location: { directory } })),
+    oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, order: 'desc', limit: 20 })),
+    oc(bot, 'session.active', (client) => client.session.active()),
   ])
   if (info instanceof Error) return replyError(interaction, info)
   if (messages instanceof Error) return replyError(interaction, messages)
+  const status = recent instanceof Error || active instanceof Error ? [] : sessionStatus({ running: active[sessionId] !== undefined, messages: recent.data, now: Date.now() })
   const last = messages.data.find((message) => message.type === 'assistant' && message.tokens)
   if (!last || last.type !== 'assistant' || !last.tokens) {
-    await interaction.editReply({ content: 'Token usage not available for this session yet' })
+    await interaction.editReply({ content: ['Token usage not available for this session yet', ...status].join('\n') })
     return
   }
   const { tokens, model } = last
@@ -210,6 +273,7 @@ async function contextUsageCommand(bot: Bot, interaction: ChatInputCommandIntera
       : `**Context usage:** ${formatted} tokens (context limit unavailable)`,
     `**Model:** ${model.providerID}/${model.id}`,
     ...(info.cost > 0 ? [`**Session cost:** $${info.cost.toFixed(4)}`] : []),
+    ...status,
   ]
   await interaction.editReply({ content: lines.join('\n') })
 }
@@ -217,12 +281,12 @@ async function contextUsageCommand(bot: Bot, interaction: ChatInputCommandIntera
 async function sessionIdCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
   const target = await resolveTarget(bot, interaction.channelId)
   if (target instanceof Error) return replyError(interaction, target)
-  if (!target.thread || !target.sessionId) {
+  if (!target.conversation || !target.sessionId) {
     await interaction.reply({ content: 'Run /session-id inside a Kimaki session thread.', flags: MessageFlags.Ephemeral })
     return
   }
   await interaction.reply({
-    content: sessionIdReply({ sessionId: target.sessionId, threadId: target.thread.id, directory: target.directory }),
+    content: sessionIdReply({ sessionId: target.sessionId, threadId: target.conversation.id, directory: target.directory }),
     flags: MessageFlags.Ephemeral,
   })
 }
@@ -269,6 +333,10 @@ export const threadRoutes: InteractionRoutes = {
       definition: new SlashCommandBuilder().setName('abort').setDescription('Stop the current run and clear the queue'),
       run: inThread(abortCommand),
     },
+    'reset-coordinator': {
+      definition: new SlashCommandBuilder().setName('reset-coordinator').setDescription('Reset the context of this channel: the next message starts a fresh coordinator session'),
+      run: resetCoordinatorCommand,
+    },
     queue: {
       definition: new SlashCommandBuilder()
         .setName('queue')
@@ -311,7 +379,7 @@ export const threadRoutes: InteractionRoutes = {
       run: diffCommand,
     },
     'context-usage': {
-      definition: new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
+      definition: new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage, context window percentage and whether the session is working'),
       run: inThread(contextUsageCommand),
     },
     'session-id': {

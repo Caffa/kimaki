@@ -28,27 +28,33 @@ function cli(args: string[]) {
     cwd: process.cwd(), env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile, KIMAKI_DISCORD_REST_URL: twin.discord.restUrl },
   })
 }
-test('session read, list, search, wait, url and events read real session history', async () => {
+test('session read, list, sync, wait, url and events read real session history', async () => {
   const first = await send(bot, { channelId: twin.channelId, prompt: 'Reader content marker' })
   if (first instanceof Error) throw first
   if (!first.sessionId) throw new Error('Expected an AI session')
   await waitForFooter({ discord: twin.discord, threadId: first.threadId })
   const list = await cli(['session', 'list', '--project', server.projectDirectory, '--json'])
-  const search = await cli(['session', 'search', 'Reader content', '--project', server.projectDirectory, '--json'])
+  const sync = JSON.parse((await cli(['session', 'sync', '--days', '1', '--json'])).stdout)
+  const again = JSON.parse((await cli(['session', 'sync', '--days', '1', '--json'])).stdout)
+  const rebuilt = JSON.parse((await cli(['session', 'sync', '--days', '1', '--rebuild', '--json'])).stdout)
   const read = await cli(['session', 'read', first.threadId])
   const wait = await cli(['session', 'wait', first.sessionId, '--timeout', '10s'])
   const url = await cli(['session', 'url', first.sessionId])
   const events = await cli(['session', 'events', first.sessionId])
   expect(await twin.discord.thread(first.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** Reader content marker
+    -# » **CLI:** Reader content marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(list.stdout).toContain(first.sessionId)
-  expect(search.stdout).toContain(first.sessionId)
+  expect(sync.written + sync.skipped).toBeGreaterThan(0)
+  expect([again.written, again.failed, rebuilt.skipped, rebuilt.failed]).toEqual([0, 0, 0, 0])
+  expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('## user')
+  expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('Reader content marker')
   expect(read.stdout).toContain('Reader content marker')
+  expect(read.stdout).toMatch(/\ncontext: \d+k? tokens, last run took \S+( \S+)?, last active \S+( \S+)? ago \(\d{4}-/)
   expect(wait.stdout).toContain('Reader content marker')
   expect(url.stdout).toContain(first.threadId)
   expect(events.stdout).toContain('session.execution.succeeded')
@@ -56,19 +62,27 @@ test('session read, list, search, wait, url and events read real session history
   expect(none instanceof Error && none.code).toBe(1)
 })
 
-test('session wait returns for a real pending question; active discovery errors use exit 64', async () => {
-  const first = await send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker', permissions: ['question:allow'] })
-  if (first instanceof Error || !first.sessionId) throw new Error('Expected a session')
-  await waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' })
-  const result = await cli(['session', 'wait', first.sessionId, '--timeout', '3s'])
+test('session wait waits for many sessions and says a question paused one; active discovery errors use exit 64', async () => {
+  const [first, done] = await Promise.all([
+    send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker', permissions: ['question:allow'] }),
+    send(bot, { channelId: twin.channelId, prompt: 'Second waited session' }),
+  ])
+  if (first instanceof Error || !first.sessionId || done instanceof Error || !done.sessionId) throw new Error('Expected sessions')
+  await Promise.all([waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' }), waitForFooter({ discord: twin.discord, threadId: done.threadId })])
+  const result = await cli(['session', 'wait', first.sessionId, done.threadId, '--timeout', '8s'])
   expect(await twin.discord.thread(first.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** wait-form-marker
+    -# » **CLI:** wait-form-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Next**
     Continue?"
   `)
   expect(result.stdout).toContain('Continue?')
+  expect(result.stdout.split('\n').filter((line) => line.startsWith('==='))).toEqual([
+    `=== ${first.sessionId} is paused: it waits for the user to answer a question, so its work is not done ===`,
+    `=== ${done.sessionId} was already idle: its last run ended before the wait started ===`,
+  ])
+  expect(result.stdout.indexOf('Second waited session')).toBeGreaterThan(result.stdout.indexOf('Continue?'))
   const failure = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'session', 'list', '--active'], {
     env: { ...process.env, KIMAKI_OPENCODE_SERVICE_FILE: path.join(server.root, 'missing-service.json') },
   }).catch((error: Error & { code: number }) => error)

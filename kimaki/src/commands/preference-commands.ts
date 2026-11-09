@@ -2,7 +2,8 @@
 // session in OpenCode (switchAgent / switchModel, applied from the next
 // step); in a project channel they set the default for new sessions
 // (channel_agents / channel_models). /model can also set the default of
-// channels without their own model (global_models). Verbosity is always per channel.
+// channels without their own model (global_models). Verbosity and coordinator
+// mode are always per channel.
 //
 //   /agent          ─▶ agent select ─▶ session or channel
 //   /<agent>-agent  ─▶ same, without the select
@@ -10,11 +11,13 @@
 //                   └▶ reset buttons: session model ─▶ channel default, channel model ─▶ removed
 //   /model-variant  ─▶ variant of the current model ─▶ scope
 //   /verbosity      ─▶ text | tools for the channel
+//   /toggle-coordinator ─▶ coordinator mode on | off for the channel
 //
 // The /model wizard keeps its picks in the createPreferenceRoutes closure
 // keyed by a short hash (custom IDs max 100 chars), dropped after 10 minutes.
 
 import crypto from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import * as orm from 'drizzle-orm'
 import {
   SlashCommandBuilder,
@@ -24,7 +27,7 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js'
 
-import { globalModel, oc, parseModel, type Bot, type ModelChoice } from '../bot.ts'
+import { globalModel, isCoordinatorChannel, oc, parseModel, type Bot, type ModelChoice } from '../bot.ts'
 import { verbosityFromV1, verbosityToV1, type Verbosity } from '../db.ts'
 import { ConfigError, DbError } from '../errors.ts'
 import { button, buttonRow, paginate, selectedPage, selectRow, type UiMessage } from '../format-parts.ts'
@@ -110,6 +113,19 @@ export async function setVerbosity(bot: Bot, { channelId, verbosity }: { channel
   bot.store.setState((current) => ({ verbosity: { ...current.verbosity, [channelId]: verbosity } }))
 }
 
+// Coordinator mode of a project channel. Turning it off keeps the coordinator
+// binding: turning it on again resumes that session (/reset-coordinator drops it).
+export async function setCoordinatorMode(bot: Bot, { channelId, enabled }: { channelId: string; enabled: boolean }): Promise<DbError | void> {
+  const value = enabled ? 1 : 0
+  const result = await bot.db
+    .insert(schema.channel_coordinator)
+    .values({ channel_id: channelId, enabled: value })
+    .onConflictDoUpdate({ target: schema.channel_coordinator.channel_id, set: { enabled: value } })
+    .catch((cause) => new DbError({ operation: 'write channel_coordinator', cause }))
+  if (result instanceof Error) return result
+  bot.store.setState((current) => ({ coordinator: { ...current.coordinator, [channelId]: enabled } }))
+}
+
 export async function setChannelAgent(bot: Bot, { channelId, agent }: { channelId: string; agent: string }): Promise<DbError | void> {
   const result = await bot.db
     .insert(schema.channel_agents)
@@ -139,7 +155,11 @@ async function current(bot: Bot, target: InteractionTarget) {
   if (model) return { scope: 'channel' as const, modelScope: 'channel' as const, agent, model }
   const global = await globalModel(bot)
   if (global instanceof Error) return global
-  return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
+  if (global) return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
+  const fallback = await oc(bot, 'model.default', (client) => client.model.default({ location: { directory: target.directory } }))
+  if (fallback instanceof Error) return fallback
+  const defaultModel = fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id, variant: null } : null
+  return { scope: 'channel' as const, modelScope: 'OpenCode default' as const, agent, model: defaultModel }
 }
 
 // The model a new session of the channel starts with, like startSession:
@@ -193,10 +213,18 @@ async function resetButtons(bot: Bot, { target, hash }: { target: InteractionTar
 
 async function enabledModels(bot: Bot, directory: string) {
   const location = { directory }
-  const [models, providers] = await Promise.all([
-    oc(bot, 'model.list', (client) => client.model.list({ location })),
-    oc(bot, 'provider.list', (client) => client.provider.list({ location })),
-  ])
+  const load = () =>
+    Promise.all([
+      oc(bot, 'model.list', (client) => client.model.list({ location })),
+      oc(bot, 'provider.list', (client) => client.provider.list({ location })),
+    ])
+  let [models, providers] = await load()
+  // TODO: drop the retry once OpenCode awaits location load. model.list and provider.list return
+  // empty data on the first call for a cold location (reproduced on v2.0.26 with a fresh directory).
+  for (let attempt = 0; attempt < 5 && !(models instanceof Error) && models.data.length === 0; attempt++) {
+    await sleep(300)
+    ;[models, providers] = await load()
+  }
   if (models instanceof Error) return models
   if (providers instanceof Error) return providers
   const names = new Map(providers.data.map((provider) => [provider.id, provider.name]))
@@ -251,7 +279,7 @@ async function setAgent(bot: Bot, { target, agent, model }: { target: Interactio
   if (before instanceof Error) return before
   const sessionId = target.sessionId
   const selected = sessionId
-    ? await switchAgent(bot, { sessionId, directory: target.directory, agent, model })
+    ? await switchAgent(bot, { sessionId, directory: target.directory, agent, model, reselect: true })
     : await agentSelection(bot, { directory: target.directory, agent })
   if (selected instanceof Error) return selected
   if (!sessionId) {
@@ -363,7 +391,7 @@ async function renderStep(
     const [now, resets] = await Promise.all([current(bot, wizard.target), resetButtons(bot, { target: wizard.target, hash })])
     if (now instanceof Error) return replyError(interaction, now)
     if (resets instanceof Error) return replyError(interaction, resets)
-    const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** OpenCode default'
+    const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** none configured'
     return reply(
       `${header}\n${currentText}\nSelect a provider:`,
       providers.map(([id, name]) => {
@@ -466,9 +494,24 @@ async function handleVerbositySelect(bot: Bot, interaction: StringSelectMenuInte
   })
 }
 
+// --- /toggle-coordinator
+
+async function toggleCoordinatorCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  const enabled = !isCoordinatorChannel(bot, target.channelId)
+  const result = await setCoordinatorMode(bot, { channelId: target.channelId, enabled })
+  if (result instanceof Error) return replyError(interaction, result)
+  const resumes = enabled && bot.store.getState().roots[target.channelId] ? ' It continues the coordinator session this channel had before; /reset-coordinator starts a fresh one.' : ''
+  const content = enabled
+    ? `Coordinator mode **on** for this channel. Channel messages go to one long coordinator session that starts threads for the work.${resumes}`
+    : 'Coordinator mode **off** for this channel. Each channel message starts a new thread.'
+  await interaction.reply({ content })
+}
+
 // --- Routes
 
-// /agent, /model, /model-variant, /verbosity and their selects. One per bot:
+// /agent, /model, /model-variant, /verbosity, /toggle-coordinator and their selects. One per bot:
 // the /model wizard picks stay in this closure.
 export function createPreferenceRoutes(): InteractionRoutes {
   const wizards = new Map<string, ModelWizard>()
@@ -579,6 +622,10 @@ export function createPreferenceRoutes(): InteractionRoutes {
         run: variantMenu,
       },
       verbosity: { definition: new SlashCommandBuilder().setName('verbosity').setDescription('Set what the bot shows in this channel'), run: verbosityMenu },
+      'toggle-coordinator': {
+        definition: new SlashCommandBuilder().setName('toggle-coordinator').setDescription('Turn coordinator mode on or off: one long session in this channel that starts threads'),
+        run: toggleCoordinatorCommand,
+      },
     },
     buttons: { [MODEL_RESET_PREFIX]: modelReset },
     selects: { [AGENT_PREFIX]: handleAgentSelect, [MODEL_PREFIX]: modelSelect, [VERBOSITY_PREFIX]: handleVerbositySelect },

@@ -1,10 +1,14 @@
 import fs from 'node:fs'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { ComponentType } from 'discord.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import { TEST_USER_ID, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitFor, waitForFooter, warmUp, toolParts, textParts, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
 import { send, shell } from './prompt.ts'
 
+const exec = promisify(execFile)
 const dataDir = tempDataDir()
 let server: OpencodeTestServer
 let twin: TestTwin
@@ -19,7 +23,6 @@ beforeAll(async () => {
     { id: 'click', priority: 200, when: { latestUserTextIncludes: 'User clicked: Proceed' }, then: { parts: textParts('Proceed accepted.') } },
     { id: 'upload', priority: 100, when: { latestUserTextIncludes: 'upload-marker' }, then: { parts: toolParts({ toolCallId: 'upload-call', toolName: 'shell', input: { command: "kimaki upload-request --prompt 'Send the logo' --max-files 2", timeout: 600000, description: 'Request logo', hasSideEffect: true } }) } },
     { id: 'upload-done', priority: 110, when: { latestUserTextIncludes: 'upload-marker', rawPromptIncludes: 'upload-call' }, then: { parts: textParts('Upload received.') } },
-    { id: 'branch', priority: 200, when: { latestUserTextIncludes: 'git-marker', rawPromptIncludes: '[current git branch is main]' }, then: { parts: textParts('Git context received.') } },
   ] }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   bot = await startTestBot({ dataDir, twin, server })
@@ -49,6 +52,11 @@ test('agent shim shows buttons after text and a click resumes the real session',
   const shown = await ui(threadId, 'action_button:')
   await waitForFooter({ discord: twin.discord, threadId })
   const sessionId = bot.store.getState().roots[threadId]!
+  // The turn ended with buttons: `session wait` must say the session waits for a click.
+  const waited = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'session', 'wait', threadId, '--timeout', '8s', '--data-dir', dataDir], {
+    env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile },
+  })
+  expect(waited.stdout.split('\n')[0]).toBe(`=== ${sessionId} is paused: it showed buttons (Proceed, Build) and waits for the user to click one, so its work may not be done ===`)
   const started = shell(bot, { threadId, sessionId, command: 'printf synthetic' })
   if (started instanceof Error) throw started
   await waitFor({ label: 'synthetic shell output', check: async () => (await twin.discord.thread(threadId).text()).includes('```\nsynthetic\n```') })
@@ -56,22 +64,22 @@ test('agent shim shows buttons after text and a click resumes the real session',
   await waitForFooter({ discord: twin.discord, threadId, count: 2 })
   expect(await twin.discord.thread(threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** button-marker
+    -# » **CLI:** button-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Choose the next action.
 
     -# ┣ shell _Show choices_
-    -# ⬦ clicked "Proceed"
+    -# clicked "Proceed"
 
     Buttons shown.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# $ printf synthetic
     \`\`\`
     synthetic
     \`\`\`
 
     Proceed accepted.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(threadId).getMessages()
   expect(messages.findIndex((message) => message.content.includes('Choose the next action.'))).toBeLessThan(messages.findIndex((message) => message.id === shown.message.id))
@@ -89,14 +97,14 @@ test('native file upload modal returns local paths to the agent shell', async ()
   await waitForFooter({ discord: twin.discord, threadId })
   expect(await twin.discord.thread(threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** upload-marker
+    -# » **CLI:** upload-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# ┣ shell _Request logo_
-    -# ⬦ dismissed
+    -# dismissed
     Uploaded 1 file(s)
 
     Upload received.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const dirs = fs.readdirSync(`${server.projectDirectory}/uploads`)
   expect(fs.readFileSync(`${server.projectDirectory}/uploads/${dirs[0]}/0-logo.txt`, 'utf8')).toBe('logo')
@@ -106,17 +114,21 @@ test('git context is added only to marked Discord sessions', async () => {
   await waitForFooter({ discord: twin.discord, threadId })
   expect(await twin.discord.thread(threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **CLI:** git-marker
+    -# » **CLI:** git-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    Git context received.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
-  expect((await twin.discord.thread(threadId).text()).includes('Git context received.')).toBe(true)
+  const branchSeen = (requests: typeof server.model.requests) => requests.some((request) => request.latestUserText.includes('git-marker') && request.raw.includes('[current git branch is main]'))
+  expect(branchSeen(server.model.requests)).toBe(true)
   const client = await server.client()
   // The branch is a synthetic message before the prompt, added again only when it changes.
   const sessionId = bot.store.getState().roots[threadId]!
   await client.session.prompt({ sessionID: sessionId, text: 'git-marker again' })
   await client.session.wait({ sessionID: sessionId })
+  // Only a prompt after a reply carries the time since that reply.
+  const gaps = server.model.requests.filter((request) => request.latestUserText.includes('git-marker')).map((request) => /\[\d+s since your last message\]/.test(request.latestUserText))
+  expect([gaps[0], gaps.at(-1)]).toEqual([false, true])
   const history = await client.session.context({ sessionID: sessionId })
   expect(history.flatMap((message) => message.type === 'synthetic' || message.type === 'user' ? [`${message.type}: ${message.text.split('\n')[0]}`] : [])).toMatchInlineSnapshot(`
     [
@@ -128,7 +140,9 @@ test('git context is added only to marked Discord sessions', async () => {
   const plugins = await client.plugin.list({ location: { directory: server.projectDirectory } })
   expect(plugins.data.find((plugin) => plugin.id === 'kimaki')?.state.status).toBe('active')
   const session = await client.session.create({ location: { directory: server.projectDirectory } })
+  const before = server.model.requests.length
   await client.session.prompt({ sessionID: session.id, text: 'git-marker' })
   await client.session.wait({ sessionID: session.id })
-  expect(JSON.stringify(await client.message.list({ sessionID: session.id }))).not.toContain('Git context received.')
+  expect(server.model.requests.length).toBeGreaterThan(before)
+  expect(branchSeen(server.model.requests.slice(before))).toBe(false)
 })
