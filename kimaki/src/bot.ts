@@ -149,6 +149,16 @@ export async function fetchConversation(bot: Bot, id: string): Promise<DiscordEr
   return new ConfigError({ reason: 'Target is not a thread or a text channel' })
 }
 
+// Strict thread fetch: failed-voice retries and ingress retries need thread methods.
+export async function fetchThread(bot: Bot, threadId: string): Promise<DiscordError | ConfigError | ThreadChannel> {
+  const channel = await bot.discord.channels
+    .fetch(threadId)
+    .catch((cause) => new DiscordError({ operation: `fetch thread ${threadId}`, cause }))
+  if (channel instanceof Error) return channel
+  if (!channel?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
+  return channel
+}
+
 export async function textChannel(bot: Bot, channelId: string): Promise<DiscordError | TextChannel> {
   const channel = await bot.discord.channels
     .fetch(channelId)

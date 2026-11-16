@@ -18,6 +18,8 @@ import { z } from 'zod'
 import type { Verbosity } from './db.ts'
 import { formatDuration, formatTokens } from './session-events.ts'
 
+export { formatDuration }
+
 // Bot messages hide link previews (session output: see embedFlags). Only messages that need the user
 // (errors, prompts, the end of a turn) skip SuppressNotifications.
 export const SILENT_MESSAGE_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications

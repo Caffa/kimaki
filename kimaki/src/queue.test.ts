@@ -64,7 +64,7 @@ test('long plain echo splits like model markdown and keeps attribution in payloa
   expect(plain.length).toBeGreaterThan(2000)
   const payloads = markdownPayloads(plain)
   expect(payloads.length).toBeGreaterThan(1)
-  const first = String(Reflect.get(payloads[0], 'content') ?? '')
+  const first = String(Reflect.get(payloads[0]!, 'content') ?? '')
   expect(first.startsWith('» **CLI:**')).toBe(true)
   expect(plain.startsWith('-# ')).toBe(false)
 })

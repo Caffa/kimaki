@@ -498,16 +498,18 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret, 
 // Empty text is a TranscriptionError, not EmptyTranscriptionError: a local
 // decode failure (e.g. the Opus decoder yielding nothing) must fall through
 // to the cloud chain, not dead-end the turn as "no request was transcribed".
-async function transcribeViaParakeet({ baseUrl, audio, mediaType }: {
+async function transcribeViaParakeet({ baseUrl, audio, mediaType, signal }: {
   baseUrl: string
   audio: Buffer
   mediaType: string
+  signal: AbortSignal
 }): Promise<TranscriptionFailure | TranscriptionResult> {
   const form = new FormData()
   form.append('file', new File([new Uint8Array(audio)], `voice.${UPLOAD_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
   const response = await fetch(new URL('/transcribe', baseUrl), {
     method: 'POST',
     body: form,
+    signal,
   }).catch((cause) => new TranscriptionError({ reason: 'the local ASR service is not reachable', cause }))
   if (response instanceof Error) return response
   const body = await response.text().catch(() => '')
@@ -580,14 +582,15 @@ async function transcribeFile({ name, url, headers, fields = {}, audio, mediaTyp
 }): Promise<TranscriptionFailure | TranscriptionResult> {
   const form = new FormData()
   form.append('file', new File([new Uint8Array(audio)], `voice.${UPLOAD_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
-  const response = await fetch(`${baseUrl}/transcribe`, {
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, value)
+  }
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${credential.accessToken}`,
-      ...(credential.accountId && { 'chatgpt-account-id': credential.accountId }),
-    },
+    headers,
     body: form,
-  }).catch((cause) => new TranscriptionError({ reason: 'ChatGPT transcription not reachable', cause }))
+    signal,
+  }).catch((cause) => new TranscriptionError({ reason: `${name} is not reachable`, cause }))
 
   if (response instanceof Error) return response
   const body = await response.text().catch(() => '')
@@ -680,7 +683,6 @@ type Transcriber =
   | { kind: 'openai' | 'gemini'; apiKey: string }
   | { kind: 'chatgpt'; credential: ChatGPTCredential }
   | { kind: 'gateway'; clientId: string; clientSecret: string }
-  | { kind: 'local-whisper'; whisper: LocalWhisper }
 
 // Best first: the local parakeet ASR service (no key, no subscription), then
 // the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
@@ -756,13 +758,12 @@ export async function transcribe({
     : ''
   const signal = AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)
   const run = (entry: Transcriber) => {
-    if (entry.kind === 'parakeet') return withRetries(() => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType }))
-    if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry })
-    if (entry.kind === 'chatgpt') return withRetries(() => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType }))
-    const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool }
-    if (entry.kind === 'openai') return withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
-    return withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
-
+    if (entry.kind === 'parakeet') return withRetries({ signal, attempt: () => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType, signal }) })
+    if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry, signal })
+    if (entry.kind === 'chatgpt') return withRetries({ signal, attempt: () => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType, signal }) })
+    const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool, signal }
+    if (entry.kind === 'openai') return withRetries({ signal, attempt: () => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }) })
+    return withRetries({ signal, attempt: () => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }) })
   }
   let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
   for (const entry of list) {

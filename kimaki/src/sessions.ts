@@ -132,6 +132,8 @@ export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string
 
 // Agents a session may switch to (not subagents, not hidden ones). OpenCode lists
 // its default agent (`default_agent`, else build) first: core/src/agent.ts `list`.
+type AgentListItem = Awaited<ReturnType<OpenCodeClient['agent']['list']>>['data'][number]
+
 export async function primaryAgents(bot: Pick<Bot, 'opencode'>, directory: string) {
   const ready = await catalogReady(bot, directory)
   if (ready instanceof Error) return ready
@@ -154,10 +156,10 @@ export async function channelDefaults(bot: Pick<Bot, 'db' | 'opencode'>, channel
   return { projectDirectory: row.directory, defaultAgent: agents[0]?.id ?? null }
 }
 
-export async function agentSelection(bot: Bot, { directory, agent }: { directory: string; agent: string }) {
-  const agents = await primaryAgents(bot, directory)
-  if (agents instanceof Error) return agents
-  const selected = agents.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
+export async function agentSelection(bot: Bot, { directory, agent, agents }: { directory: string; agent: string; agents?: AgentListItem[] }) {
+  const list = agents ?? (await primaryAgents(bot, directory))
+  if (list instanceof Error) return list
+  const selected = list.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
   if (!selected) return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
   const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
   return { agent: selected.id, model }
@@ -226,7 +228,7 @@ async function putInstructions(
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   // The agent list is optional prompt context: a failure must not strand the conversation.
-  const found = await primaryAgents(bot, directory)
+  const found = providedAgents ?? (await primaryAgents(bot, directory))
   if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
@@ -377,7 +379,10 @@ async function agentAndModel(
   // Bot-level default agent (--default-agent): only when no route or channel preference exists.
   const useDefault = !requestedAgent && !!bot.defaultAgent
   if (useDefault) requestedAgent = bot.defaultAgent
-  const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
+  const agents = await primaryAgents(bot, directory)
+  const selected = requestedAgent
+    ? await agentSelection(bot, { directory, agent: requestedAgent, ...(agents instanceof Error ? {} : { agents }) })
+    : null
   if (selected instanceof Error) {
     if (useDefault) logger.warn(`default agent \`${bot.defaultAgent}\` is not available in ${directory}, ignoring it`, selected)
     else return selected
@@ -390,7 +395,7 @@ async function agentAndModel(
   const model = choice
     ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
     : undefined
-  return { model, agent: picked?.agent }
+  return { model, agent: picked?.agent, agents }
 }
 
 export async function startSession(

@@ -314,6 +314,9 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
     route,
     files,
     voice: Boolean(voice),
+    coordinator,
+    channel,
+    reportError,
   })
   if (delivered instanceof Error) {
     // The audio is already in hand: persisting a delivery failure for retry is
@@ -337,8 +340,11 @@ async function deliverRoute(bot: Bot, input: {
   route: Route
   files: readonly PromptFile[]
   voice: boolean
+  coordinator: boolean
+  channel: Message['channel'] | null
+  reportError: (error: Error) => Promise<void>
 }): Promise<Error | void> {
-  const { message, messageId, channelId, thread, projectDirectory, author, route, files, voice } = input
+  const { message, messageId, channelId, thread, projectDirectory, author, route, files, voice, coordinator, channel, reportError } = input
   const detail = route.kind === 'command' ? ` /${route.name}` : route.kind === 'skill' ? ` ${route.id}` : ''
   const attached = files.length > 0 ? `, ${files.length} file(s)` : ''
   logger.log(`${route.kind}${detail} from ${author.username} in ${thread ? `thread ${thread.id}` : `channel ${channelId}`}${attached}`)
@@ -347,30 +353,30 @@ async function deliverRoute(bot: Bot, input: {
     // A long transcript continues in more messages after the reply.
     for (const [index, payload] of echoPayloads(formatEcho({ username: author.username, text: route.text })).entries()) {
       const options = { ...payload, allowedMentions: { parse: [] }, flags: ('flags' in payload ? payload.flags : 0) | SILENT_MESSAGE_FLAGS }
-      if (index === 0) await message.reply(options)
-      else if (channel.isSendable()) await channel.send(options)
+      if (index === 0) await message?.reply(options).catch(() => undefined)
+      else if (channel?.isSendable()) await channel.send(options)
     }
   }
 
   // Coordinator: the channel is the conversation of one long session.
-  if (coordinator && channel.type === ChannelType.GuildText) {
+  if (coordinator && channel?.type === ChannelType.GuildText) {
     // A spoken agent is for a new thread: the coordinator keeps its own agent and model.
     const result = route.kind === 'new-session' || (route.kind === 'steer' && route.agent)
-      ? await startSession(bot, { channelId, directory: project.directory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId: message.id, startMessageId: null, files })
+      ? await startSession(bot, { channelId, directory: projectDirectory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId, startMessageId: null, files })
       : bot.store.getState().roots[channel.id]
-        ? await dispatch(bot, { conversation: channel, route, author, messageId: message.id, files })
+        ? await dispatch(bot, { conversation: channel, route, author, messageId, files })
         : await startCoordinator(bot, {
             channel,
             // Queue and btw need a session to wait for or fork from: the first input is a plain prompt.
             route: route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' || route.kind === 'steer' ? route : { kind: 'steer', text: route.text },
             author,
-            messageId: message.id,
+            messageId,
             files,
           })
     if (result instanceof Error) return reportError(result)
     if (!result || result.threadId === channel.id) return
     const note = route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-    await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+    await message?.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
     return
   }
 
@@ -394,8 +400,8 @@ async function deliverRoute(bot: Bot, input: {
     return
   }
 
-  const result = await dispatch(bot, { conversation: thread, route, author, messageId: message.id, files })
-  if (result instanceof Error) return reportError(result)
+  const result = await dispatch(bot, { conversation: thread, route, author, messageId, files })
+  if (result instanceof Error) return result
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
@@ -490,8 +496,13 @@ export async function retryFailedVoice(bot: Bot, record: FailedVoiceRecord, audi
   // A deleted or unfetchable original must not fail the retry: deliverRoute
   // guards every reply. The thread was fetched above; only the no-thread path
   // needs another fetch for the message lookup.
-  const channel = thread ?? (await bot.discord.channels.fetch(record.channelId).catch(() => null))
-  const message = channel?.isTextBased() ? await channel.messages.fetch(record.messageId).catch(() => null) : null
+  const fetched = thread ?? (await bot.discord.channels.fetch(record.channelId).catch(() => null))
+  const channel = fetched?.isTextBased() ? fetched : null
+  const message = channel ? await channel.messages.fetch(record.messageId).catch(() => null) : null
+  const coordinator = !thread && isCoordinatorChannel(bot, record.channelId)
+  const reportError = async (error: Error) => {
+    logger.error(`retry ${record.messageId} failed`, error)
+  }
   const route = await voiceRoute(bot, {
     messageId: record.messageId,
     mediaType: record.mediaType,
@@ -510,12 +521,15 @@ export async function retryFailedVoice(bot: Bot, record: FailedVoiceRecord, audi
     route,
     files: record.files,
     voice: true,
+    coordinator,
+    channel,
+    reportError,
   })
 }
 
 // Registers the message listeners. Messages of one channel are handled in arrival order:
 // a text sent while a voice message is transcribed waits for it (voice-attachments.e2e.test.ts).
-export function registerIngress(bot: Bot, voiceRetry?: FailedVoiceRetry) {
+export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
   const chains = new Map<string, Promise<void>>()
 
   function serialize(channelId: string, task: () => Promise<void>) {
