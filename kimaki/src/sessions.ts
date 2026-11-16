@@ -32,7 +32,7 @@ import { SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
 import { prompt, runInSession, type Sender } from './prompt.ts'
-import { formatEcho } from './queue.ts'
+import { formatEcho, formatEchoPlain } from './queue.ts'
 import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
 import { disabledSkillRules } from './builtin-skills.ts'
@@ -414,6 +414,7 @@ export async function startSession(
     worktree,
     baseBranch,
     run = true,
+    echoPlain,
   }: {
     channelId: string
     directory: string
@@ -444,6 +445,8 @@ export async function startSession(
     baseBranch?: string
     // false: only set up the thread (/new-worktree, /new-session without a prompt), no first input.
     run?: boolean
+    // Post the prompt echo as normal markdown instead of grey subtext.
+    echoPlain?: boolean
   },
 ): Promise<Error | { threadId: string; sessionId: string }> {
   const defaults = await bot.db.query.channel_directories
@@ -546,7 +549,8 @@ export async function startSession(
     const shown = names ? `${text}\nFiles: ${names}` : text
     // Through the thread's effect queue, so the prompt does not wait for Discord,
     // the echo comes before the session output and a long prompt is split.
-    bot.effects.run(thread.id, [{ type: 'send', text: formatEcho({ username: author.username, text: shown }), echo: true }])
+    const echoText = echoPlain ? formatEchoPlain({ username: author.username, text: shown }) : formatEcho({ username: author.username, text: shown })
+    bot.effects.run(thread.id, [{ type: 'send', text: echoText, echo: true, echoPlain }])
   }
 
   const base = { sessionId: session.id, threadId: thread.id, threadName, author, messageId, files, sender }

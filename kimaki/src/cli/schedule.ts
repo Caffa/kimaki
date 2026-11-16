@@ -31,6 +31,7 @@ export function registerSendCommand(cli: Goke) {
     .option('--parent-session <id>', 'Record the parent session in session metadata')
     .option('--permission <rule>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Repeatable: tool[:pattern]:allow|deny|ask' }))
     .option('--notify-only', 'Post a notification thread without a model turn')
+    .option('--echo-plain', 'Post this prompt echo as normal markdown text instead of grey subtext')
     .option('--wait [seconds]', 'Wait until idle or input is needed (at most this many seconds, default 1 day), then print the session')
     .option('--send-at <when>', 'Schedule: UTC ISO date ending in Z, or cron expression (UTC)')
     .option('--pre-run <command>', 'Scheduled only: run first in the project. Exit 0 starts, stdout is appended')
@@ -47,7 +48,7 @@ export function registerSendCommand(cli: Goke) {
         channelId: options.channel, project: options.project, ...target,
         prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
         cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession,
-        permissions: options.permission, notifyOnly: options.notifyOnly,
+        permissions: options.permission, notifyOnly: options.notifyOnly, echoPlain: options.echoPlain,
         files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
       }
       const result = await callBot({

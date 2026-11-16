@@ -83,6 +83,7 @@ const sendFields = {
   // '' asks for an automatic name.
   worktree: z.string({ error: 'worktree must be a name or an empty string for an automatic name' }).optional(),
   notifyOnly: z.boolean({ error: 'notifyOnly must be boolean' }).optional(),
+  echoPlain: z.boolean({ error: 'echoPlain must be boolean' }).optional(),
   // Seconds the CLI waits for the run (`--wait [seconds]`): a run that ends within them sends no coordinator note.
   wait: z.number({ error: 'wait must be a number of seconds' }).positive({ error: 'wait must be a positive number of seconds' }).optional(),
   // OPENCODE_SESSION_ID of the shell that ran `kimaki send`: a coordinator wakes when the runs it prompted end.

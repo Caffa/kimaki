@@ -696,6 +696,7 @@ export async function send(
     task,
     worktree,
     baseBranch: input.baseBranch,
+    echoPlain: input.echoPlain,
     ...(model && { model: { ...model, variant: null } }),
   })
 }

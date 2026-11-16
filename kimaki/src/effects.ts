@@ -349,11 +349,12 @@ export function createEffectsRunner({ discord, markViewed, footerDefaults }: { d
       const text = effect.type === 'send' ? effect.text : await footerText({ effect, footerDefaults })
       const notify = effect.notify === true
       const echo = effect.type === 'send' && effect.echo === true
+      const echoPlain = effect.type === 'send' && effect.echoPlain === true
       const mentions = !echo
       // A line over the limit (a long prompt echo) is split like model markdown.
       if (text.length > DISCORD_TEXT_LIMIT) {
         await flush()
-        for (const payload of echo ? echoPayloads(text) : markdownPayloads(text)) {
+        for (const payload of echo ? (echoPlain ? markdownPayloads(text) : echoPayloads(text)) : markdownPayloads(text)) {
           if (!live()) return drop(batch.slice(index + 1))
           await post({ threadId, options: payload, notify, mentions })
         }

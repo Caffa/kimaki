@@ -141,7 +141,8 @@ export type Effect =
   // Bot-formatted Discord content (tool lines, banner, errors).
   // Effects are silent unless `notify` is set (format-parts.ts message flags).
   // `echo`: user text (a prompt echo), posted with mentions disabled.
-  | { type: 'send'; text: string; notify?: boolean; echo?: boolean }
+  // `echoPlain`: post the echo as normal markdown instead of grey subtext.
+  | { type: 'send'; text: string; notify?: boolean; echo?: boolean; echoPlain?: boolean }
   // Model markdown, rendered and split by the executor.
   // `replyTo`: the first message replies to this Discord message.
   | { type: 'markdown'; text: string; blankLineBefore: boolean; replyTo: string | null }

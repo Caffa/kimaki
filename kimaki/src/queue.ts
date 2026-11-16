@@ -98,6 +98,11 @@ export function formatEcho(input: { username: string | null; text: string }): st
   return subtext(echoLine(input))
 }
 
+// Plain echo for `--echo-plain`: same line, but no `-# ` subtext wrapping.
+export function formatEchoPlain(input: { username: string | null; text: string }): string {
+  return echoLine(input)
+}
+
 // A long echo (formatEcho) as several messages, split like model markdown.
 // Each piece gets its `-# ` again: a line cut at a word break would lose it.
 export function echoPayloads(echo: string): DiscordPayload[] {

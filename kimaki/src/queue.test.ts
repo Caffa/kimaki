@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { formatEcho } from './queue.ts'
+import { formatEcho, formatEchoPlain } from './queue.ts'
 import { markdownPayloads } from './markdown/components.ts'
 
 test('echo puts block markdown on the line below the prefix', () => {
@@ -56,4 +56,31 @@ test('long subtext echo splits into messages that keep subtext on every line', (
   const lines = payloads.flatMap((payload) => String(Reflect.get(payload, 'content') ?? 'not text').split('\n'))
   expect(payloads.length).toBeGreaterThan(1)
   expect(lines.filter((line) => line !== '' && !line.startsWith('-# '))).toEqual([])
+})
+
+test('long plain echo splits like model markdown and keeps attribution in payload 0', () => {
+  const text = Array.from({ length: 120 }, (_, index) => `line ${index} of a long prompt sent from the CLI`).join('\n')
+  const plain = formatEchoPlain({ username: 'CLI', text })
+  expect(plain.length).toBeGreaterThan(2000)
+  const payloads = markdownPayloads(plain)
+  expect(payloads.length).toBeGreaterThan(1)
+  const first = String(Reflect.get(payloads[0], 'content') ?? '')
+  expect(first.startsWith('» **CLI:**')).toBe(true)
+  expect(plain.startsWith('-# ')).toBe(false)
+})
+
+test('echo plain omits subtext while keeping the same echo line', () => {
+  const text = '# Title\n\nplain line'
+  const subtext = formatEcho({ username: 'CLI', text })
+  const plain = formatEchoPlain({ username: 'CLI', text })
+  expect(subtext).toContain('-# » **CLI:**')
+  expect(plain).not.toContain('-# ')
+  expect(plain).toContain('» **CLI:**')
+  expect(plain).toContain('# Title')
+  const subtextPayloads = markdownPayloads(subtext)
+  const plainPayloads = markdownPayloads(plain)
+  const subtextLines = subtextPayloads.flatMap((payload) => String(Reflect.get(payload, 'content') ?? '').split('\n'))
+  const plainLines = plainPayloads.flatMap((payload) => String(Reflect.get(payload, 'content') ?? '').split('\n'))
+  expect(subtextLines.filter((line) => line !== '' && !line.startsWith('-# '))).toEqual([])
+  expect(plainLines.some((line) => line.startsWith('-# '))).toBe(false)
 })
