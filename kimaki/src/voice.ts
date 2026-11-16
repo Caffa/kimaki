@@ -685,15 +685,23 @@ type Transcriber =
   | { kind: 'gateway'; clientId: string; clientSecret: string }
   | { kind: 'local-whisper'; whisper: LocalWhisper }
 
+// The parakeet transcriber, or [] when the local ASR service does not answer
+// (or cannot start). Probing it keeps local transcription ahead of every cloud key.
+async function parakeetEntry(parakeet: { baseUrl: string; autoStart: boolean } | null) {
+  if (!parakeet || !(await parakeetTranscriber(parakeet))) return []
+  return [{ kind: 'parakeet' as const, baseUrl: parakeet.baseUrl }]
+}
+
 // Best first: the local parakeet ASR service (no key, no subscription), then
 // the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
 // key, then hosted Whisper. Parakeet, ChatGPT and Whisper only transcribe, so
 // the route is always steer.
 async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: KimakiDb; token: string; opencodeDbFile: string; parakeet: { baseUrl: string; autoStart: boolean } | null }): Promise<DbError | Transcriber[]> {
   const whisper = localWhisperFromEnv()
-  // A local Whisper server is the only one: its failure must not send the
-  // audio to a cloud provider, and it needs no keys from the db.
-  if (whisper) return [{ kind: 'local-whisper', whisper }]
+  // KIMAKI_WHISPER_URL replaces the whole cloud list: its failure must not
+  // send the audio to a cloud provider, and it needs no keys from the db.
+  // Parakeet is local too, so it still runs ahead of it.
+  if (whisper) return [...(await parakeetEntry(parakeet)), { kind: 'local-whisper', whisper }]
 
   const [row, credential] = await Promise.all([
     db.query.bot_tokens
@@ -708,11 +716,8 @@ async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: Kimak
   const gemini = keys.find((key) => key.provider === 'gemini')
   const credentials = row ? credentialsFromRow(row) : null
   const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
-  // Probing parakeet first keeps local transcription ahead of every cloud key.
-  // null (not running, cannot start) just leaves it out of the chain.
-  const parakeetTranscriberUrl = parakeet ? await parakeetTranscriber(parakeet) : null
   return [
-    ...(parakeet && parakeetTranscriberUrl ? [{ kind: 'parakeet' as const, baseUrl: parakeet.baseUrl }] : []),
+    ...(await parakeetEntry(parakeet)),
     ...(openai ? [{ kind: 'openai' as const, apiKey: openai.apiKey }] : []),
     ...(credential && !(credential instanceof Error) ? [{ kind: 'chatgpt' as const, credential }] : []),
     ...(gemini ? [{ kind: 'gemini' as const, apiKey: gemini.apiKey }] : []),
