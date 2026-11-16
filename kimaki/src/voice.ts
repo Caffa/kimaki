@@ -683,12 +683,17 @@ type Transcriber =
   | { kind: 'openai' | 'gemini'; apiKey: string }
   | { kind: 'chatgpt'; credential: ChatGPTCredential }
   | { kind: 'gateway'; clientId: string; clientSecret: string }
+  | { kind: 'local-whisper'; whisper: LocalWhisper }
 
 // Best first: the local parakeet ASR service (no key, no subscription), then
 // the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
 // key, then hosted Whisper. Parakeet, ChatGPT and Whisper only transcribe, so
 // the route is always steer.
 async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: KimakiDb; token: string; opencodeDbFile: string; parakeet: { baseUrl: string; autoStart: boolean } | null }): Promise<DbError | Transcriber[]> {
+  const whisper = localWhisperFromEnv()
+  // A local Whisper server is the only one: its failure must not send the
+  // audio to a cloud provider, and it needs no keys from the db.
+  if (whisper) return [{ kind: 'local-whisper', whisper }]
 
   const [row, credential] = await Promise.all([
     db.query.bot_tokens
@@ -760,6 +765,7 @@ export async function transcribe({
   const run = (entry: Transcriber) => {
     if (entry.kind === 'parakeet') return withRetries({ signal, attempt: () => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType, signal }) })
     if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry, signal })
+    if (entry.kind === 'local-whisper') return withRetries({ signal, attempt: () => transcribeViaLocalWhisper({ whisper: entry.whisper, audio, mediaType, signal }) })
     if (entry.kind === 'chatgpt') return withRetries({ signal, attempt: () => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType, signal }) })
     const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool, signal }
     if (entry.kind === 'openai') return withRetries({ signal, attempt: () => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }) })
