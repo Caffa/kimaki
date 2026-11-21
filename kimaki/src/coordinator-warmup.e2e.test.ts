@@ -151,8 +151,10 @@ test('a stuck worker stops the warmup at the cap', async () => {
   await waitForFooter({ discord, threadId: worker.id })
 
   expect(workerText).not.toContain('-# *main')
-  // 1.5s cap, one keep-alive every 0.4s: at most 3, none after the cap.
+  // 1.5s cap, one keep-alive every 0.4s: at most 3 keep-alives plus the
+  // coordinator's own real request (the log counts every generate of the
+  // session), none after the cap.
   expect(atCap - before).toBeGreaterThan(0)
-  expect(atCap - before).toBeLessThanOrEqual(3)
+  expect(atCap - before).toBeLessThanOrEqual(4)
   expect(keepAlives(root)).toBe(atCap)
 })

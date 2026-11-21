@@ -120,11 +120,21 @@ test('a failing ASR service is reported instead of falling through to a cloud pr
       .channel(twin.channelId)
       .user(TEST_USER_ID)
       .sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
-    const reply = await twin.discord.channel(twin.channelId).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.startsWith('✗') })
-    expect(reply.content).toMatchInlineSnapshot(`
-      "✗ Transcription API returned 500: {"detail":"transcription failed"}
-      The audio is saved and its delivery will be retried automatically."
-    `)
+    // A 500 is transient: the round loop shows the wait instead of failing at
+    // once (upstream's retry rounds). No cloud provider joins the chain: the
+    // credentials are self-hosted and the cloud env keys were removed, so
+    // parakeet stays the only transcriber and keeps being asked.
+    const status = await twin.discord.channel(twin.channelId).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes('retrying in') })
+    expect(status.content).toMatchInlineSnapshot(`"-# transcription failed, retrying in 2s (attempt 2)"`)
+    const failedRequests = parakeet.requests.length
+    // Recovery: the next round transcribes, the status goes away, and the
+    // transcription starts a new session like a live message would.
+    parakeet.status = 200
+    const threads = new Set((await twin.discord.channel(twin.channelId).getThreads()).map((thread) => thread.id))
+    const thread = await twin.discord.channel(twin.channelId).waitForThread({ timeout: 8_000, predicate: (candidate) => !threads.has(candidate.id) })
+    await waitForFooter({ discord: twin.discord, threadId: thread.id })
+    expect(parakeet.requests.length).toBeGreaterThan(failedRequests)
+    expect((await twin.discord.channel(twin.channelId).getMessages()).some((message) => message.id === status.id)).toBe(false)
   } finally {
     parakeet.status = 200
   }

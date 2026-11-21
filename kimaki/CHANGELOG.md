@@ -1,5 +1,72 @@
 # Changelog
 
+## 1.7.1
+
+1. **New worktrees start much faster.** Kimaki no longer installs dependencies when it creates a worktree (`/new-worktree`, `kimaki send --worktree`, automatic worktrees), so a slow or failed install no longer blocks the session. Submodules are still initialized. Sessions that run in a worktree get a short instruction to install dependencies and build what is needed before they run scripts, builds or tests.
+
+2. **`/<agent>-agent` without a prompt switches the coordinator's agent** in a coordinator channel, instead of starting a new empty thread. With a prompt it still starts a new thread with that agent, and the coordinator keeps its own agent and model:
+
+   ```
+   /thinker-agent                      switches the coordinator to thinker
+   /thinker-agent prompt:fix the bug   starts a new thread with thinker
+   ```
+
+## 1.7.0
+
+1. **`/btw` takes an optional `agent` option** with autocomplete of the project's agents. The forked session answers with that agent; without it the fork keeps the source session's agent. An unknown agent fails before the `btw:` thread is created.
+
+2. **The footer shows the model variant (thinking level)** as `modelid#variant`. Sessions without a variant keep the plain model ID:
+
+   ```
+   -# *fix-login ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6#high*
+   ```
+
+3. **Coordinator workers use the coordinator's own agent**, so they run on the same model as the coordinator. It no longer picks a stronger or cheaper agent by task difficulty. Forks (`. btw`) and follow-ups keep the agent and model of their thread. A different agent or model is used only when you name one.
+
+4. **Multi-paragraph quotes render as one quote block.** Discord shows an empty `>` line as a literal `>` that breaks the quote, so Kimaki now drops blank lines inside quotes. This applies to model output and to prompts Kimaki posts in a thread (`kimaki send`, routines, TUI prompts):
+
+   ```md
+   > first paragraph
+   >
+   > second paragraph
+   ```
+
+   now posts as:
+
+   ```md
+   > first paragraph
+   > second paragraph
+   ```
+
+5. **Voice calls and ChatGPT transcription skip "ChatGPT token sharing" logins.** OpenAI rejects them with `401 rejected_by_access_enforcement` on GPT-Live and dictation, so Kimaki uses only a Codex login of OpenCode (`chatgpt-browser` or `chatgpt-headless`). An expired Codex login no longer hides a valid one, and the voice call error says which login to add:
+
+   ```bash
+   kimaki login openai --method chatgpt-browser
+   ```
+
+## 1.6.0
+
+1. **`KIMAKI_WHISPER_TIMEOUT` for slow local Whisper servers.** The 2 minute transcription limit is too short for long voice messages on CPU-only hardware. Raise it in seconds; it applies only when `KIMAKI_WHISPER_URL` is set and the default is unchanged:
+
+   ```bash
+   KIMAKI_WHISPER_URL=http://127.0.0.1:8000/v1 KIMAKI_WHISPER_TIMEOUT=600 kimaki
+   ```
+
+2. **`/<agent>-agent` without a prompt starts a new thread in a coordinator channel.** Before, it switched the coordinator session to that agent, so the next channel message ran the coordinator on the wrong agent. Now the thread waits for your first message and the coordinator keeps its own agent and model:
+
+   ```
+   /thinker-agent              ─▶ new thread "Send a message to start working." (thinker agent)
+   /thinker-agent prompt:...   ─▶ new thread that runs the prompt (thinker agent)
+   ```
+
+   Inside a thread, and in channels with coordinator mode off, the command works as before.
+
+3. **Renaming a thread in Discord no longer prompts the agent.** Discord posts a system message with only the new name, and Kimaki sent it to the agent as user text. Now system messages (renames, pins, member joins, boosts) never become prompts, and a rename sets the OpenCode session title:
+
+   ```
+   rename thread in Discord ─▶ CHANNEL_NAME_CHANGE message ─▶ session.update({ title })   (no prompt)
+   ```
+
 ## 1.5.0
 
 1. **Coordinator channels, on by default.** A project channel is now a chat with one long coordinator session: you write in the channel, it answers in the channel, and it starts a worker thread for each piece of work.

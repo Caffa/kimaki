@@ -11,12 +11,13 @@ import { stopAsrService } from './asr-service-manager.ts'
 import type { Analytics } from './analytics.ts'
 import { oc, type Bot, type WarmupTimers } from './bot.ts'
 import type { PromptSection } from './builtin-skills.ts'
+import { registerChannelSort, SORT_CHANNELS_DELAY_MS } from './channel-sort.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
 import { createEventLoop, type RunEnded } from './event-loop.ts'
 import { createFailedVoiceRetry, notifyGaveUpFailedVoice, type FailedVoiceRetryOptions } from './failed-voice.ts'
-import { registerIngress, retryFailedVoice } from './ingress.ts' 
+import { createIngress, retryFailedVoice } from './ingress.ts'
 import { runLockRoute } from './lock-routes.ts'
 import { installShim, type LockServer } from './lock-server.ts'
 import { createLogger } from './logger.ts'
@@ -84,10 +85,14 @@ export type StartBotOptions = {
   disabledSkills?: readonly string[]
   // Static instruction parts left out of new sessions (system-prompt.ts).
   disabledPrompt?: readonly PromptSection[]
-  // `--coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts). Default: on.
+  // `--coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts). Default: off.
   coordinator?: boolean
   // Default: the plugin's prompt cache warmup windows (plugin/coordinator.ts). Tests pass short ones.
   warmupTimers?: WarmupTimers
+  // `--sort-channels`: latest used channels first in this machine's category (channel-sort.ts). Default: off.
+  sortChannels?: boolean
+  // Default SORT_CHANNELS_DELAY_MS. Tests pass a short one.
+  sortChannelsDelayMs?: number
 }
 
 export type BotHandle = Bot & {
@@ -197,6 +202,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The features that non-interaction code reaches through bot.features.
   const agentUi = createAgentUi({ store, eventLoop, opencode })
   cleanup.defer(() => agentUi.stop())
+  const ingress = createIngress()
   const bot: Bot = {
     discord,
     db,
@@ -222,7 +228,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     disabledPrompt: options.disabledPrompt ?? [],
     coordinatorDefault: options.coordinator ?? false,
     warmupTimers: options.warmupTimers ?? null,
-    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
+    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls, ingress },
   }
   const scheduler = createScheduler({
     bot,
@@ -234,9 +240,13 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
-  registerIngress(bot, voiceRetry)
+  ingress.register(bot, voiceRetry)
   voiceCalls.register(bot)
   coordinatorNotes.register(bot)
+  if (options.sortChannels) {
+    const stopSort = registerChannelSort(bot, { delayMs: options.sortChannelsDelayMs ?? SORT_CHANNELS_DELAY_MS })
+    cleanup.defer(stopSort)
+  }
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
   cleanup.defer(() => voiceCalls.stop(bot))
 

@@ -1600,7 +1600,7 @@ command; they run as `/server:prompt args` messages or from `/queue-command`.
 ### Other
 
 `/last-sessions`, `/tasks`, `/login` (provider auth → V2 `integration.*`),
-`/transcription-key`, `/mcp` (V2 `mcp.list`, transform to toggle),
+`/transcription-key`, `/mcp` (V2 `mcp.list`, `mcp.connect` / `mcp.disconnect` per location),
 `/screenshare`, `/vscode`, `/restart-opencode-server`. (`/upgrade-and-restart` removed.)
 
 ### Component custom IDs
@@ -3993,7 +3993,8 @@ and answers in an old thread.
 - `/new-worktree`, `send --worktree`, channel auto-worktree: custom Git creation
   under the Kimaki data directory, then session creation at that location.
   This follows `cli/git-worktree-core.ts` without the workspace adaptor/state table.
-- Worktree setup initializes submodules and installs from frozen lockfiles.
+- Worktree setup initializes submodules only. No dependency install: worktree
+  sessions get an instruction to set up the checkout before scripts or builds.
   Default base is the mapped checkout's committed HEAD; no branch resets.
 - Recurring worktree tasks create a fresh checkout per occurrence.
 - `/worktrees` (direct components, no `<button>` markdown), `/merge-worktree`

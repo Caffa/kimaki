@@ -11,6 +11,7 @@ import {
   GatewayDispatchEvents,
   InteractionType,
   ComponentType,
+  MessageType,
 } from 'discord-api-types/v10'
 import type {
   APIMessage,
@@ -377,6 +378,18 @@ export class DigitalDiscord {
     return firstUser.id
   }
 
+  // Non-thread channels of a guild in Discord's order: position, then ID.
+  async getGuildChannels({ guildId = this.guildId }: { guildId?: string } = {}): Promise<APIChannel[]> {
+    const channels = await this.prisma.channel.findMany({
+      where: {
+        guildId,
+        type: { notIn: [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread] },
+      },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    })
+    return channels.map(channelToAPI)
+  }
+
   getTypingEvents({
     channelId,
   }: {
@@ -449,6 +462,7 @@ export class DigitalDiscord {
     embeds,
     attachments,
     messageReference,
+    type = MessageType.Default,
   }: {
     channelId: string
     userId: string
@@ -456,6 +470,7 @@ export class DigitalDiscord {
     embeds?: APIEmbed[]
     attachments?: APIAttachment[]
     messageReference?: APIMessageReference
+    type?: MessageType
   }): Promise<APIMessage> {
     if (!this.server) {
       throw new Error('Server not started')
@@ -466,6 +481,7 @@ export class DigitalDiscord {
         id: messageId,
         channelId,
         authorId: userId,
+        type,
         content,
         embeds: JSON.stringify(embeds ?? []),
         attachments: JSON.stringify(attachments ?? []),
@@ -506,6 +522,33 @@ export class DigitalDiscord {
     )
     this.server.gateway.broadcastMessageCreate(apiMessage, guildId ?? '')
     return apiMessage
+  }
+
+  // A user renames a thread in the Discord UI: THREAD_UPDATE, then a
+  // CHANNEL_NAME_CHANGE system message whose content is the new name.
+  async simulateThreadRename({
+    channelId,
+    userId,
+    name,
+  }: {
+    channelId: string
+    userId: string
+    name: string
+  }): Promise<APIMessage> {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    const updated = await this.prisma.channel.update({
+      where: { id: channelId },
+      data: { name },
+    })
+    this.server.gateway.broadcast(GatewayDispatchEvents.ThreadUpdate, channelToAPI(updated))
+    return this.simulateUserMessage({
+      channelId,
+      userId,
+      content: name,
+      type: MessageType.ChannelNameChange,
+    })
   }
 
   async simulateUserMessageEdit({
@@ -1288,6 +1331,10 @@ export class ChannelScope {
         lines.push(`--- from: ${role} (${msg.author.username})`)
       }
       lastAuthorId = msg.author.id
+      if (msg.type === MessageType.ChannelNameChange) {
+        lines.push(`[renamed thread to: ${msg.content}]`)
+        continue
+      }
       const referenceId = msg.message_reference?.message_id
       if (showReplies && referenceId) {
         const target = messages.find((candidate) => candidate.id === referenceId)
@@ -1699,6 +1746,15 @@ export class ScopedUserActor {
     return this.discord.simulateUserMessageDelete({
       messageId,
       channelId: this.channelId,
+    })
+  }
+
+  // Rename this thread from the Discord UI (posts a CHANNEL_NAME_CHANGE message).
+  async renameThread({ name }: { name: string }) {
+    return this.discord.simulateThreadRename({
+      channelId: this.channelId,
+      userId: this.userId,
+      name,
     })
   }
 

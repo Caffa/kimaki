@@ -1,12 +1,17 @@
-// OpenCode V2 plugin: on rate limit, quota, overload or auth errors, record a
+// OpenCode V2 plugin: on rate limit, quota or auth errors, record a
 // block in plugin storage, then move the failing session to the best
 // (model, account) pair that is not blocked, and retry the same step.
 //
+// - Provider outages (503, 529 overloaded) are left to OpenCode's own retry on
+//   the same model: they are temporary, but a model switch lasts for the session.
 // - Model changes are per session (session.switchModel). The plugin never
 //   moves a session back up by itself, so prompt caches survive.
 // - Account changes are global per integration (credential.activate): a
 //   blocked account is blocked for every session.
 // - Accounts come from normal OpenCode logins (`opencode auth login`, /connect).
+// - After a model switch, session metadata `fallback` records it and every
+//   request of that session gets a system note, so the new model knows its
+//   abilities may differ from the old one.
 // - Retry hook errors carry no headers, so http.response keeps the headers of
 //   the last failed response per session for exact reset times.
 
@@ -14,13 +19,18 @@ import { Plugin, Rpc } from '@opencode/plugin'
 import {
   blockKey,
   classify,
+  DEFAULT_BLOCK_MS,
   DEFAULT_MODELS,
   ENV_ACCOUNT,
   formatModel,
   parseModel,
   pick,
   isBlock,
+  isModelSwitch,
+  nextSwitch,
+  switchNote,
   type Block,
+  type Choice,
   type ModelRef,
 } from './fallback.ts'
 
@@ -65,6 +75,13 @@ export default Plugin.define({
       const integration = await ctx.integration.get({ integrationID: await integrationOf(providerID) }).catch(() => undefined)
       const ids = (integration?.data.connections ?? []).flatMap((item) => (item.type === 'credential' ? [item.id] : []))
       return ids.length === 0 ? [ENV_ACCOUNT] : ids
+    }
+
+    // Resolving refreshes an expiring OAuth token now, so a dead refresh token fails here, not in the retried step.
+    async function usable({ model, credentialID }: Choice) {
+      const integration = await ctx.integration.get({ integrationID: await integrationOf(model.providerID) }).catch(() => undefined)
+      const connection = integration?.data.connections.find((item) => item.type === 'credential' && item.id === credentialID)
+      return !connection || ctx.integration.connection.resolve(connection).then(() => true, () => false)
     }
 
     async function readBlocks(now: number) {
@@ -143,13 +160,28 @@ export default Plugin.define({
       const accounts = Object.fromEntries(
         await Promise.all(providers.map(async (providerID) => [providerID, await accountsOf(providerID)] as const)),
       )
-      const choice = pick({ ranking: candidates, accounts, blocks: await readBlocks(now), now })
+      const blocks = await readBlocks(now)
+      let choice = pick({ ranking: candidates, accounts, blocks, now })
+      // Each failed check blocks the chosen account, so the loop ends. A waiting choice
+      // is not checked: its token may be refreshed before the wait ends.
+      while (choice && choice.waitUntil === undefined && !(await usable(choice))) {
+        const auth: Block = { providerID: choice.model.providerID, credentialID: choice.credentialID, modelID: '*', until: now + DEFAULT_BLOCK_MS.auth, reason: 'auth' }
+        await saveBlock(auth)
+        blocks.push(auth)
+        choice = pick({ ranking: candidates, accounts, blocks, now })
+      }
       if (!choice) return
 
       if (choice.credentialID !== ENV_ACCOUNT && (await activeCredential(choice.model.providerID)) !== choice.credentialID) {
         await ctx.credential.activate({ credentialID: choice.credentialID })
       }
       await ctx.session.switchModel({ sessionID: event.sessionID, model: choice.model })
+      if (choice.model.providerID !== event.model.providerID || choice.model.id !== event.model.id) {
+        const session = await ctx.session.get({ sessionID: event.sessionID }).catch(() => undefined)
+        const previous = session?.metadata?.fallback
+        const fallback = nextSwitch({ previous: isModelSwitch(previous) ? previous : undefined, failed: event.model, to: choice.model, reason: block.reason })
+        if (session) await ctx.session.update({ sessionID: event.sessionID, metadata: { ...session.metadata, fallback } }).catch(() => undefined)
+      }
       event.decision = { retry: true, delay: choice.waitUntil === undefined ? 0 : Math.max(0, choice.waitUntil - now) }
 
       await rpc.events.emit('switched', {
@@ -163,5 +195,18 @@ export default Plugin.define({
         ...(choice.waitUntil === undefined ? {} : { waitUntil: choice.waitUntil }),
       })
     })
+
+    // The retried step builds its request again, so the note is there before the new
+    // model answers. It only changes at a switch, which loses the prompt cache anyway.
+    async function addSwitchNote(event: { sessionID: string; model: ModelRef; system: Array<{ type: 'text'; text: string }> }) {
+      const session = await ctx.session.get({ sessionID: event.sessionID }).catch(() => undefined)
+      const value = session?.metadata?.fallback
+      const note = switchNote({ value: isModelSwitch(value) ? value : undefined, model: event.model })
+      if (note) event.system.push({ type: 'text', text: note })
+    }
+    // All three, so warmup and compaction requests keep the same cached prefix.
+    await ctx.session.hook('context', addSwitchNote)
+    await ctx.session.hook('compaction', addSwitchNote)
+    await ctx.session.hook('generate', addSwitchNote)
   },
 })

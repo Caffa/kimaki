@@ -280,6 +280,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --parent-session <id>           Record the parent session in session metadata
         --permission <rule>             Repeatable: tool[:pattern]:allow|deny|ask
         --notify-only                   Post a notification thread without a model turn
+        --echo-plain                    Post this prompt echo as normal markdown text instead of grey subtext
         --wait [seconds]                Wait until idle or input is needed (at most this many seconds, default 1 day), then print the session
         --send-at <when>                Schedule: UTC ISO date ending in Z, or cron expression (UTC)
         --pre-run <command>             Scheduled only: run first in the project. Exit 0 starts, stdout is appended
@@ -443,7 +444,8 @@ test('CLI help documents the supported P7 commands', async () => {
       --disable-skills <list>       Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)
       --disable-prompt <section>    System prompt section to remove from new sessions (repeatable): discord-permissions, kimaki-debugging, file-upload-requests, action-buttons, session-sleep, session-abort, cross-project-commands, waiting-sessions, critique-diffs, markdown-formatting, discord-callouts, search-result-urls, diagrams
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
-      --coordinator [enabled]       Channel messages go to one long coordinator session that starts threads for the work. "false" turns it off (/toggle-coordinator sets one channel) (default: true)
+      --coordinator [enabled]       Channel messages go to one long coordinator session that starts threads for the work. "true" turns it on; default off, threads are created per message (/toggle-coordinator sets one channel) (default: false)
+      --sort-channels               Sort the channels of this machine's category by the last user message or interaction, latest first
       --no-autostart                Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message
@@ -487,7 +489,7 @@ test('CLI registry shares thread actions, preferences, title and archive', async
     -# » **CLI:** Registry queued
     ok
     -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*
-    ✗ compaction failed: Compaction summary did not match the required template"
+    -# ✗ compaction failed: Compaction summary did not match the required template"
   `)
   expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
 })

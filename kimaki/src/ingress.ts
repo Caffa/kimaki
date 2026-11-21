@@ -1,6 +1,7 @@
 // Discord ingress (spec 4): gates every messageCreate, parses it into a Route
 // and calls actions. Gates, in order: webhooks and our own messages (except
-// remote send envelopes), channel ownership (only channels mapped in this
+// remote send envelopes), system messages (a thread rename only sets the
+// session title), channel ownership (only channels mapped in this
 // machine's SQLite), permission (other bots need the Kimaki role).
 // Messages of one channel are handled in arrival order, after OpenCode is ready.
 //
@@ -12,6 +13,12 @@
 //
 // Attachments become prompt files; voice messages are transcribed into the
 // same Route as text. Edits and deletes of queued messages update the queue.
+//
+// A voice message gets one subtext status reply while transcription rounds fail
+// ("retrying in 4s"). It is deleted on success, or becomes the error with a Retry
+// button (custom id voice_retry:<messageId>) that handles the voice message again.
+// Permanent errors (and download failures) show that button; transient ones are
+// persisted with the audio and retried in the background (failed-voice.ts).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,24 +28,21 @@ import {
   Events,
   GuildMember,
   MessageFlags,
+  MessageType,
   PermissionFlagsBits,
   type Attachment,
+  type ButtonInteraction,
   type Guild,
   type Message,
   type ThreadChannel,
 } from 'discord.js'
 import * as errore from 'errore'
 
-import { isCoordinatorChannel, oc, projectOf, rootSession, sessionDirectory, fetchThread, type Author, type Bot, type PromptFile } from './bot.ts'
+import { fetchThread, isCoordinatorChannel, oc, projectOf, rootSession, sessionDirectory, type Author, type Bot, type PromptFile } from './bot.ts'
 import { ConfigError } from './errors.ts'
 import { failedVoiceDir, type FailedVoiceRecord, type FailedVoiceRetry } from './failed-voice.ts'
-import {
-  EmptyTranscriptionError,
-  NoTranscriptionKeyError,
-  TranscriptionApiError,
-  TranscriptionBlockedError,
-} from './voice.ts' 
-import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
+import { asSubtext, button, buttonRow, formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
+import type { InteractionRoutes } from './interaction-context.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
 import { cancelQueuedPrompt, dispatch, promptIdForMessage, requeueEdited, send } from './prompt.ts'
@@ -46,11 +50,12 @@ import { REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX } from './
 import { echoPayloads, formatEcho, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { primaryAgents, startCoordinator, startSession } from './sessions.ts'
-import { isVoiceAttachment, parseVoiceMessage, transcribe, voiceMediaType, type AttachmentLike } from './voice.ts'
+import { EmptyTranscriptionError, isVoiceAttachment, NoTranscriptionKeyError, parseVoiceMessage, TranscriptionApiError, TranscriptionBlockedError, transcribe, voiceMediaType, type AttachmentLike } from './voice.ts'
 
 const logger = createLogger('INGRESS')
-// Later messages of the channel wait for downloads (registerIngress).
+// Later messages of the channel wait for downloads (createIngress).
 const DOWNLOAD_TIMEOUT_MS = 60_000
+const VOICE_RETRY_PREFIX = 'voice_retry:'
 
 // Owner, Administrator, Manage Server, or a role named "Kimaki"; with
 // --allow-all-users every member. A role named "no-kimaki" always denies.
@@ -158,7 +163,7 @@ function attachmentLike(attachment: Attachment): AttachmentLike {
 // the saved bytes (a Discord attachment URL must never be fetched again).
 async function voiceRoute(
   bot: Bot,
-  { messageId, mediaType, audio, directory, inSession }: { messageId: string; mediaType: string; audio: Buffer; directory: string; inSession: boolean },
+  { messageId, mediaType, audio, directory, inSession, onRetry }: { messageId: string; mediaType: string; audio: Buffer; directory: string; inSession: boolean; onRetry?: (text: string) => void },
 ): Promise<Error | Route> {
   const agents = await primaryAgents(bot, directory)
   if (agents instanceof Error) return agents
@@ -174,6 +179,7 @@ async function voiceRoute(
     // The ID is what switchAgent and session.create take.
     agents: agents.map((agent) => ({ name: agent.id, description: agent.description ?? '' })),
     inSession,
+    onRetry: ({ delayMs, attempt }) => void onRetry?.(`transcription failed, retrying in ${delayMs / 1000}s (attempt ${attempt})`),
   })
   if (result instanceof Error) return result
   logger.log(`voice message ${messageId} -> ${result.route}${result.agent ? ` (${result.agent})` : ''}`)
@@ -199,6 +205,53 @@ function isPermanentTranscriptionError(error: Error): boolean {
   }
   return false
 }
+
+// The one status reply under a voice message. `initial` is the error message whose Retry was clicked.
+// Steps run in order, so a slow edit never lands after the delete.
+function voiceStatus(message: Message, initial: Message | null) {
+  let current = Promise.resolve(initial)
+  const step = (next: (status: Message | null) => Promise<Message | null>) => {
+    current = current.then((status) =>
+      next(status).catch((error: Error) => {
+        logger.warn(`voice status of ${message.id}`, error)
+        return status
+      }),
+    )
+    return current
+  }
+  // Only the error has the Retry button and notifies.
+  const put = ({ content, failed }: { content: string; failed: boolean }) => {
+    const components = failed ? [buttonRow([button({ customId: `${VOICE_RETRY_PREFIX}${message.id}`, label: 'Retry' })])] : []
+    const flags = failed ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS
+    return step((status) => (status ? status.edit({ content, components }) : message.reply({ content, components, flags, allowedMentions: { parse: [] } })))
+  }
+  return {
+    retrying: (text: string) => put({ content: asSubtext(text), failed: false }),
+    failed: (error: Error) => {
+      logger.error(`voice message ${message.id} failed`, error)
+      return put({ content: formatError(error.message), failed: true })
+    },
+    clear: () =>
+      step(async (status) => {
+        await status?.delete()
+        return null
+      }),
+  }
+}
+
+// The error reply stays where it is: it shows the retry status, then goes away or shows the new error.
+async function clickVoiceRetry(bot: Bot, interaction: ButtonInteraction) {
+  const messageId = interaction.customId.slice(VOICE_RETRY_PREFIX.length)
+  const voice = interaction.channel ? await interaction.channel.messages.fetch(messageId).catch(() => null) : null
+  if (!voice) {
+    await interaction.reply({ content: 'The voice message no longer exists', flags: MessageFlags.Ephemeral })
+    return
+  }
+  await interaction.update({ content: asSubtext('transcribing again'), components: [] })
+  bot.features.ingress.retry(bot, { message: voice, status: interaction.message })
+}
+
+export const voiceRetryRoutes: InteractionRoutes = { buttons: { [VOICE_RETRY_PREFIX]: clickVoiceRetry } }
 
 // A remote send envelope another machine's `kimaki send` posted in a channel this bot owns.
 async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: { message: Message; channelId: string; threadId: string | null }) {
@@ -230,7 +283,7 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
   const answer = JSON.stringify(result instanceof Error ? { error: result.message } : result)
   await message
     .reply({
-      content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`,
+      content: result instanceof Error ? formatError(result.message) : asSubtext(`Delivered to <#${result.threadId}>`),
       embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${answer}` } }],
       allowedMentions: { parse: [] },
       // The data is in the embed: SuppressEmbeds would hide it.
@@ -239,7 +292,8 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
     .catch((error: Error) => logger.warn(`remote acknowledgment`, error))
 }
 
-async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Message) {
+// `statusMessage`: set when a Retry click handles a voice message again.
+async function handleMessage(bot: Bot, { message, statusMessage = null, voiceRetry }: { message: Message; statusMessage?: Message | null; voiceRetry: FailedVoiceRetry }) {
   const channel = message.channel
   const thread = channel.isThread() ? channel : null
   const channelId = thread ? thread.parentId : channel.id
@@ -278,14 +332,20 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
 
   const attachments = [...message.attachments.values()]
   const voice = attachments.find((attachment) => isVoiceAttachment(attachmentLike(attachment)))
+  const status = voice ? voiceStatus(message, statusMessage) : null
+  // Until the voice message has a route, every failure can be retried.
+  const routeError = async (error: Error) => {
+    if (status) await status.failed(error)
+    else await reportError(error)
+  }
   const files = await saveAttachments({
     dataDir: bot.dataDir,
     messageId: message.id,
     attachments: attachments.filter((attachment) => attachment !== voice),
   })
-  if (files instanceof Error) return reportError(files)
+  if (files instanceof Error) return routeError(files)
   const directory = sessionId && voice ? await sessionDirectory(bot, sessionId) : project.directory
-  if (directory instanceof Error) return reportError(directory)
+  if (directory instanceof Error) return routeError(directory)
 
   let audio: Buffer | null = null
   let route: Error | Route | null
@@ -293,16 +353,28 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
     // Downloaded here so a transient failure can be persisted with the bytes
     // in hand: a retry must never re-download (Discord URLs expire).
     const bytes = await download(voice.url)
-    if (bytes instanceof Error) return reportError(bytes)
+    if (bytes instanceof Error) return routeError(bytes)
     audio = bytes
-    route = await voiceRoute(bot, { messageId: message.id, mediaType: voiceMediaType(voice), audio, directory, inSession: Boolean(sessionId) })
+    route = await voiceRoute(bot, {
+      messageId: message.id,
+      mediaType: voiceMediaType(voice),
+      audio,
+      directory,
+      inSession: Boolean(sessionId),
+      onRetry: (text) => void status?.retrying(text),
+    })
   } else {
     route = parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null)
   }
   if (route instanceof Error) {
-    if (isPermanentTranscriptionError(route) || !audio || !voice) return reportError(route)
+    // Permanent failures (and anything without audio in hand) get the Retry
+    // button; transient ones are persisted and retried in the background, so
+    // the button would only risk a duplicate delivery.
+    if (isPermanentTranscriptionError(route) || !audio || !voice) return routeError(route)
+    await status?.clear()
     return persistForRetry({ bot, voiceRetry, message, channelId, thread, directory, sessionId, author, voice, files, audio, failure: route })
   }
+  await status?.clear()
   if (!route) return
   const delivered = await deliverRoute(bot, {
     message,
@@ -322,6 +394,7 @@ async function handleMessage(bot: Bot, voiceRetry: FailedVoiceRetry, message: Me
     // The audio is already in hand: persisting a delivery failure for retry is
     // strictly better than dropping it. Text has no audio and reports as before.
     if (!audio || !voice) return reportError(delivered)
+    await status?.clear()
     return persistForRetry({ bot, voiceRetry, message, channelId, thread, directory, sessionId, author, voice, files, audio, failure: delivered })
   }
 }
@@ -376,7 +449,7 @@ async function deliverRoute(bot: Bot, input: {
     if (result instanceof Error) return reportError(result)
     if (!result || result.threadId === channel.id) return
     const note = route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-    await message?.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+    await message?.reply({ content: asSubtext(note), allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
     return
   }
 
@@ -405,7 +478,7 @@ async function deliverRoute(bot: Bot, input: {
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-  await message?.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+  await message?.reply({ content: asSubtext(note), allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
 }
 
 // A transient voice failure: the audio and metadata are persisted and the
@@ -527,12 +600,28 @@ export async function retryFailedVoice(bot: Bot, record: FailedVoiceRecord, audi
   })
 }
 
-// Registers the message listeners. Messages of one channel are handled in arrival order:
-// a text sent while a voice message is transcribed waits for it (voice-attachments.e2e.test.ts).
-export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
-  const chains = new Map<string, Promise<void>>()
+// A rename in the Discord UI posts a CHANNEL_NAME_CHANGE message with the new
+// name as content (issue #258): the session title follows it, nothing is prompted.
+async function handleThreadRename(bot: Bot, message: Message) {
+  if (!message.inGuild() || !message.channel.isThread()) return
+  const sessionId = bot.store.getState().roots[message.channel.id]
+  if (!sessionId || !(await authorCanUseKimaki(bot, message))) return
+  const title = message.content
+  const renamed = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: sessionId, title }))
+  if (renamed instanceof Error) return logger.warn(`title of ${sessionId} from thread rename`, renamed)
+  logger.log(`session ${sessionId} renamed to "${title}" by ${message.author.username}`)
+}
 
-  function serialize(channelId: string, task: () => Promise<void>) {
+export type Ingress = ReturnType<typeof createIngress>
+
+// Messages of one channel are handled in arrival order: a text sent while a voice
+// message is transcribed waits for it (voice-attachments.e2e.test.ts). A Retry click joins the same chain.
+export function createIngress() {
+  const chains = new Map<string, Promise<void>>()
+  // Set by register: Retry clicks and the channel chains can only fire after it.
+  let retryHandle: FailedVoiceRetry | null = null
+
+  function serialize({ bot, channelId, task }: { bot: Bot; channelId: string; task: () => Promise<void> }) {
     const previous = chains.get(channelId) ?? Promise.resolve()
     const next = previous.then(async () => {
       // gateway-proxy replays messages missed while offline right after READY,
@@ -544,41 +633,54 @@ export function registerIngress(bot: Bot, voiceRetry: FailedVoiceRetry) {
     chains.set(channelId, next)
   }
 
-  bot.discord.on(Events.MessageCreate, (message) => {
-    // Webhooks have no member to check. Own messages only matter as remote send envelopes.
-    if (message.webhookId) return
-    if (message.author.id === bot.discord.user?.id && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
-    if (message.author.bot && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
-    serialize(message.channelId, () => handleMessage(bot, voiceRetry, message))
-  })
-  // Deleting a queued Discord message removes it from the queue.
-  bot.discord.on(Events.MessageDelete, (message) => {
-    serialize(message.channelId, async () => {
-      const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
-      if (!item) return
-      const result = await cancelQueuedPrompt(bot, { threadId: message.channelId, inboxID: item.inboxID })
-      if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed`, result)
+  function register(bot: Bot, voiceRetry: FailedVoiceRetry) {
+    retryHandle = voiceRetry
+    bot.discord.on(Events.MessageCreate, (message) => {
+      // Webhooks have no member to check. Own messages only matter as remote send envelopes.
+      if (message.webhookId) return
+      if (message.author.id === bot.discord.user?.id && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
+      if (message.type === MessageType.ChannelNameChange) return serialize({ bot, channelId: message.channelId, task: () => handleThreadRename(bot, message) })
+      // Pins, joins, boosts and other system messages are never prompts.
+      if (message.type !== MessageType.Default && message.type !== MessageType.Reply) return
+      serialize({ bot, channelId: message.channelId, task: () => handleMessage(bot, { message, voiceRetry }) })
     })
-  })
-  // Editing a queued message re-queues the new text at the end (spec 9.2.2
-  // option A: the inbox has no API to change an item's text).
-  bot.discord.on(Events.MessageUpdate, (_old, message) => {
-    if (message.author?.bot) return
-    serialize(message.channelId, async () => {
-      const full = message.partial ? await message.fetch().catch(() => null) : message
-      if (!full?.guild || !queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })) return
-      if (!(await canUseKimaki(bot, { guild: full.guild, userId: full.author.id }))) return
-      // The re-queued prompt must carry the message's attachments again.
-      const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
-      if (files instanceof Error) {
-        logger.error(`edit of ${full.id}`, files)
-        return
-      }
-      // Read again: the item may have started while the files were saved.
-      const item = queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })
-      if (!item) return
-      const result = await requeueEdited(bot, { message: full, inboxID: item.inboxID, files })
-      if (result instanceof Error) logger.warn(`edit of queued ${full.id} failed`, result)
+    // Deleting a queued Discord message removes it from the queue.
+    bot.discord.on(Events.MessageDelete, (message) => {
+      serialize({ bot, channelId: message.channelId, task: async () => {
+        const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
+        if (!item) return
+        const result = await cancelQueuedPrompt(bot, { threadId: message.channelId, inboxID: item.inboxID })
+        if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed`, result)
+      } })
     })
-  })
+    // Editing a queued message re-queues the new text at the end (spec 9.2.2
+    // option A: the inbox has no API to change an item's text).
+    bot.discord.on(Events.MessageUpdate, (_old, message) => {
+      if (message.author?.bot) return
+      serialize({ bot, channelId: message.channelId, task: async () => {
+        const full = message.partial ? await message.fetch().catch(() => null) : message
+        if (!full?.guild || !queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })) return
+        if (!(await canUseKimaki(bot, { guild: full.guild, userId: full.author.id }))) return
+        // The re-queued prompt must carry the message's attachments again.
+        const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
+        if (files instanceof Error) {
+          logger.error(`edit of ${full.id}`, files)
+          return
+        }
+        // Read again: the item may have started while the files were saved.
+        const item = queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })
+        if (!item) return
+        const result = await requeueEdited(bot, { message: full, inboxID: item.inboxID, files })
+        if (result instanceof Error) logger.warn(`edit of queued ${full.id} failed`, result)
+      } })
+    })
+  }
+
+  function retry(bot: Bot, { message, status }: { message: Message; status: Message }) {
+    const voiceRetry = retryHandle
+    if (!voiceRetry) return logger.warn(`voice retry before ingress.register, ignoring`)
+    serialize({ bot, channelId: message.channelId, task: () => handleMessage(bot, { message, statusMessage: status, voiceRetry }) })
+  }
+
+  return { register, retry }
 }

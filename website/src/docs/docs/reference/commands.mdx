@@ -71,6 +71,7 @@ In a session thread these change the **session**. In a project channel they set 
 | Command  | Description                                                                         |
 | -------- | ----------------------------------------------------------------------------------- |
 | `/routines` | List routines, run one now, or delete it ([docs](../features/routines)) |
+| `/mcp`      | List MCP servers and connect or disconnect them ([docs](../configuration/mcp)) |
 
 ## Dynamic slash commands
 
@@ -117,6 +118,7 @@ kimaki [options]
 | `--restart-onboarding`        | Choose credentials again                                                 |
 | `--worktrees`                 | Use a fresh Git worktree for new sessions unless the channel overrides it |
 | `--voice <name>`              | Voice of [voice calls](../features/voice-calls#choose-the-voice), saved for later starts. `default` resets it |
+| `--sort-channels`             | Sort the channels of this machine's category by the last user message or interaction, latest first. Off by default |
 | `--no-analytics`              | Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)      |
 | `--no-autostart`              | Do not open a terminal with the bot when OpenCode starts. Use it when launchd, systemd or pm2 runs the bot |
 
@@ -264,7 +266,7 @@ Run `kimaki <command> --help` for the full flag descriptions. See [Debug session
 | `kimaki screenshare`, `/screenshare`, `/vscode` | removed                                       |
 | `kimaki multioauth`                | removed. Provider logins live in OpenCode                  |
 | `/restart-opencode-server`         | removed. Run `opencode service restart`                   |
-| `/share`, `/last-sessions`, `/mcp` | removed                                                    |
+| `/share`, `/last-sessions`         | removed                                                    |
 | `/add-project`, `/create-new-project`, `/remove-project` | removed. Use `kimaki project add`    |
 | `/run-shell-command`               | removed. Send `!<command>` in a thread                     |
 

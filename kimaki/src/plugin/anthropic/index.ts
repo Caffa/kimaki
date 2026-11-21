@@ -8,6 +8,7 @@
 // - the first system block is exactly the Claude Code identity, else 429;
 // - OpenCode's `<env>` block is re-wrapped, else "third-party" extra-usage billing.
 // No beta header, user agent, or tool rename is needed on /v1/messages.
+// The body is also gzipped, and images and PDFs go to the Files API (files.ts).
 //
 // A separate plugin (`kimaki-anthropic`, own shim in plugins/kimaki-anthropic/):
 // unlike the `kimaki` plugin it is not limited to marked Kimaki sessions,
@@ -21,9 +22,12 @@
 
 import * as errore from 'errore'
 import http from 'node:http'
+import { promisify } from 'node:util'
+import zlib from 'node:zlib'
 import { Effect } from 'effect'
 import { Credential, Integration } from '@opencode/plugin'
 import { Plugin } from '@opencode/plugin/effect'
+import { createFileCache, missingFileIds, type FileCache, type MessagesPayload } from './files.ts'
 
 const CLIENT_ID = Buffer.from('OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl', 'base64').toString('utf8')
 const AUTHORIZE_URL = 'https://claude.ai/oauth/authorize'
@@ -37,6 +41,10 @@ const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.280 (external, cli)'
 const METHOD_ID = Integration.MethodID.make('claude-pro-max')
 const HEADLESS_METHOD_ID = Integration.MethodID.make('claude-pro-max-headless')
 export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+const gzip = promisify(zlib.gzip)
+const gunzip = promisify(zlib.gunzip)
+// Missing in runtimes without zstd; such a body is then sent unchanged.
+const zstdDecompress = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : undefined
 
 export class AnthropicOAuthError extends errore.createTaggedError({
   name: 'AnthropicOAuthError',
@@ -152,7 +160,6 @@ const authorizeHeadless = () =>
     }
   })
 
-// TODO: concurrent sessions can refresh the same token twice; OpenCode's Integration connection.resolve has no single-flight lock.
 const refresh = (credential: Credential.OAuth) =>
   tokenEffect({ body: { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: credential.refresh }, methodID: credential.methodID })
 
@@ -162,24 +169,68 @@ const refresh = (credential: Credential.OAuth) =>
 const OPENCODE_ENV_BLOCK = /Here is some useful information about the environment you are running in:\n<env>\n([\s\S]*?)<\/env>/
 
 // The body comes from OpenCode's Anthropic provider, so its shape is known.
-type MessagesBody = { system?: string | Array<{ type: string; text?: string }> }
+type MessagesBody = MessagesPayload & { system?: string | Array<{ type: string; text?: string }> }
 
-// Rewrites an Anthropic Messages body for a subscription token: the Claude Code
-// identity first, OpenCode's environment block re-wrapped. Null when nothing changes.
-export function rewriteSubscriptionRequest(body: string): string | null {
-  const payload = errore.try(() => JSON.parse(body) as MessagesBody)
-  if (payload instanceof Error) return null
+// Puts the Claude Code identity first and re-wraps OpenCode's environment block, in place.
+// False when the system prompt already fits.
+export function rewriteSystem(payload: MessagesBody): boolean {
   const blocks = typeof payload.system === 'string' ? [{ type: 'text', text: payload.system }] : (payload.system ?? [])
   const rewrapped = blocks.map((block) => (block.text === undefined ? block : { ...block, text: block.text.replace(OPENCODE_ENV_BLOCK, '<environment>\n$1</environment>') }))
   const next = rewrapped[0]?.text === CLAUDE_CODE_IDENTITY ? rewrapped : [{ type: 'text', text: CLAUDE_CODE_IDENTITY }, ...rewrapped]
-  if (JSON.stringify(next) === JSON.stringify(payload.system)) return null
-  return JSON.stringify({ ...payload, system: next })
+  if (JSON.stringify(next) === JSON.stringify(payload.system)) return false
+  payload.system = next
+  return true
+}
+
+// api.anthropic.com decodes gzip request bodies; zstd gets 400 and br 415 (checked 2026-11-20).
+// OpenCode sends plain JSON to Anthropic unless the provider sets `encoding`, and long
+// sessions send megabytes per step, so subscription bodies are always gzipped here.
+const ANTHROPIC_HOST = 'api.anthropic.com'
+
+// The request to send for a subscription token, or null when it already fits.
+// A body OpenCode gzipped itself (provider `encoding: "gzip"`) is decoded first.
+// Images and PDFs go to the Files API only on api.anthropic.com, see files.ts.
+export async function prepareSubscriptionRequest({ request, files }: { request: Request; files?: FileCache }): Promise<Request | null> {
+  const url = new URL(request.url)
+  if (!url.pathname.endsWith('/messages')) return null
+  const official = url.hostname === ANTHROPIC_HOST
+  const encoding = request.headers.get('content-encoding')
+  // Anthropic rejects zstd, which OpenCode sends for `encoding: "zstd"`: decode it and send gzip.
+  const decode = encoding === null ? undefined : encoding === 'gzip' ? gunzip : encoding === 'zstd' && official ? (zstdDecompress ?? null) : null
+  if (decode === null) return null
+  const raw = Buffer.from(await request.clone().arrayBuffer())
+  const plain = decode ? await decode(raw).catch(() => null) : raw
+  if (plain === null) return null
+  const text = plain.toString('utf8')
+  const payload = errore.try(() => JSON.parse(text) as MessagesBody)
+  if (payload instanceof Error) return null
+  const rewritten = rewriteSystem(payload)
+  const swapped = official && files ? await files.swap({ payload, headers: request.headers }) : false
+  // Custom base URLs (proxies) may not decode gzip, so only compress what OpenCode already did.
+  const compress = encoding === 'gzip' || official
+  const encoded = compress ? encoding === 'gzip' : encoding === null
+  if (!rewritten && !swapped && encoded) return null
+  const body = rewritten || swapped ? JSON.stringify(payload) : text
+  const headers = new Headers(request.headers)
+  headers.delete('content-length')
+  if (!compress) return new Request(request, { body, headers })
+  headers.set('content-encoding', 'gzip')
+  return new Request(request, { body: new Uint8Array(await gzip(body)), headers })
 }
 
 export default Plugin.define({
   id: 'kimaki-anthropic',
   effect: (ctx) =>
     Effect.gen(function* () {
+      const files = createFileCache({
+        storage: {
+          get: (key) => Effect.runPromise(ctx.storage.get(key)),
+          set: (key, value) => Effect.runPromise(ctx.storage.set(key, value)),
+          remove: (key) => Effect.runPromise(ctx.storage.remove(key)),
+          scan: (input) => Effect.runPromise(ctx.storage.scan(input)),
+        },
+      })
+      yield* Effect.forkScoped(Effect.promise(() => files.prune()))
       yield* ctx.integration.transform((editor) => {
         editor.method.update({
           integrationID: 'anthropic',
@@ -200,12 +251,22 @@ export default Plugin.define({
           Effect.gen(function* () {
             const request = event.request
             if (request.headers.has('x-api-key') || !request.headers.get('authorization')?.startsWith('Bearer ')) return
-            if (!new URL(request.url).pathname.endsWith('/messages')) return
-            const body = rewriteSubscriptionRequest(yield* Effect.promise(() => request.clone().text()))
-            if (body === null) return
-            const headers = new Headers(request.headers)
-            headers.delete('content-length')
-            event.request = new Request(request, { body, headers })
+            // Only these kinds pass through the retry hook that repairs a deleted file. Others send base64,
+            // which hits the same prompt cache entry.
+            const repairable = event.kind === 'primary' || event.kind === 'compaction'
+            const next = yield* Effect.promise(() => prepareSubscriptionRequest({ request, files: repairable ? files : undefined }))
+            if (next !== null) event.request = next
+          }),
+        { providerID: 'anthropic' },
+      )
+      // A deleted or expired file fails the request with 404. Forget it and retry: the retry uploads it again.
+      yield* ctx.session.hook(
+        'retry',
+        (event) =>
+          Effect.gen(function* () {
+            const missing = missingFileIds(event.error)
+            if (missing.length === 0) return
+            if (yield* Effect.promise(() => files.forget(missing))) event.decision = { retry: true, delay: 0 }
           }),
         { providerID: 'anthropic' },
       )

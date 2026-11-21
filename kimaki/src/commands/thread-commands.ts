@@ -18,6 +18,7 @@ import dedent from 'string-dedent'
 
 import { oc, type Bot } from '../bot.ts'
 import { ConfigError, DiscordError } from '../errors.ts'
+import { asSubtext } from '../format-parts.ts'
 import {
   authorOf,
   replyError,
@@ -32,7 +33,7 @@ import { shellQuote } from '../lock-server.ts'
 import { abort, clearQueue, dispatch, redo, undo } from '../prompt.ts'
 import type { Route } from '../routes.ts'
 import { formatDuration, type Message } from '../session-events.ts'
-import { endCoordinator, forkBtw } from '../sessions.ts'
+import { endCoordinator, forkBtw, primaryAgents } from '../sessions.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -97,7 +98,7 @@ async function abortCommand(bot: Bot, interaction: ChatInputCommandInteraction, 
   const result = await abort(bot, { threadId: conversation.id })
   if (result instanceof Error) return replyError(interaction, result)
   const note = result.cleared > 0 ? `, cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}` : ''
-  await interaction.editReply({ content: `Request **aborted**${note}` })
+  await interaction.editReply({ content: asSubtext(`Request **aborted**${note}`) })
 }
 
 // Also with coordinator mode off: the channel keeps its binding until a reset.
@@ -115,7 +116,7 @@ async function resetCoordinatorCommand(bot: Bot, interaction: ChatInputCommandIn
   if (stopped instanceof Error) return replyError(interaction, stopped)
   const ended = await endCoordinator(bot, channelId)
   if (ended instanceof Error) return replyError(interaction, ended)
-  await interaction.editReply({ content: 'Coordinator context reset. The next message starts a new coordinator session' })
+  await interaction.editReply({ content: asSubtext('Coordinator context reset. The next message starts a new coordinator session') })
 }
 
 // /queue and /queue-command: the echo reply is the queued message the ack points at.
@@ -159,16 +160,31 @@ async function clearQueueCommand(bot: Bot, interaction: ChatInputCommandInteract
   const result = await clearQueue(bot, { threadId: conversation.id, position: interaction.options.getInteger('position') })
   if (result instanceof Error) return replyError(interaction, result)
   const content =
-    result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
+    result.cleared === 0 ? asSubtext('No queued messages') : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
   await interaction.editReply({ content })
 }
 
 async function btwCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   const text = interaction.options.getString('prompt', true).trim()
+  const agent = interaction.options.getString('agent')?.trim() || undefined
   await interaction.deferReply()
-  const result = await forkBtw(bot, { source: conversation, text, author: authorOf(interaction), messageId: interaction.id })
+  const result = await forkBtw(bot, { source: conversation, text, author: authorOf(interaction), messageId: interaction.id, agent })
   if (result instanceof Error) return replyError(interaction, result)
-  await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
+  await interaction.editReply({ content: asSubtext(`Session forked! Continue in <#${result.threadId}>`) })
+}
+
+async function btwAgentChoices(bot: Bot, interaction: AutocompleteInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return respondChoices(interaction, target)
+  const agents = await primaryAgents(bot, target.directory)
+  if (agents instanceof Error) return respondChoices(interaction, agents)
+  const query = interaction.options.getFocused().toLowerCase()
+  return respondChoices(
+    interaction,
+    agents
+      .filter((agent) => agent.id.toLowerCase().includes(query) || agent.name.toLowerCase().includes(query))
+      .map((agent) => ({ name: agent.description ? `${agent.name} - ${agent.description}` : agent.name, value: agent.id })),
+  )
 }
 
 // --- History
@@ -177,7 +193,7 @@ async function compactCommand(bot: Bot, interaction: ChatInputCommandInteraction
   await interaction.deferReply()
   const result = await oc(bot, 'session.compact', (client) => client.session.compact({ sessionID: sessionId }))
   if (result instanceof Error) return replyError(interaction, result)
-  await interaction.editReply({ content: 'Compacting the session context' })
+  await interaction.editReply({ content: asSubtext('Compacting the session context') })
 }
 
 async function undoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
@@ -185,10 +201,10 @@ async function undoCommand(bot: Bot, interaction: ChatInputCommandInteraction, {
   const result = await undo(bot, { threadId: conversation.id })
   if (result instanceof Error) return replyError(interaction, result)
   if (!result.reverted) {
-    await interaction.editReply({ content: 'No messages to undo' })
+    await interaction.editReply({ content: asSubtext('No messages to undo') })
     return
   }
-  await interaction.editReply({ content: 'Undone - removed the last turn from the session. File changes were kept' })
+  await interaction.editReply({ content: asSubtext('Undone - removed the last turn from the session. File changes were kept') })
 }
 
 async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
@@ -200,7 +216,7 @@ async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, {
     all: 'Restored - session fully back to its previous state',
     step: 'Restored one step forward',
   }[result.restored]
-  await interaction.editReply({ content })
+  await interaction.editReply({ content: asSubtext(content) })
 }
 
 // --- Info
@@ -326,8 +342,12 @@ export const threadRoutes: InteractionRoutes = {
         .setDescription('Ask something without polluting or blocking the current session')
         .addStringOption((option) =>
           option.setName('prompt').setDescription('The message to send in the forked session').setRequired(true),
+        )
+        .addStringOption((option) =>
+          option.setName('agent').setDescription('Agent for the forked session (default: the current one)').setAutocomplete(true),
         ),
       run: inThread(btwCommand),
+      autocomplete: btwAgentChoices,
     },
     abort: {
       definition: new SlashCommandBuilder().setName('abort').setDescription('Stop the current run and clear the queue'),

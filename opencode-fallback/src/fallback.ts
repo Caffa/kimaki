@@ -4,9 +4,11 @@
 
 export type ModelRef = { providerID: string; id: string; variant?: string }
 
-export type BlockReason = 'rate-limit' | 'quota' | 'overloaded' | 'auth'
+// Only failures of the account itself. A provider outage (5xx, overloaded) is not a
+// block: OpenCode retries it on the same model, so the session keeps its model.
+export type BlockReason = 'rate-limit' | 'quota' | 'auth'
 
-// `*` widens the scope: credentialID `*` = every account, modelID `*` = every model.
+// modelID `*` covers every model of the account.
 // `env` is the account of a provider that has no saved credential.
 export type Block = {
   providerID: string
@@ -33,7 +35,6 @@ const HOUR = 60 * MINUTE
 export const DEFAULT_BLOCK_MS: Record<BlockReason, number> = {
   'rate-limit': MINUTE,
   quota: 30 * MINUTE,
-  overloaded: 30 * SECOND,
   auth: 24 * HOUR,
 }
 
@@ -65,7 +66,7 @@ export function formatModel(model: ModelRef): string {
   return `${model.providerID}/${model.id}${model.variant ? `#${model.variant}` : ''}`
 }
 
-const REASONS: readonly string[] = ['rate-limit', 'quota', 'overloaded', 'auth'] satisfies BlockReason[]
+const REASONS: readonly string[] = ['rate-limit', 'quota', 'auth'] satisfies BlockReason[]
 
 export function isBlock(value: unknown): value is Block {
   if (!value || typeof value !== 'object') return false
@@ -178,7 +179,6 @@ export function resetAt({
 }
 
 const QUOTA_TEXT = /usage_limit_reached|usage[-_\s]limit|insufficient[-_\s]quota|quota[-_\s]exceeded|credit balance|spending[-_\s]limit/i
-const OVERLOAD_TEXT = /overloaded|at capacity|temporarily unavailable|service[-_\s]unavailable/i
 
 // The block a failed request implies, or undefined when it is not a fallback error.
 export function classify({ failed, now }: { failed: FailedRequest; now: number }): Block | undefined {
@@ -193,18 +193,14 @@ export function classify({ failed, now }: { failed: FailedRequest; now: number }
       if (QUOTA_TEXT.test(text) || headers['anthropic-ratelimit-unified-status'] === 'rejected') return 'quota'
       return 'rate-limit'
     }
-    if (error.type === 'provider.internal' || error.type === 'provider.unknown') {
-      if (QUOTA_TEXT.test(text)) return 'quota'
-      if (error.status === 529 || error.status === 503 || OVERLOAD_TEXT.test(text)) return 'overloaded'
-    }
+    if ((error.type === 'provider.internal' || error.type === 'provider.unknown') && QUOTA_TEXT.test(text)) return 'quota'
     return undefined
   })()
   if (!reason) return undefined
   const reset = reason === 'auth' ? undefined : resetAt({ headers, body: error.response?.body, now })
   return {
     providerID: model.providerID,
-    // Overload is provider capacity: every account sees it.
-    credentialID: reason === 'overloaded' ? '*' : credentialID,
+    credentialID,
     // Quota and auth belong to the account, not to one model.
     modelID: reason === 'quota' || reason === 'auth' ? '*' : model.id,
     until: reset !== undefined && reset > now ? reset : now + DEFAULT_BLOCK_MS[reason],
@@ -227,17 +223,57 @@ export function blockedUntil({
 }): number | undefined {
   const matching = blocks
     .filter((block) => block.until > now && block.providerID === providerID)
-    .filter((block) => block.credentialID === '*' || block.credentialID === credentialID)
+    .filter((block) => block.credentialID === credentialID)
     .filter((block) => block.modelID === '*' || block.modelID === modelID)
     .map((block) => block.until)
   return matching.length > 0 ? Math.max(...matching) : undefined
+}
+
+// Kept in session metadata (`fallback` key). `from` is the model the session ran
+// on before its first fallback, so a chain X → Y → Z still names X.
+export type ModelSwitch = { from: string; to: string; reason: BlockReason }
+
+const REASON_TEXT: Record<BlockReason, string> = {
+  'rate-limit': 'it hit a rate limit',
+  quota: 'its account ran out of quota',
+  auth: 'its login failed (expired or invalid credentials)',
+}
+
+function modelName(model: ModelRef): string {
+  return `${model.providerID}/${model.id}`
+}
+
+export function isModelSwitch(value: unknown): value is ModelSwitch {
+  if (!value || typeof value !== 'object') return false
+  const record: Record<string, unknown> = { ...value }
+  return typeof record.from === 'string' && typeof record.to === 'string' && typeof record.reason === 'string' && REASONS.includes(record.reason)
+}
+
+export function nextSwitch({ previous, failed, to, reason }: { previous?: ModelSwitch; failed: ModelRef; to: ModelRef; reason: BlockReason }): ModelSwitch {
+  const from = previous?.to === modelName(failed) ? previous.from : modelName(failed)
+  return { from, to: modelName(to), reason }
+}
+
+// System text for a session that runs on a fallback model. Undefined when the
+// session is back on its first model or someone switched it to another one.
+export function switchNote({ value, model }: { value?: ModelSwitch; model: ModelRef }): string | undefined {
+  if (!value || value.to !== modelName(model) || value.from === value.to) return undefined
+  return [
+    '<model-fallback>',
+    `This session ran on ${value.from}. The fallback plugin moved it to ${value.to}, the model you are now, because a request to the previous model failed: ${REASON_TEXT[value.reason]}.`,
+    `Tools, input types (audio, video, images) and other abilities that ${value.from} had may be missing on this model. Earlier messages may assume them.`,
+    'If the task needs an ability you do not have, tell the user plainly. Never claim you used a tool, heard audio or saw content that you cannot access.',
+    '</model-fallback>',
+  ].join('\n')
 }
 
 export type Choice = { model: ModelRef; credentialID: string; waitUntil?: number }
 
 // Best (model, account) pair that is not blocked. Ranking order wins over
 // accounts; for one model the accounts are tried in the given order (active first).
-// When everything is blocked, returns the pair that recovers first with `waitUntil`.
+// When everything is blocked, returns the pair that recovers first with `waitUntil`,
+// never an account whose login failed: waiting does not fix it, and activating it
+// would fail every session.
 export function pick({
   ranking,
   accounts,
@@ -258,7 +294,12 @@ export function pick({
   )
   const free = candidates.find((candidate) => candidate.until === undefined)
   if (free) return { model: free.model, credentialID: free.credentialID }
-  const first = candidates.reduce<(typeof candidates)[number] | undefined>(
+  const dead = (candidate: (typeof candidates)[number]) =>
+    blocks.some(
+      (block) =>
+        block.reason === 'auth' && block.until > now && block.providerID === candidate.model.providerID && block.credentialID === candidate.credentialID,
+    )
+  const first = candidates.filter((candidate) => !dead(candidate)).reduce<(typeof candidates)[number] | undefined>(
     (best, candidate) => (!best || (candidate.until ?? 0) < (best.until ?? 0) ? candidate : best),
     undefined,
   )

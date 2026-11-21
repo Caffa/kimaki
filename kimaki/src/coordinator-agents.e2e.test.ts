@@ -1,6 +1,7 @@
-// Agent picks in a coordinator channel: `/<agent>-agent prompt:` and a spoken
-// agent start a new thread with that agent, and `kimaki send --agent --model`
-// to the coordinator (workers pass --agent <current_agent>) keeps its agent and model.
+// Agent picks in a coordinator channel: `/<agent>-agent` with a prompt and a spoken agent
+// start a new thread with that agent, `kimaki send --agent --model` to the coordinator
+// (workers pass --agent <current_agent>) keeps its agent and model, and `/<agent>-agent`
+// without a prompt switches the coordinator itself (last test: it changes the coordinator).
 
 import fs from 'node:fs'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
@@ -36,6 +37,7 @@ const matchers: DeterministicMatcher[] = [
   reply('hello-marker', 'hello'),
   reply('slash-agent-marker', 'slash agent ok'),
   reply('voice-agent-marker', 'voice agent ok'),
+  reply('empty-agent-marker', 'empty agent ok'),
   reply('worker-note-marker', 'IDLE'),
 ]
 
@@ -142,4 +144,28 @@ test('kimaki send --agent --model to the coordinator keeps its agent and model',
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await coordinator()).toEqual(initial)
+})
+
+test('/<agent>-agent without a prompt switches the coordinator agent and starts no thread', async () => {
+  const { discord, channelId } = twin
+  const threads = (await discord.channel(channelId).getThreads()).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
+  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'thinker-agent' })
+  await waitForBotMessageContaining({ discord, threadId: channelId, text: 'Switched to **thinker** agent for this session' })
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Think empty-agent-marker' })
+  await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
+  const text = await discord.channel(channelId).text()
+  expect(text.slice(text.indexOf('Switched to **thinker**'))).toMatchInlineSnapshot(`
+    "Switched to **thinker** agent for this session
+    Model: \`deterministic-provider/deterministic-thinker\`
+    The agent changes from the next step.
+    -# Switched agent to Thinker
+    --- from: user (tommy)
+    Think empty-agent-marker
+    --- from: assistant (TestBot)
+    empty agent ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-thinker ⋅ thinker*"
+  `)
+  expect((await discord.channel(channelId).getThreads()).length).toBe(threads)
+  expect(await coordinator()).toEqual({ agent: 'thinker', model: 'deterministic-thinker' })
 })

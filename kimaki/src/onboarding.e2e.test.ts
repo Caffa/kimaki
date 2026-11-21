@@ -118,12 +118,12 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
   `)
   expect(await guildChannels()).toMatchInlineSnapshot(`
     [
-      "project",
-      "random",
-      "quiet",
       "Kimaki test-machine",
       "kimaki (in Kimaki test-machine)",
       "other-project (in Kimaki test-machine)",
+      "project",
+      "random",
+      "quiet",
     ]
   `)
 

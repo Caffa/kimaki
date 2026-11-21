@@ -11,11 +11,14 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
+import dedent from 'string-dedent'
 import { afterAll, beforeAll, expect, onTestFailed, test } from 'vitest'
 import { formatModel, isBlock } from './fallback.ts'
 import { FallbackRpc } from './index.ts'
 
-const served: Array<{ model: string; key: string; status: number }> = []
+// `note`: the request carried the model switch note in its system prompt.
+const served: Array<{ model: string; key: string; status: number; note: boolean }> = []
+let lastNote = ''
 // Fake provider rules: which (model, key) pairs answer 429, and with which headers.
 const limited = new Map<string, Record<string, string>>([
   ['alpha-big key-1', { 'retry-after': '3600' }],
@@ -54,7 +57,10 @@ const provider = http.createServer((request, response) => {
     const followUp = JSON.stringify(messages.at(-1) ?? {}).includes('"role":"tool"')
     const key = (request.headers.authorization ?? '').replace(/^Bearer /, '')
     const headers = limited.get(`${model} ${key}`)
-    served.push({ model, key, status: headers ? 429 : 200 })
+    const system = messages.flatMap((message) => (message?.role === 'system' && typeof message.content === 'string' ? [message.content] : []))
+    const note = /<model-fallback>[\s\S]*<\/model-fallback>/.exec(system.join('\n'))
+    if (note) lastNote = note[0]
+    served.push({ model, key, status: headers ? 429 : 200, note: Boolean(note) })
     if (headers) {
       response.writeHead(429, { 'content-type': 'application/json', ...headers })
       response.end(JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'Rate limit reached' } }))
@@ -76,6 +82,7 @@ let child: ChildProcess | undefined
 let client: OpenCodeClient
 
 beforeAll(async () => {
+  const require = createRequire(import.meta.url)
   const providerPort = await freePort()
   await new Promise<void>((resolve) => provider.listen(providerPort, '127.0.0.1', resolve))
   const baseURL = `http://127.0.0.1:${providerPort}/v1`
@@ -98,6 +105,26 @@ beforeAll(async () => {
     path.join(shim, 'index.js'),
     `export { default } from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, 'index.ts')).href)}\n`,
   )
+  // Use the same Effect failure as the Anthropic plugin, without an external token service.
+  const oauth = path.join(root, 'oauth')
+  fs.mkdirSync(oauth)
+  fs.writeFileSync(
+    path.join(oauth, 'index.js'),
+    dedent`
+      import { Effect } from 'effect'
+      export default {
+        id: 'expired-oauth-test',
+        effect(ctx) {
+          return ctx.integration.transform(editor => editor.method.update({
+            integrationID: 'alpha',
+            method: { id: 'expired-test', type: 'oauth', label: 'Expired test login' },
+            authorize: () => Effect.die('Not used'),
+            refresh: () => Effect.fail(new Error('Claude Pro/Max login failed: token endpoint returned 400: {"error":"invalid_grant","error_description":"Refresh token expired"}')),
+          }))
+        },
+      }
+    `,
+  )
   const dirs = { HOME: 'home', XDG_DATA_HOME: 'data', XDG_STATE_HOME: 'state', XDG_CONFIG_HOME: 'config', XDG_CACHE_HOME: 'cache' }
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('OPENCODE_') && !key.endsWith('_API_KEY')),
@@ -113,6 +140,7 @@ beforeAll(async () => {
       providers: { alpha: fake(['alpha-big']), beta: fake(['beta-small']) },
       permissions: [{ action: '*', resource: '*', effect: 'allow' }],
       plugins: [
+        oauth,
         {
           package: shim,
           options: { models: ['alpha/alpha-big', 'beta/beta-small'] },
@@ -123,7 +151,6 @@ beforeAll(async () => {
   for (const dir of Object.values(dirs)) fs.mkdirSync(path.join(root, dir), { recursive: true })
 
   // OPENCODE_E2E_COMMAND runs an unreleased OpenCode, e.g. `bun /path/to/opencode/packages/cli/src/index.ts`.
-  const require = createRequire(import.meta.url)
   const [command = '', ...prefix] = process.env.OPENCODE_E2E_COMMAND?.split(' ') ?? [
     path.join(path.dirname(require.resolve('@opencode/cli/package.json')), 'bin/opencode.exe'),
   ]
@@ -142,9 +169,19 @@ beforeAll(async () => {
   }
   client = OpenCode.make({ baseUrl, headers })
 
-  // Created oldest first: the newest credential is the active one (key-1).
+  // Created oldest first: key-1 starts active; fallback must skip both expired logins.
   await client.credential.create({ integrationID: 'beta', label: 'beta', value: { type: 'key', key: 'key-b' } })
   await client.credential.create({ integrationID: 'alpha', label: 'second', value: { type: 'key', key: 'key-2' } })
+  await client.credential.create({
+    integrationID: 'alpha',
+    label: 'also expired',
+    value: { type: 'oauth', methodID: 'expired-test', access: 'older-access', refresh: 'older-refresh', expires: 0 },
+  })
+  await client.credential.create({
+    integrationID: 'alpha',
+    label: 'expired',
+    value: { type: 'oauth', methodID: 'expired-test', access: 'expired-access', refresh: 'expired-refresh', expires: 0 },
+  })
   await client.credential.create({ integrationID: 'alpha', label: 'first', value: { type: 'key', key: 'key-1' } })
 })
 
@@ -170,7 +207,7 @@ async function turn(sessionID: string, text: string) {
   return { outcome: session.outcome, model: formatModel(session.model!), answer: answer.at(-1), served: [...served] }
 }
 
-test('429 rotates to the next account, then falls back to the next model; the session never moves back up', async () => {
+test('expired refresh and 429 rotate accounts, then fall back and continue the same session', async () => {
   onTestFailed(() => {
     console.error(fs.readFileSync(path.join(root, 'opencode.log'), 'utf8').split('\n').filter((line) => /error|fallback|retry|429|plugin/i.test(line)).slice(-60).join('\n'))
   })
@@ -178,7 +215,7 @@ test('429 rotates to the next account, then falls back to the next model; the se
   const session = await client.session.create({ title: 'fallback e2e', location: { directory: path.join(root, 'project') } })
   const startedAt = Date.now()
 
-  // Same turn: key-1 429, key-2 429, then beta answers with a tool call and a follow-up.
+  // Same turn: key-1 429, two expired logins, key-2 429, then beta answers.
   expect(await turn(session.id, 'hello')).toMatchInlineSnapshot(`
     {
       "answer": "answered by beta-small",
@@ -188,29 +225,50 @@ test('429 rotates to the next account, then falls back to the next model; the se
         {
           "key": "key-1",
           "model": "alpha-big",
+          "note": false,
           "status": 429,
         },
         {
           "key": "key-2",
           "model": "alpha-big",
+          "note": false,
           "status": 429,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
       ],
     }
   `)
 
+  // The retried step on beta already carries the note, and the session metadata keeps it.
+  expect(lastNote).toMatchInlineSnapshot(`
+    "<model-fallback>
+    This session ran on alpha/alpha-big. The fallback plugin moved it to beta/beta-small, the model you are now, because a request to the previous model failed: it hit a rate limit.
+    Tools, input types (audio, video, images) and other abilities that alpha/alpha-big had may be missing on this model. Earlier messages may assume them.
+    If the task needs an ability you do not have, tell the user plainly. Never claim you used a tool, heard audio or saw content that you cannot access.
+    </model-fallback>"
+  `)
+  expect((await client.session.get({ sessionID: session.id })).metadata?.fallback).toMatchInlineSnapshot(`
+    {
+      "from": "alpha/alpha-big",
+      "reason": "rate-limit",
+      "to": "beta/beta-small",
+    }
+  `)
+
   const result = await client.rpc(FallbackRpc).blocks({})
   const blocks = result && typeof result === 'object' && 'blocks' in result && Array.isArray(result.blocks) ? result.blocks : []
+  expect(blocks.filter(isBlock).map((block) => block.credentialID)).not.toContain('env')
   const minutes = blocks.filter(isBlock).map((block) => ({
     ...block,
     until: Math.round((block.until - startedAt) / 60_000),
@@ -224,6 +282,20 @@ test('429 rotates to the next account, then falls back to the next model; the se
         "providerID": "alpha",
         "reason": "rate-limit",
         "until": 20,
+      },
+      {
+        "credentialID": "<credential>",
+        "modelID": "*",
+        "providerID": "alpha",
+        "reason": "auth",
+        "until": 1440,
+      },
+      {
+        "credentialID": "<credential>",
+        "modelID": "*",
+        "providerID": "alpha",
+        "reason": "auth",
+        "until": 1440,
       },
       {
         "credentialID": "<credential>",
@@ -246,11 +318,13 @@ test('429 rotates to the next account, then falls back to the next model; the se
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
       ],

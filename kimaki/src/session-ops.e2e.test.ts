@@ -160,7 +160,34 @@ test('/compact summarizes the history without a footer', async () => {
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *main ⋅ Ns ⋅ deterministic-v2*
-    Compacting the session context"
+    -# Compacting the session context"
+  `)
+})
+
+// Issue #258: the rename's CHANNEL_NAME_CHANGE message holds only the new name.
+test('renaming the thread in Discord sets the session title without a prompt', async () => {
+  const thread = await newThread('Hello rename-marker')
+  const sessionId = bot.store.getState().roots[thread.id]!
+  const client = await server.client()
+  const requests = server.model.requests.length
+  await twin.discord.thread(thread.id).user(TEST_USER_ID).renameThread({ name: 'Renamed by hand' })
+  await waitFor({
+    label: 'session title from the thread name',
+    check: async () => (await client.session.get({ sessionID: sessionId })).title === 'Renamed by hand' || null,
+  })
+  for (let i = 0; i < 10; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(server.model.requests.length).toBe(requests)
+  }
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Hello rename-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    --- from: user (tommy)
+    [renamed thread to: Renamed by hand]"
   `)
 })
 
@@ -187,8 +214,8 @@ test('/undo hides the last turn but keeps its files, /redo restores the turn', a
 
     wrote undo.txt
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    Undone - removed the last turn from the session. File changes were kept
-    Restored - session fully back to its previous state
-    Nothing to redo - no previous undo found"
+    -# Undone - removed the last turn from the session. File changes were kept
+    -# Restored - session fully back to its previous state
+    -# Nothing to redo - no previous undo found"
   `)
 })

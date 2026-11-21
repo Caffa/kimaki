@@ -1,5 +1,5 @@
-// Coordinator sessions in the OpenCode process: their role instructions (below)
-// and the prompt cache warmup of Kimaki sessions.
+// Coordinator sessions in the OpenCode process: their role instructions and the
+// user's KIMAKI.md files (below), and the prompt cache warmup of Kimaki sessions.
 //
 // Warmup works like OpenCode's `warming` (core/src/plugin/warming.ts): a
 // `session.generate` keep-alive reads the cached prompt prefix, which keeps the
@@ -194,30 +194,66 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
   }
 }
 
-// Role instructions of coordinator sessions, derived from markers only:
+// Reminders of root Kimaki sessions: role instructions derived from markers, and
+// the user's own instruction files in the Kimaki data dir:
 //
 //   root Kimaki session ─▶ marker threadId === channelId?                 ─▶ coordinator
 //                      └─▶ parent chain (marker parentSessionId, fork
 //                          source) reaches a coordinator?                  ─▶ worker
+//   <dataDir>/KIMAKI.md             ─▶ every root Kimaki session
+//   <dataDir>/KIMAKI_COORDINATOR.md ─▶ coordinators only
 //
 // Here, not in the instructions entry the bot writes at session.create: that
-// entry is frozen, while OpenCode reloads this plugin when its code changes.
-// OpenCode has no instruction source for plugins, so the text is a synthetic
-// message, reconciled like its plan plugin (core/src/plugin/plan.ts):
+// entry is frozen, while OpenCode reloads this plugin when its code changes and
+// the user edits the files at any time. OpenCode has no instruction source for
+// plugins, so each reminder is a synthetic message, reconciled like its plan
+// plugin (core/src/plugin/plan.ts):
 //
-//   user prompt ─▶ latest role text in the history missing (new session,
-//                  compaction) or stale (new plugin code)? ─▶ append it before the prompt
+//   user prompt ─▶ latest reminder of a kind in the history missing (new session,
+//                  compaction) or stale (new plugin code, edited file)? ─▶ append it before the prompt
 //
 // It lands at the tail: the cached prompt prefix stays warm. A turn with no user
 // prompt (a <session-finished> wake after compaction) gets the text on its last
 // user message for that request only, until the next prompt stores it.
 
 const ROLE_HEAD = '<system-reminder>\n<kimaki-coordinator>'
+const USER_HEAD = '<system-reminder>\n<kimaki-user-instructions>'
+const USER_FILE = 'KIMAKI.md'
+const COORDINATOR_FILE = 'KIMAKI_COORDINATOR.md'
 // Workers of workers, forks of forks: bounded against cycles.
 const MAX_PARENT_DEPTH = 10
 
+// optional: only stored to replace an earlier reminder of the same head (a deleted file).
+type Reminder = { head: string; text: string; optional: boolean }
+
 function roleText(body: string): string {
   return [ROLE_HEAD, 'These instructions replace any earlier Kimaki role instructions.', '', body, '</kimaki-coordinator>', '</system-reminder>'].join('\n')
+}
+
+function userText(body: string): string {
+  return [USER_HEAD, body, '</kimaki-user-instructions>', '</system-reminder>'].join('\n')
+}
+
+const USER_REMOVED = userText('The user removed their Kimaki instruction files: earlier user instructions no longer apply.')
+
+// Read on every request: an edit reaches running sessions at their next prompt.
+async function userInstructions({ dataDir, coordinator }: { dataDir: string; coordinator: boolean }): Promise<string | null> {
+  const names = coordinator ? [USER_FILE, COORDINATOR_FILE] : [USER_FILE]
+  const files = await Promise.all(names.map(async (name) => {
+    const file = path.join(dataDir, name)
+    const text = await fs.promises.readFile(file, 'utf8').then((value) => value.trim(), () => '')
+    return text ? `<file path="${file}">\n${text}\n</file>` : null
+  }))
+  const found = files.filter((file) => file !== null)
+  if (found.length === 0) return null
+  const intro = "The user's own instructions for Kimaki sessions, from these files. They replace any earlier user instructions. When they conflict with Kimaki's default instructions, follow these."
+  return userText([intro, ...found].join('\n\n'))
+}
+
+// Missing or stale in the history. An optional reminder only replaces an earlier one.
+function needed(reminder: Reminder, texts: readonly string[]): boolean {
+  const latest = texts.findLast((text) => text.startsWith(reminder.head))
+  return latest === undefined ? !reminder.optional : latest !== reminder.text
 }
 
 type RoleSession = Awaited<ReturnType<Plugin.Context['session']['get']>>
@@ -237,14 +273,9 @@ function parentOf(session: RoleSession): string | undefined {
   return markerString(session, 'parentSessionId') ?? session.fork?.sessionID
 }
 
-export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<void> {
-  // The role text this session must have, or null: TUI sessions, subagents, plain threads.
-  async function expected(sessionID: string): Promise<string | null> {
-    const session = await ctx.session.get({ sessionID }).catch(() => null)
-    if (!session || session.parentID || !markerString(session, 'threadId')) return null
-    const channelId = coordinatorChannel(session)
-    const dataDir = markerString(session, 'dataDir')
-    if (channelId) return dataDir ? roleText(coordinatorSection({ sessionId: sessionID, channelId, dataDir })) : null
+export async function registerReminders(ctx: Plugin.Context): Promise<void> {
+  // The worker role of a thread whose parent chain reaches a coordinator.
+  async function workerRole(session: RoleSession): Promise<string | null> {
     let parent = parentOf(session)
     for (let depth = 0; parent && depth < MAX_PARENT_DEPTH; depth++) {
       const info = await ctx.session.get({ sessionID: parent }).catch(() => null)
@@ -256,27 +287,47 @@ export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<voi
     return null
   }
 
+  // The reminders this session must have, role first. None for TUI sessions and subagents.
+  async function expected(sessionID: string): Promise<Reminder[]> {
+    const session = await ctx.session.get({ sessionID }).catch(() => null)
+    if (!session || session.parentID || !markerString(session, 'threadId')) return []
+    const channelId = coordinatorChannel(session)
+    const dataDir = markerString(session, 'dataDir')
+    if (!dataDir) return []
+    const [role, user] = await Promise.all([
+      channelId ? roleText(coordinatorSection({ sessionId: sessionID, channelId, dataDir })) : workerRole(session),
+      userInstructions({ dataDir, coordinator: !!channelId }),
+    ])
+    return [
+      ...(role ? [{ head: ROLE_HEAD, text: role, optional: false }] : []),
+      { head: USER_HEAD, text: user ?? USER_REMOVED, optional: !user },
+    ]
+  }
+
   await ctx.session.hook('prompt', async (event) => {
-    const text = await expected(event.sessionID)
-    if (!text) return
+    const reminders = await expected(event.sessionID)
+    if (reminders.length === 0) return
     const history = await ctx.session.context({ sessionID: event.sessionID }).catch(() => null)
     if (!history) return
-    const latest = history.findLast((message) => message.type === 'synthetic' && message.text.startsWith(ROLE_HEAD))
-    if (latest?.type === 'synthetic' && latest.text === text) return
-    // Plugins stay silent: a failed append is retried at the next prompt.
-    await ctx.session.synthetic({ sessionID: event.sessionID, text, delivery: event.delivery, resume: false }).catch(() => undefined)
+    const texts = history.flatMap((message) => (message.type === 'synthetic' ? [message.text] : []))
+    for (const reminder of reminders) {
+      if (!needed(reminder, texts)) continue
+      // Plugins stay silent: a failed append is retried at the next prompt.
+      await ctx.session.synthetic({ sessionID: event.sessionID, text: reminder.text, delivery: event.delivery, resume: false }).catch(() => undefined)
+    }
   })
 
   // Every request kind gets the same messages, or the prompt cache misses (plugin/index.ts).
   const shapeRequest = async (event: SessionContext) => {
-    const text = await expected(event.sessionID)
-    if (!text) return
-    const texts = event.messages.flatMap((message) => (message.role === 'user' ? message.content : []))
-      .flatMap((part) => (part.type === 'text' && part.text.startsWith(ROLE_HEAD) ? [part.text] : []))
-    if (texts.at(-1) === text) return
+    const reminders = await expected(event.sessionID)
     const last = event.messages.findLast((message) => message.role === 'user')
-    // TODO: insert a new Message like core/src/plugin/plan.ts once plugins can import OpenCode's Message class.
-    if (last) Array.prototype.push.call(last.content, { type: 'text', text })
+    if (reminders.length === 0 || !last) return
+    const texts = event.messages.flatMap((message) => (message.role === 'user' ? message.content : []))
+      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    for (const reminder of reminders) {
+      // TODO: insert a new Message like core/src/plugin/plan.ts once plugins can import OpenCode's Message class.
+      if (needed(reminder, texts)) Array.prototype.push.call(last.content, { type: 'text', text: reminder.text })
+    }
   }
   await ctx.session.hook('context', shapeRequest)
   await ctx.session.hook('compaction', shapeRequest)
@@ -300,16 +351,16 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
 
       kimaki send --channel ${channelId} --name 'Short title' --prompt '...' --agent <agent> --parent-session ${sessionId} --wait 5
 
-      Do not add the user to worker threads by default. Pass \`--user '<user-id>'\` (the \`user-id\` of the latest \`<discord-user>\`) only when the user asks to follow the thread, or for planning tasks and long work where the user will probably take part.
+      Add the user with \`--user '<user-id>'\` (the \`user-id\` of the latest \`<discord-user>\`) when the user will probably read or reply in the thread: they ask to follow it, it is long work, or it is a **planning task**. A planning task is any task whose result is a choice the user makes: a plan, a design question, a review, a comparison, a "should we" or "how does X compare to Y" question. Even a read-only review you will summarize counts. Example: "review how MCP mode works compared to the CLI, should it have more tools?" gets \`--user\`, because the user decides what to add. Leave \`--user\` out only for plain execution: a fix, a build, a test run, a lookup.
     - \`--wait 5\` is the default for every \`kimaki send\`: it waits at most 5 seconds. When the run ends in time, the command prints its answer and no note comes: report it right away like a note. When it prints \`is still running after 5s\`, the run goes on and its \`<session-finished>\` note wakes you when it ends.
     - After starting a worker that is still running, say nothing: your whole reply is exactly \`IDLE\`. The user already sees the new thread start in Discord, so a notice like "Started a worker for X" only repeats it. You report the outcome when its note wakes you. Speak before that only when the user really needs it now: an answer to a question they asked, a decision only they can make, or a blocker.
     - Use \`--wait\` with no number (waits until the run ends; shell timeout 20 minutes or more, \`timeout: 1_500_000\`) only when you need the result before your next step.
     - Other projects: \`--channel\` of that project (\`kimaki project list --json\`). Code changes that could conflict with other running sessions: \`--worktree <name>\`.
     - Run sessions in parallel only when their write scopes do not overlap. Otherwise use separate worktrees, or run them one after another.
-    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...' --wait 5\`, with \`. queue\` at the end of the prompt when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. A follow-up shows only inside its thread, never in this channel. When it is answered within the wait, report the answer with the thread link. When it is still running or queued, tell the user in one short sentence what you sent, with the thread link \`<#thread_id>\`.
+    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...' --wait 5\`. Without a suffix it steers: it interrupts the current run and the worker continues with the new input. That is the default when the worker started only a few minutes ago or the new prompt adds to its current task. Example: 10 seconds after you start a worker on "review X", the user adds "also check how Y solves this": send it plain, without \`. queue\`. End the prompt with \`. queue\` only for a separate task that should run after the current one is done. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. A follow-up shows only inside its thread, never in this channel. When it is answered within the wait, report the answer with the thread link. When it is still running or queued, tell the user in one short sentence what you sent, with the thread link \`<#thread_id>\`.
     - Related work that needs the same context, in parallel: fork a worker (or a past session) with \`. btw\` at the end, only when it touches different files than the work still running there:
 
-      kimaki send --thread <thread_id> --prompt '... btw' --agent <agent> --parent-session ${sessionId} --wait 5
+      kimaki send --thread <thread_id> --prompt '... btw' --parent-session ${sessionId} --wait 5
 
       The fork gets a new thread with the whole history; the source keeps running. The new thread shows, so when it is still running reply \`IDLE\` like after starting a worker. Its \`<session-finished>\` note wakes you like any worker.
     - Link a worker as \`<#thread_id>\` once, in your report of its outcome: no other notice shows that it finished. Also once when you send it a follow-up that is still running. Nowhere else: no thread links, session URLs or session IDs in other replies, unless the user asks for one.
@@ -323,7 +374,7 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Scope: what it may change, and what it must not do. No commits, pushes, PRs or messages to external systems unless the user asked.
     - One worker owns one coherent task. Do not split a task into tiny sessions that depend on each other.
     - Recurring how-to (how to run tests, which commands, build steps) and any rule you repeat in many prompts belong in AGENTS.md, not in prompts. When one is missing there, suggest adding it to the user.
-    - Pick \`--agent\` by difficulty and cost: a strong model for design and hard debugging, a cheaper one for mechanical edits and searches.
+    - New workers use your own agent, whatever the task, so they run on your model: \`<agent>\` above is the \`agent\` of session ${sessionId} in \`kimaki session list --all --json\`. Never pick a stronger or cheaper agent by difficulty. Forks and follow-ups keep the agent and model of their thread: pass no \`--agent\` or \`--model\` to them. Use another agent or \`--model\` only when the user names one.
 
     ### notifications
 

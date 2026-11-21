@@ -51,12 +51,14 @@ import {
 import { agentUiRoutes } from './agent-ui.ts'
 import { oc, projectOf, type Bot, type ModelChoice } from './bot.ts'
 import { createLoginRoutes } from './commands/login-commands.ts'
+import { mcpRoutes } from './commands/mcp-commands.ts'
 import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, variantModel } from './commands/preference-commands.ts'
 import { sessionRoutes } from './commands/session-commands.ts'
 import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
 import { worktreeRoutes } from './commands/worktree-commands.ts'
 import { ConfigError, DiscordError } from './errors.ts'
-import { canUseKimaki } from './ingress.ts'
+import { asSubtext } from './format-parts.ts'
+import { canUseKimaki, voiceRetryRoutes } from './ingress.ts'
 import {
   authorOf,
   replyError,
@@ -142,10 +144,12 @@ export function createInteractionRegistry(): InteractionRegistry {
     sessionRoutes,
     threadRoutes,
     createPreferenceRoutes(),
+    mcpRoutes,
     taskRoutes,
     agentUiRoutes,
     permissionRoutes,
     createQuestionHandlers(),
+    voiceRetryRoutes,
     catalogRoutes(),
   ])
 }
@@ -350,7 +354,7 @@ async function sendInput(
     ...(model && { model }),
   })
   if (started instanceof Error) return replyError(interaction, started)
-  await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
+  await interaction.editReply({ content: asSubtext(`Started a new session in <#${started.threadId}>`) })
 }
 
 async function handleDynamic(bot: Bot, { interaction, target }: { interaction: ChatInputCommandInteraction; target: DynamicCommand }) {
@@ -361,6 +365,8 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
     if (where instanceof Error) return replyError(interaction, where)
     const model = variant ? await variantModel(bot, { target: where, variant, agent: target.name }) : null
     if (model instanceof Error) return replyError(interaction, model)
+    // Without a prompt the pick switches the current session or channel, also a coordinator's.
+    // With a prompt in a coordinator channel it starts a new thread (sendInput).
     if (!text) return applyAgent(bot, { interaction, target: where, agent: target.name, model })
     const label = model ? `${target.name}, ${model.variant}` : target.name
     return sendInput(bot, { interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${label}) ${text}`, model })

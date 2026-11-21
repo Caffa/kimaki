@@ -28,16 +28,16 @@ import {
   type PromptFile,
 } from './bot.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
-import { SILENT_MESSAGE_FLAGS } from './format-parts.ts'
+import { asSubtext, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
 import { prompt, runInSession, type Sender } from './prompt.ts'
-import { formatEcho, formatEchoPlain } from './queue.ts'
+import { formatEcho, formatEchoPlain, formatEchoReply } from './queue.ts'
 import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
 import { disabledSkillRules } from './builtin-skills.ts'
 import { baseInstructions, INSTRUCTION_KEY, type ScheduledRun } from './system-prompt.ts'
-import { createWorktree, resolveWorkingDirectory } from './worktrees.ts'
+import { createWorktree, isLinkedWorktree, resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('SESSIONS')
 
@@ -228,7 +228,7 @@ async function putInstructions(
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   // The agent list is optional prompt context: a failure must not strand the conversation.
-  const found = providedAgents ?? (await primaryAgents(bot, directory))
+  const [found, worktree] = await Promise.all([providedAgents ?? primaryAgents(bot, directory), isLinkedWorktree(directory)])
   if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
@@ -245,6 +245,7 @@ async function putInstructions(
     scheduledTask,
     // Derived from where the session lives, never from bindings that can be stale.
     coordinator: conversation.id === channel.id,
+    worktree,
     disabled: bot.disabledPrompt,
   })
   const put = await oc(bot, 'instructions.entry.put', (client) =>
@@ -257,14 +258,12 @@ export type PluginWait = (directory: string) => Promise<ConfigError | OpenCodeUn
 
 // The bot writes plugins/kimaki/ on start (opencode-server.ts), but
 // OpenCode's watcher picks it up a moment later: wait for it, bounded.
+// Checked on every input, never cached: a reload (a `pnpm build`, an npm
+// upgrade) can leave the plugin failed after it was active, and sessions
+// would silently run without it (no KIMAKI_TOOL_CALL, no turn context).
 // One per bot (bot.features.waitForPlugin).
 export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
-  // Directories where the plugin was seen active, per connection: a reconnect
-  // may reach a new OpenCode process, so its endpoint starts with no entries.
-  const active = new WeakMap<OpencodeEndpoint, Set<string>>()
   return async (directory) => {
-    const endpoint = bot.opencode.endpoint
-    if (endpoint && active.get(endpoint)?.has(directory)) return
     const location = { directory }
     const deadline = Date.now() + 10_000
     let loadError: string | undefined
@@ -279,18 +278,16 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
         .catch((cause) => new OpenCodeError({ operation: 'plugin.list', cause }))
       if (plugins instanceof Error) return plugins
       if (bot.opencode.endpoint !== endpoint) continue
-      if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
-        active.set(endpoint, (active.get(endpoint) ?? new Set()).add(directory))
-        return
-      }
+      if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) return
       // A plugin that fails to load has no ID: find the shim directory by its path.
       const failed = plugins.data.find((plugin) => plugin.source.type === 'local' && path.basename(plugin.source.path) === 'kimaki')
       loadError = failed?.state.status === 'failed' ? (failed.state.ref ?? failed.state.error) : undefined
       await sleep(200)
     }
     if (loadError) {
-      // TODO: remove the restart hint once OpenCode's Bun evicts failed ESM loads; Bun 1.4.4 keeps
-      // them forever, so a reload during `pnpm build` stays broken after the build ends.
+      // TODO: remove the restart hint once OpenCode's Bun evicts failed ESM loads. Bun 1.4.4 (OpenCode
+      // 2.2.5) keeps a link error of any non-entry module forever, `delete require.cache` included
+      // (1.4.1 recovers), so a reload in the middle of `pnpm build` stays broken after the build ends.
       return new ConfigError({
         reason: `Kimaki plugin failed to load in OpenCode (${loadError}); the OpenCode log has the cause. If it names code that no longer exists, OpenCode kept a stale failed load: run \`opencode service restart\``,
       })
@@ -538,10 +535,10 @@ export async function startSession(
   const bound = await bindThread(bot, { threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
   if (bound instanceof Error) return bound
   if (!run) {
-    const ready = checkout ? `Worktree ready: \`${directory}\`\nBranch: \`${checkout.branch ?? 'detached'}\`\n` : ''
+    const ready = checkout ? [`Worktree ready: \`${directory}\``, `Branch: \`${checkout.branch ?? 'detached'}\``] : []
     const posted = await thread
       .send({
-        content: `${ready}Send a message to start working.`,
+        content: [...ready, 'Send a message to start working.'].map(asSubtext).join('\n'),
         allowedMentions: { parse: [] },
         flags: SILENT_MESSAGE_FLAGS,
       })
@@ -787,8 +784,8 @@ export async function resume(bot: Bot, { channelId, sessionId, author }: { chann
     parentSessionId: marker?.parentSessionId ?? null,
     scheduledTask: marker?.task ?? null,
     threadName: `Resume: ${title}`,
-    intro: `**Resumed session:** ${title}\n**Created:** <t:${Math.floor(info.time.created / 1_000)}:f>`,
-    note: '**Session resumed!** You can now continue the conversation by sending messages in this thread.',
+    intro: asSubtext(`Resumed session **${title.replace(/\s+/g, ' ')}**, created <t:${Math.floor(info.time.created / 1_000)}:f>`),
+    note: asSubtext('Session resumed. You can now continue the conversation by sending messages in this thread.'),
     author,
   })
   if (adopted instanceof Error) return adopted
@@ -865,9 +862,13 @@ export async function fork(
     await discard()
     return relocated
   }
-  const intro = subagent
-    ? `**Forked subagent session created!**\nAgent: \`${subagent.agent}\`\nTask: ${subagent.description || 'No description'}\nFrom: \`${sessionId}\`\nNew session: \`${forked.id}\``
-    : `**Forked session created!**\nFrom: <#${source.id}> (\`${sessionId}\`)\nNew session: \`${forked.id}\``
+  const intro = (subagent
+    ? [
+        `Forked subagent session \`${forked.id}\` from \`${sessionId}\``,
+        `Agent: \`${subagent.agent}\` ⋅ Task: ${(subagent.description || 'No description').replace(/\s+/g, ' ')}`,
+      ]
+    : [`Forked session \`${forked.id}\` from <#${source.id}> (\`${sessionId}\`)`]
+  ).map(asSubtext).join('\n')
   return adoptSession(bot, {
     channel,
     session: relocated,
@@ -875,7 +876,7 @@ export async function fork(
     // OpenCode titles forks "<title> (fork #1)".
     threadName: name ?? (forked.title || `Fork: ${subagent?.description || source.name}`),
     intro,
-    note: 'You can now continue the conversation from this point.',
+    note: asSubtext('You can now continue the conversation from this point.'),
     author,
   })
 }
@@ -900,7 +901,7 @@ export async function forkBtw(
     author: Author
     messageId: string
     files?: readonly PromptFile[]
-    // A voice message asked for this agent.
+    // Another agent for the fork (/btw agent option, voice message); default keeps the source agent.
     agent?: string
     // Explicit `kimaki send --parent-session`, recorded in the fork's marker.
     parentSessionId?: string
@@ -911,6 +912,11 @@ export async function forkBtw(
   if (sourceSessionId instanceof Error) return sourceSessionId
   const project = await conversationProject(bot, source)
   if (project instanceof Error) return project
+  // Check the agent before creating anything, so an unknown name leaves no half set up thread.
+  if (agent) {
+    const selected = await agentSelection(bot, { directory: project.directory, agent })
+    if (selected instanceof Error) return selected
+  }
   const channel = await textChannel(bot, project.channelId)
   if (channel instanceof Error) return channel
 
@@ -951,7 +957,11 @@ export async function forkBtw(
   if (bound instanceof Error) return bound
   await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member`, e))
   const intro = await thread
-    .send({ content: `Reusing context from <#${source.id}> to answer prompt...\n${text}`.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
+    .send({
+      content: `${asSubtext(`Reusing context from <#${source.id}>`)}\n${formatEchoReply({ username: author.username, text })}`.slice(0, 2_000),
+      allowedMentions: { parse: [] },
+      flags: SILENT_MESSAGE_FLAGS,
+    })
     .catch((cause) => new DiscordError({ operation: 'send btw intro', cause }))
   if (intro instanceof Error) return intro
   if (agent) {

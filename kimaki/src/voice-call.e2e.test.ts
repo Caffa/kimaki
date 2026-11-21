@@ -235,7 +235,8 @@ test('finished threads of any project are announced in the call; the model answe
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'other-thread-marker' })
   await waitFor({
     label: 'second finished notice',
-    check: async () => (await twin.discord.channel(voiceChannelId).getMessages()).filter((message) => message.content.includes('thread finished')).length === 2,
+    // "Your thread finished." also contains the words: count only the notices.
+    check: async () => (await twin.discord.channel(voiceChannelId).getMessages()).filter((message) => message.content.startsWith('-# thread finished')).length === 2,
   })
   for (let i = 0; i < 10; i++) {
     expect(live.replies.length).toBe(1)
@@ -287,7 +288,7 @@ test('a saved voice is used when gpt-live knows it; no ChatGPT sign-in means no 
       "null: cove",
       "JUNIPER: juniper",
       "marin: cove (saved voice marin is unknown, using cove. Run kimaki --voice <name> to change it)",
-      "Voice calls need a ChatGPT subscription signed in to OpenCode. Run kimaki login openai, then join the voice channel again",
+      "Voice calls need a ChatGPT subscription signed in to OpenCode with a Codex login (ChatGPT token sharing cannot start calls). Run kimaki login openai --method chatgpt-browser, then join the voice channel again",
     ]
   `)
 })

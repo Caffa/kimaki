@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { createClient } from '@libsql/client'
 import * as errore from 'errore'
@@ -54,8 +55,18 @@ const GEMINI_MODEL = 'gemini-flash-latest'
 const TOOL_NAME = 'transcriptionResult'
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 500
+// When every provider failed transiently, the whole chain runs again after 2s, 4s, 8s... up to 30s.
+const ROUND_DELAY_MS = 2_000
+const MAX_ROUND_DELAY_MS = 30_000
 // Later messages of the conversation wait for the transcription (ingress.ts): cap all providers and retries.
 const TRANSCRIPTION_TIMEOUT_MS = 2 * 60_000
+
+// KIMAKI_WHISPER_TIMEOUT (seconds) raises the cap for a slow local Whisper server (CPU only).
+function transcriptionTimeoutMs(entries: Transcriber[]) {
+  const seconds = Number(process.env['KIMAKI_WHISPER_TIMEOUT'])
+  if (!entries.some((entry) => entry.kind === 'local-whisper') || !(seconds > 0)) return TRANSCRIPTION_TIMEOUT_MS
+  return seconds * 1000
+}
 
 export class TranscriptionError extends errore.createTaggedError({
   name: 'TranscriptionError',
@@ -465,7 +476,7 @@ async function withRetries({ signal, attempt }: { signal: AbortSignal; attempt: 
     const retry = number < MAX_ATTEMPTS && !signal.aborted && isRetryable(result)
     logger.warn(`transcription attempt ${number}/${MAX_ATTEMPTS} failed${retry ? ', retrying' : ''}`, result)
     if (!retry) return result
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * number))
+    await sleep(RETRY_DELAY_MS * number, undefined, { signal }).catch(() => undefined)
   }
 }
 
@@ -544,7 +555,12 @@ function chatGPTAccountId(accessToken: string): string | null {
   return isRecord(auth) && typeof auth['chatgpt_account_id'] === 'string' ? auth['chatgpt_account_id'] : null
 }
 
-// The active (else newest) OpenAI OAuth credential, if not expired. null when OpenCode has none.
+// Codex logins only. OpenCode's "ChatGPT token sharing" login (chatgpt-token-sharing) gets
+// 401 rejected_by_access_enforcement on everything but api.openai.com/v1/responses and /models:
+// no dictation, no GPT-Live, no Codex backend.
+const CODEX_METHODS = new Set(['chatgpt-browser', 'chatgpt-headless'])
+
+// The active (else newest) unexpired Codex OAuth credential. null when OpenCode has none.
 export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: string; now?: number }): Promise<TranscriptionError | ChatGPTCredential | null> {
   if (!fs.existsSync(dbFile)) return null
   const client = createClient({ url: ':memory:' })
@@ -560,9 +576,10 @@ export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: 
     const raw = row['value']
     const value = typeof raw === 'string' ? errore.try(() => JSON.parse(raw) as unknown, () => null) : null
     if (!isRecord(value) || value['type'] !== 'oauth' || typeof value['access'] !== 'string') continue
+    if (typeof value['methodID'] !== 'string' || !CODEX_METHODS.has(value['methodID'])) continue
     if (typeof value['expires'] === 'number' && value['expires'] <= now + 60_000) {
-      logger.log('OpenCode ChatGPT token expired, skipping it until OpenCode refreshes it')
-      return null
+      logger.log('OpenCode Codex token expired, skipping it until OpenCode refreshes it')
+      continue
     }
     return { accessToken: value['access'], accountId: chatGPTAccountId(value['access']) }
   }
@@ -738,6 +755,7 @@ export async function transcribe({
   agents,
   inSession,
   asrAutoStart,
+  onRetry,
 }: {
   db: KimakiDb
   // The running bot's token: selects its bot_tokens row and API keys.
@@ -754,6 +772,8 @@ export async function transcribe({
   // Start the bundled asr-service/ when the parakeet URL does not answer.
   // Production sets it from shouldAutoStartAsr(); tests keep it off.
   asrAutoStart?: boolean
+  // Before each wait between rounds; `attempt` is the number of the coming round.
+  onRetry?: (retry: { delayMs: number; attempt: number }) => void
 }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
   const list = await transcribers({
     db,
@@ -766,10 +786,11 @@ export async function transcribe({
   const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
     ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
     : ''
-  const signal = AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)
+  const timeoutMs = transcriptionTimeoutMs(list)
+  const signal = AbortSignal.timeout(timeoutMs)
   const run = (entry: Transcriber) => {
     if (entry.kind === 'parakeet') return withRetries({ signal, attempt: () => transcribeViaParakeet({ baseUrl: entry.baseUrl, audio, mediaType, signal }) })
-    if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry, signal })
+    if (entry.kind === 'gateway') return withRetries({ signal, attempt: () => transcribeViaGateway({ audio, mediaType, ...entry, signal }) })
     if (entry.kind === 'local-whisper') return withRetries({ signal, attempt: () => transcribeViaLocalWhisper({ whisper: entry.whisper, audio, mediaType, signal }) })
     if (entry.kind === 'chatgpt') return withRetries({ signal, attempt: () => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType, signal }) })
     const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool, signal }
@@ -777,14 +798,23 @@ export async function transcribe({
     return withRetries({ signal, attempt: () => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }) })
   }
   let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
-  for (const entry of list) {
-    if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${TRANSCRIPTION_TIMEOUT_MS / 60_000} minutes` })
-    const result = await run(entry)
-    if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
-    logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)
-    last = result
+  // Rounds: an outage or network drop longer than the quick retries is retried until the timeout.
+  for (let round = 0; ; round++) {
+    let transient = false
+    for (const entry of list) {
+      if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${timeoutMs / 60_000} minutes (${last.message})` })
+      const result = await run(entry)
+      if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
+      logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)
+      transient ||= isRetryable(result)
+      last = result
+    }
+    if (!transient) return last
+    const delay = Math.min(ROUND_DELAY_MS * 2 ** round, MAX_ROUND_DELAY_MS)
+    logger.warn(`every transcriber failed, trying them again in ${delay / 1000}s`)
+    onRetry?.({ delayMs: delay, attempt: round + 2 })
+    await sleep(delay, undefined, { signal }).catch(() => undefined)
   }
-  return last
 }
 
 // --- text to speech (`kimaki tts`)

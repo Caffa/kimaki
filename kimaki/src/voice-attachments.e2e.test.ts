@@ -62,8 +62,17 @@ let twin: TestTwin
 let bot: BotHandle
 let gemini: FakeGemini
 let dataDir: string
+// Cloud keys from the developer shell would join the chain ahead of the fake
+// Gemini and fail on the fake audio (the fixtures are not decodable Ogg),
+// retrying for seconds per message. The test intends Gemini only.
+const cloudEnvKeys = ['OPENAI_API_KEY', 'GEMINI_API_KEY'] as const
+const savedEnv = new Map<string, string | undefined>()
 
 beforeAll(async () => {
+  for (const key of cloudEnvKeys) {
+    savedEnv.set(key, process.env[key])
+    delete process.env[key]
+  }
   dataDir = tempDataDir()
   ;[server, twin, gemini] = await Promise.all([startOpencodeTestServer({ matchers }), startTwin(), startFakeGemini()])
   await seedProjectChannel({
@@ -90,6 +99,10 @@ afterAll(async () => {
   await server?.stop()
   await gemini?.stop()
   fs.rmSync(dataDir, { recursive: true, force: true })
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
 })
 
 async function newThread(send: () => Promise<unknown>) {
@@ -301,23 +314,23 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
-    slow-done
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    [reply to tommy: ]
-    -# Queued message sent
-    voice queue ok
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: ]
     -# » **tommy:** Side voice-btw
     [reply to tommy: ]
-    Session forked! Continue in <#THREAD>
+    -# Session forked! Continue in <#THREAD>
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
     [reply to tommy: ]
     -# » **tommy:** Fresh start voice-new
     [reply to tommy: ]
-    Started a new session in <#THREAD>"
+    -# Started a new session in <#THREAD>
+    slow-done
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    [reply to tommy: ]
+    -# Queued message sent
+    voice queue ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect([btw.name, fresh.name]).toMatchInlineSnapshot(`
     [
@@ -327,8 +340,8 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
   `)
   expect(hide(await twin.discord.thread(btw.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Reusing context from <#THREAD> to answer prompt...
-    Side voice-btw
+    -# Reusing context from <#THREAD>
+    -# » **tommy:** Side voice-btw
     voice btw ok
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
