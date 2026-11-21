@@ -621,7 +621,7 @@ export async function startTestBot({
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),
       ...(chatgptBaseUrl && { chatgpt: chatgptBaseUrl }),
       // Only when the test provides one: the developer's real local ASR
-      // service (127.0.0.1:8765) must never join a test's transcriber chain.
+      // service (127.0.0.1:8770) must never join a test's transcriber chain.
       ...(parakeetBaseUrl && { parakeet: parakeetBaseUrl }),
     },
     // Never auto-start the bundled ASR service from a test.

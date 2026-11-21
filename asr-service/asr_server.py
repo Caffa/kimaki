@@ -361,7 +361,7 @@ async def transcribe_audio_base64(
 if __name__ == "__main__":
     import uvicorn
     
-    port = int(os.environ.get("ASR_PORT", "8765"))
+    port = int(os.environ.get("ASR_PORT", "8770"))
     host = os.environ.get("ASR_HOST", "127.0.0.1")
     
     print(f"Starting ASR service on {host}:{port}")

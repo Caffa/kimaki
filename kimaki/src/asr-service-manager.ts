@@ -30,7 +30,7 @@ export class AsrServiceError extends errore.createTaggedError({
   message: 'ASR service failed: $reason',
 }) {}
 
-export const ASR_SERVICE_URL = process.env['ASR_SERVICE_URL'] ?? 'http://127.0.0.1:8765'
+export const ASR_SERVICE_URL = process.env['ASR_SERVICE_URL'] ?? 'http://127.0.0.1:8770'
 
 // MLX (the Apple Silicon backend used by parakeet-mlx) publishes wheels for
 // cp39–cp313 only. Python 3.14, the Homebrew default on recent setups, has no
@@ -160,7 +160,7 @@ async function healthy(url: string, timeoutMs: number): Promise<boolean> {
 // The URL the locally spawned server answers on (ASR_HOST/ASR_PORT), which is
 // not always ASR_SERVICE_URL: readiness is polled here, not on a remote host.
 function localUrl(): string {
-  return `http://${process.env['ASR_HOST'] ?? '127.0.0.1'}:${process.env['ASR_PORT'] ?? '8765'}`
+  return `http://${process.env['ASR_HOST'] ?? '127.0.0.1'}:${process.env['ASR_PORT'] ?? '8770'}`
 }
 
 // Auto-start only makes sense for a local URL: a remote ASR_SERVICE_URL (the
@@ -171,11 +171,14 @@ function isLocalUrl(url: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1'
 }
 
-// True when anything answers /health (even while the model is still loading):
-// the port is taken, so a second server must not be spawned.
+// True when the real ASR service answers /health with 200 (even while the
+// model is still loading): the port is taken by the service, so a second
+// server must not be spawned. Anything answering non-2xx (an unrelated
+// server squatting the port) does not count — it cannot serve /transcribe
+// either, so treating it as "answering" would break transcription entirely.
 async function answering(url: string, timeoutMs: number): Promise<boolean> {
   const response = await fetch(new URL('/health', url), { signal: AbortSignal.timeout(timeoutMs) }).catch(() => null)
-  return response !== null
+  return response?.ok === true
 }
 
 // Spawn the server and wait until the model is loaded, or kill it on timeout.
@@ -186,7 +189,7 @@ async function spawnAndAwaitReady(servicePath: string): Promise<AsrServiceError 
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      ASR_PORT: process.env['ASR_PORT'] ?? '8765',
+      ASR_PORT: process.env['ASR_PORT'] ?? '8770',
       ASR_HOST: process.env['ASR_HOST'] ?? '127.0.0.1',
     },
   })
