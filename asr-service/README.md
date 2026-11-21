@@ -46,10 +46,10 @@ Requirements:
 .venv/bin/python asr_server.py
 ```
 
-The service runs on `http://127.0.0.1:8765` by default.
+The service runs on `http://127.0.0.1:8770` by default.
 
 Environment variables:
-- `ASR_PORT` - Port number (default: 8765)
+- `ASR_PORT` - Port number (default: 8770)
 - `ASR_HOST` - Host address (default: 127.0.0.1)
 - `PARAKEET_MODEL` - Model to use (default: mlx-community/parakeet-tdt-0.6b-v3)
 - `ASR_FALLBACK_MODEL` - Whisper fallback model (default: mlx-community/whisper-large-v3-turbo)
@@ -140,7 +140,7 @@ Set the environment variable to use parakeet:
 export ASR_PROVIDER=parakeet
 
 # Or configure the service URL if running on a different host
-export ASR_SERVICE_URL=http://localhost:8765
+export ASR_SERVICE_URL=http://localhost:8770
 
 # Start kimaki
 kimaki
