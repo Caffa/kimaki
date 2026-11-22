@@ -54,7 +54,7 @@ test('a fully healthy /health answers as before', async () => {
 })
 
 test('a refused or timed-out probe falls through to the cloud', async () => {
-  const fetchMock = vi.fn(async () => {
+  const fetchMock = vi.fn(async (..._args: unknown[]) => {
     throw new Error('connect ECONNREFUSED')
   })
   vi.stubGlobal('fetch', fetchMock)
