@@ -3,6 +3,7 @@
 // in-process and stop it cleanly.
 
 import { setTimeout as sleep } from 'node:timers/promises'
+import path from 'node:path'
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 import * as errore from 'errore'
 
@@ -12,6 +13,7 @@ import type { Analytics } from './analytics.ts'
 import { oc, type Bot, type WarmupTimers } from './bot.ts'
 import type { PromptSection } from './builtin-skills.ts'
 import { registerChannelSort, SORT_CHANNELS_DELAY_MS } from './channel-sort.ts'
+import { cappedMakeRequest } from './discord-rest.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
@@ -131,7 +133,15 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const discord = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates],
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
-    ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
+    rest: {
+      ...(options.discordRestUrl && { api: options.discordRestUrl }),
+      version: '10',
+      makeRequest: cappedMakeRequest,
+    },
+  })
+  // Silent hours-long limiter sleeps are invisible otherwise.
+  discord.rest.on('rateLimited', (info) => {
+    logger.warn(`rate limited: ${info.method} ${info.route} retry in ${Math.round(info.timeToReset / 1000)}s`)
   })
   // TODO: drop this once @discordjs/rest can keep its token on 401. handleErrors()
   // calls setToken(null) on any 401, and every later request fails with "Expected
@@ -270,7 +280,11 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   if (failure) return failure
   const refreshed = await refreshCliContext(bot)
   if (refreshed instanceof Error) return refreshed
-  const commands = registerSlashCommands(bot, createInteractionRegistry(), { globalDirectory: options.opencodeConfigDir })
+  logger.log(`cli context refreshed, registering slash commands`)
+  const commands = registerSlashCommands(bot, createInteractionRegistry(), {
+    globalDirectory: options.opencodeConfigDir,
+    signaturesFile: path.join(options.dataDir, 'command-signatures.json'),
+  })
   cleanup.defer(() => commands.stop())
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()

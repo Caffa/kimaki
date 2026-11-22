@@ -5,7 +5,7 @@ import { expect, test } from 'vitest'
 
 import { buildCommands, createInteractionRegistry } from './slash-commands.ts'
 
-test('catalog names are sanitized, keep their suffix, skip collisions and MCP prompts, and stop at 100 commands', () => {
+test('catalog names are sanitized, keep their suffix, skip collisions and MCP prompts, and stop at the dynamic cap', () => {
   const fixed = createInteractionRegistry().definitions
   const catalog = {
     agents: [
@@ -32,7 +32,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
   })
   expect(reversed.commands).toEqual(commands)
   const names = commands.map((command) => command.name)
-  expect(names.length).toBe(100)
+  expect(names.length).toBe(81)
   expect(names.filter((name) => !name.startsWith('skill-'))).toMatchInlineSnapshot(`
     [
       "cwd",

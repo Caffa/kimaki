@@ -51,6 +51,9 @@ import {
 import { agentUiRoutes } from './agent-ui.ts'
 import { oc, projectOf, type Bot, type ModelChoice } from './bot.ts'
 import { createLoginRoutes } from './commands/login-commands.ts'
+import { readFile, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { mcpRoutes } from './commands/mcp-commands.ts'
 import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, variantModel } from './commands/preference-commands.ts'
 import { sessionRoutes } from './commands/session-commands.ts'
@@ -167,7 +170,15 @@ export type Catalog = {
   skills: ReadonlyArray<{ id: string; description?: string }>
 }
 
-async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string): Promise<Error | Catalog> {
+async function readCatalog(bot: Pick<Bot, 'opencode' | 'features'>, directory: string): Promise<Error | Catalog> {
+  // A cold (or evicted) location loads its plugin a moment after it answers,
+  // and OpenCode's list calls do not wait for that (issue 51282): they return
+  // an empty catalog, registering a bare fixed list. The activation hints that
+  // would retrigger registration can be lost on a cold start (sent before the
+  // bot subscribes), so gate the read on the plugin being active.
+  const plugin = await bot.features.waitForPlugin(directory)
+  if (plugin instanceof Error) logger.warn('waiting for plugin activation', plugin)
+  logger.log(`plugin active for ${directory}, reading catalog`)
   // Waits for plugin activation, so a cold location returns its full catalog.
   const ready = await catalogReady(bot, directory)
   if (ready instanceof Error) return ready
@@ -180,7 +191,9 @@ async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string): Promi
   if (agents instanceof Error) return agents
   if (commands instanceof Error) return commands
   if (skills instanceof Error) return skills
-  return { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
+  const catalog = { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
+  logger.log(`catalog for ${directory}: ${catalog.agents.length} agents, ${catalog.commands.length} commands, ${catalog.skills.length} skills`)
+  return catalog
 }
 
 // Autocomplete keeps the whole project catalog reachable beyond Discord's shortcut limit.
@@ -234,6 +247,37 @@ function catalogRoutes(): InteractionRoutes {
   return { commands }
 }
 
+// A hung bulk-overwrite PUT (a rate-limited limiter sleeps with no timeout of
+// its own) must not hang startup: the await is bounded, and the pass retries
+// on the next catalog event or reconnect.
+const REGISTRATION_TIMEOUT_MS = 120_000
+const REGISTRATION_RETRY_MS = 180_000
+const REGISTRATION_RETRY_CHUNK_MS = 5_000
+
+async function raceWithTimeout<T>(promise: Promise<T> | undefined, ms: number): Promise<T | 'timeout' | undefined> {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function loadSignatures(file: string): Map<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (parsed !== null && typeof parsed === 'object' && !(parsed instanceof Array)) {
+      return new Map(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+    }
+  } catch {
+    // Missing or corrupt file: nothing counts as registered until a PUT succeeds.
+  }
+  return new Map()
+}
+
 // Lowercase letters, digits and hyphens; the suffix always survives the 32-char limit.
 export function discordCommandName(name: string, suffix: string): string | null {
   const base = name
@@ -245,6 +289,14 @@ export function discordCommandName(name: string, suffix: string): string | null 
   return `${base.slice(0, NAME_LIMIT - suffix.length).replace(/-$/, '')}${suffix}`
 }
 
+// A bulk-overwrite PUT counts EVERY command in its payload against Discord's
+// 200-per-day application command creates (error 30034), even unchanged ones.
+// A ~125-command catalog burned that budget within a few restarts and then
+// 429'd every registration for hours. Agents come first (the primary entry
+// points), then command and skill shortcuts; the fixed /agent, /command and
+// /skill commands still reach everything through autocomplete.
+const DYNAMIC_COMMAND_CAP = 50
+
 // Pure: the full command list for a guild (the fixed commands first) plus the owner of each dynamic name.
 export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIChatInputApplicationCommandsJSONBody[]; catalog: Catalog }): {
   commands: RESTPostAPIChatInputApplicationCommandsJSONBody[]
@@ -255,13 +307,25 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
   const taken = new Set(fixed.map((command) => command.name))
   const dynamic = new Map<string, DynamicCommand>()
   const commands = [...fixed]
-  // Every dynamic command has one optional text option.
-  const add = ({ name, target, text }: { name: string | null; target: DynamicCommand; text: string }) => {
-    if (!name || taken.has(name)) return
-    taken.add(name)
-    dynamic.set(name, target)
+
+  // Sorted: the same catalog always keeps the same commands under the limit,
+  // whatever order OpenCode lists them in.
+  const sorted = <T>(items: readonly T[], key: (item: T) => string) =>
+    items.toSorted((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
+  // Stops at DYNAMIC_COMMAND_CAP so a registration PUT fits Discord's daily
+  // command-create budget; `add` becomes a no-op past it.
+  let dynamicCount = 0
+  const add = (entry: { name: string | null; target: DynamicCommand; text: string }) => {
+    if (dynamicCount >= DYNAMIC_COMMAND_CAP) return
+    if (!entry.name || taken.has(entry.name)) return
+    dynamicCount++
+    addCommand(entry)
+  }
+  const addCommand = ({ name, target, text }: { name: string | null; target: DynamicCommand; text: string }) => {
+    taken.add(name!)
+    dynamic.set(name!, target)
     const builder = new SlashCommandBuilder()
-      .setName(name)
+      .setName(name!)
       .setDescription(text.replace(/\s+/g, ' ').trim().slice(0, 100) || '-')
       .setDMPermission(false)
     if (target.kind === 'agent') {
@@ -275,11 +339,6 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
     }
     commands.push(builder.toJSON())
   }
-
-  // Sorted: the same catalog always keeps the same commands under the limit,
-  // whatever order OpenCode lists them in.
-  const sorted = <T>(items: readonly T[], key: (item: T) => string) =>
-    items.toSorted((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
   for (const agent of sorted(catalog.agents, (agent) => agent.id)) {
     if (agent.mode === 'subagent' || agent.hidden) continue
     add({
@@ -306,7 +365,6 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
   for (const dropped of commands.slice(MAX_COMMANDS)) dynamic.delete(dropped.name)
   return { commands: commands.slice(0, MAX_COMMANDS), dynamic, dropped: Math.max(0, commands.length - MAX_COMMANDS) }
 }
-
 // An input from a command: a prompt in the thread, or a new session in a channel.
 async function sendInput(
   bot: Bot,
@@ -390,11 +448,18 @@ export function registerSlashCommands(
   registry: InteractionRegistry,
   {
     globalDirectory,
+    signaturesFile,
   }: {
     // OpenCode's global config dir. As a location, OpenCode skips the project
     // config walk for it (core/src/config/discovery.ts), so its catalog is the
     // global one. Any other directory also loads the config of its ancestors.
     globalDirectory: string
+    // Persisted per-guild command signatures: a restart with an unchanged
+    // catalog skips the bulk-overwrite PUT entirely. Discord counts every
+    // changed command of a bulk overwrite against a 200-per-day-per-guild
+    // create budget, so re-registering ~100 commands on every restart can
+    // exhaust it and 429 for hours.
+    signaturesFile: string
   },
 ) {
   const { discord } = bot
@@ -402,10 +467,20 @@ export function registerSlashCommands(
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
 
   // Last commands set per guild: an unchanged list is not sent again (Discord
-  // limits command creates to 200 per day per guild).
-  const registered = new Map<string, string>()
+  // limits command creates to 200 per day per guild). Seeded from
+  // signaturesFile so a restart also skips the PUT (the fetch-and-compare
+  // below still runs, so a list changed outside this bot re-registers).
+  const registered = loadSignatures(signaturesFile)
+  // Serialized: two guilds finishing close together must not interleave writes.
+  let saveChain: Promise<void> = Promise.resolve()
+  const saveSignatures = (file: string, map: ReadonlyMap<string, string>): Promise<void> => {
+    saveChain = saveChain.then(() => writeFile(file, JSON.stringify(Object.fromEntries(map)))).catch((error: Error) => logger.warn('saving command signatures', error))
+    return saveChain
+  }
 
-  async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<void> {
+  // Returns false when the guild did not end up registered (timeout or error),
+  // so the pass can schedule a retry.
+  async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<boolean> {
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
       // Another Kimaki on the same app can overwrite the list, so compare with Discord.
@@ -413,20 +488,30 @@ export function registerSlashCommands(
       const same = !live || (live.size === built.commands.length && built.commands.every((command) => live.some((entry) => entry.name === command.name)))
       if (same) {
         dynamic.set(guild.id, built.dynamic)
-        return
+        return true
       }
       logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
     }
-    const result = await discord.application?.commands
-      .set(built.commands, guild.id)
-      .catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e }))
+    logger.log(`registering ${built.commands.length} commands in ${guild.id}`)
+    const result = await raceWithTimeout(
+      discord.application?.commands.set(built.commands, guild.id).catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e })),
+      REGISTRATION_TIMEOUT_MS,
+    )
+    if (result === 'timeout') {
+      // The underlying PUT keeps retrying inside the REST limiter; the next
+      // pass re-registers from a clean comparison.
+      logger.warn(`registering commands in ${guild.id} timed out after ${REGISTRATION_TIMEOUT_MS / 1000}s; will retry`)
+      return false
+    }
     if (result instanceof Error) {
       logger.warn(result)
-      return
+      return false
     }
     registered.set(guild.id, signature)
+    void saveSignatures(signaturesFile, registered)
     dynamic.set(guild.id, built.dynamic)
     logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
+    return true
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
@@ -516,7 +601,22 @@ export function registerSlashCommands(
           if (built.dropped > 0) {
             logger.log(`${built.dropped} catalog shortcuts do not fit in Discord's 100 commands; all entries remain available through /agent, /command and /skill`)
           }
-          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild, built)))
+          // Serialized, not Promise.all: the bulk-overwrite PUT shares one
+          // small bucket across guilds (2 per 30s observed), and parallel PUTs
+          // just 429 each other into minute-long retry cycles.
+          let timedOut = false
+          for (const guild of [...discord.guilds.cache.values()]) {
+            if (!(await registerGuild(guild, built))) timedOut = true
+          }
+          if (timedOut) {
+            // Retry without waiting for a catalog event: a PUT that just 429'd
+            // succeeds once its window frees. Chunked so shutdown is quick.
+            for (let waited = 0; waited < REGISTRATION_RETRY_MS && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
+              await sleep(REGISTRATION_RETRY_CHUNK_MS)
+            }
+            if (passes.closed) return
+            passes.dirty = true
+          }
         }
       } finally {
         passes.active = null
