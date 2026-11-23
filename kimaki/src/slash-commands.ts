@@ -247,21 +247,45 @@ function catalogRoutes(): InteractionRoutes {
 // A hung bulk-overwrite PUT (a rate-limited limiter sleeps with no timeout of
 // its own) must not hang startup: the await is bounded, and the pass retries
 // on the next catalog event or reconnect.
-const REGISTRATION_TIMEOUT_MS = 120_000
 const REGISTRATION_RETRY_MS = 180_000
 const REGISTRATION_RETRY_MAX_MS = 1_800_000
 const REGISTRATION_RETRY_CHUNK_MS = 5_000
+// One bulk-overwrite attempt. discord.js's own limiter retries a 429 forever
+// inside the request with no way to cancel it — an orphaned cycle per pass.
+// A plain fetch has one owner: parse Discord's retry_after (error 30034's
+// daily command-create budget reports the real wait in the body) and let the
+// pass backoff schedule the next attempt.
+const COMMAND_PUT_TIMEOUT_MS = 30_000
 
-async function raceWithTimeout<T>(promise: Promise<T> | undefined, ms: number): Promise<T | 'timeout' | undefined> {
-  let timer: NodeJS.Timeout | undefined
-  const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), ms)
-  })
+type CommandPutOutcome = { ok: true } | { ok: false; reason: string; retryAfterMs: number | null }
+
+async function putGuildCommands(apiBase: string, token: string, appId: string, guildId: string, commands: unknown[]): Promise<CommandPutOutcome> {
+  let res: Response
   try {
-    return await Promise.race([promise, timeout])
-  } finally {
-    clearTimeout(timer)
+    res = await fetch(`${apiBase}/v10/applications/${appId}/guilds/${guildId}/commands`, {
+      method: 'PUT',
+      headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(commands),
+      signal: AbortSignal.timeout(COMMAND_PUT_TIMEOUT_MS),
+    })
+  } catch (error) {
+    return { ok: false, reason: `registering commands in ${guildId} failed: ${errorText(error)}`, retryAfterMs: null }
   }
+  if (res.ok) return { ok: true }
+  const retryAfterMs = Number(res.headers.get('retry-after') ?? 0) * 1_000 || null
+  let detail = ''
+  try {
+    const body = (await res.json()) as { message?: string; retry_after?: number; code?: number }
+    if (body.message) detail = `: ${body.message}`
+    if (body.retry_after) return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs: body.retry_after * 1_000 }
+  } catch {
+    // Non-JSON body (proxy or edge error page): the status line says enough.
+  }
+  return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function loadSignatures(file: string): Map<string, string> {
@@ -447,6 +471,7 @@ export function registerSlashCommands(
   {
     globalDirectory,
     signaturesFile,
+    apiBase,
   }: {
     // OpenCode's global config dir. As a location, OpenCode skips the project
     // config walk for it (core/src/config/discovery.ts), so its catalog is the
@@ -458,6 +483,8 @@ export function registerSlashCommands(
     // create budget, so re-registering ~100 commands on every restart can
     // exhaust it and 429 for hours.
     signaturesFile: string
+    // REST root that /v10/... is appended to: discord.com, or a gateway proxy.
+    apiBase: string
   },
 ) {
   const { discord } = bot
@@ -469,6 +496,9 @@ export function registerSlashCommands(
   // signaturesFile so a restart also skips the PUT (the fetch-and-compare
   // below still runs, so a list changed outside this bot re-registers).
   const registered = loadSignatures(signaturesFile)
+  // Discord's 30034 daily-budget 429 reports the real wait in its body; the
+  // pass never waits longer than REGISTRATION_RETRY_MAX_MS.
+  let suggestedRetryMs: number | null = null
   // Serialized: two guilds finishing close together must not interleave writes.
   let saveChain: Promise<void> = Promise.resolve()
   const saveSignatures = (file: string, map: ReadonlyMap<string, string>): Promise<void> => {
@@ -490,25 +520,23 @@ export function registerSlashCommands(
       }
       logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
     }
-    const result = await raceWithTimeout(
-      discord.application?.commands.set(built.commands, guild.id).catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e })),
-      REGISTRATION_TIMEOUT_MS,
-    )
-    if (result === 'timeout') {
-      // The underlying PUT keeps retrying inside the REST limiter; the next
-      // pass re-registers from a clean comparison.
-      logger.warn(`registering commands in ${guild.id} timed out after ${REGISTRATION_TIMEOUT_MS / 1000}s; will retry`)
+    const token = discord.token
+    const appId = discord.application?.id
+    if (!token || !appId) {
+      logger.warn(`cannot register commands in ${guild.id}: no bot token or application id`)
       return false
     }
-    if (result instanceof Error) {
-      logger.warn(result)
-      return false
+    const outcome = await putGuildCommands(apiBase, token, appId, guild.id, built.commands)
+    if (outcome.ok) {
+      registered.set(guild.id, signature)
+      void saveSignatures(signaturesFile, registered)
+      dynamic.set(guild.id, built.dynamic)
+      logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
+      return true
     }
-    registered.set(guild.id, signature)
-    void saveSignatures(signaturesFile, registered)
-    dynamic.set(guild.id, built.dynamic)
-    logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
-    return true
+    if (outcome.retryAfterMs) suggestedRetryMs = Math.max(suggestedRetryMs ?? 0, outcome.retryAfterMs)
+    logger.warn(outcome.reason)
+    return false
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
@@ -610,11 +638,15 @@ export function registerSlashCommands(
           }
           if (timedOut) {
             // Retry without waiting for a catalog event: a PUT that just 429'd
-            // succeeds once its window frees. Chunked so shutdown is quick.
-            for (let waited = 0; waited < retryDelay && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
+            // succeeds once its window frees. Discord's 30034 body reports the
+            // real daily-budget wait; never wait longer than the cap. Chunked
+            // so shutdown is quick.
+            const wait = Math.min(Math.max(retryDelay, suggestedRetryMs ?? 0), REGISTRATION_RETRY_MAX_MS)
+            for (let waited = 0; waited < wait && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
               await sleep(REGISTRATION_RETRY_CHUNK_MS)
             }
             if (passes.closed) return
+            suggestedRetryMs = null
             retryDelay = Math.min(retryDelay * 2, REGISTRATION_RETRY_MAX_MS)
             passes.dirty = true
           } else {
