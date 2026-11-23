@@ -256,8 +256,10 @@ const REGISTRATION_RETRY_CHUNK_MS = 5_000
 // daily command-create budget reports the real wait in the body) and let the
 // pass backoff schedule the next attempt.
 const COMMAND_PUT_TIMEOUT_MS = 30_000
+// Individual POSTs per pass once the daily budget forces degraded mode.
+const DEGRADED_ADDS_PER_PASS = 10
 
-type CommandPutOutcome = { ok: true } | { ok: false; reason: string; retryAfterMs: number | null }
+type CommandPutOutcome = { ok: true } | { ok: false; reason: string; retryAfterMs?: number | null; budget?: boolean }
 
 async function putGuildCommands(apiBase: string, token: string, appId: string, guildId: string, commands: unknown[]): Promise<CommandPutOutcome> {
   let res: Response
@@ -277,11 +279,37 @@ async function putGuildCommands(apiBase: string, token: string, appId: string, g
   try {
     const body = (await res.json()) as { message?: string; retry_after?: number; code?: number }
     if (body.message) detail = `: ${body.message}`
-    if (body.retry_after) return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs: body.retry_after * 1_000 }
+    const budget = body.code === 30034
+    if (body.retry_after) return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs: body.retry_after * 1_000, budget }
+    return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs, budget }
   } catch {
     // Non-JSON body (proxy or edge error page): the status line says enough.
   }
   return { ok: false, reason: `registering commands in ${guildId}: ${res.status}${detail}`, retryAfterMs }
+}
+
+// One POST adds exactly one command for exactly one create: on a nearly
+// exhausted daily budget the missing commands trickle in, most important
+// first, instead of the whole registration waiting for the full headroom.
+async function postGuildCommand(apiBase: string, token: string, appId: string, guildId: string, command: unknown): Promise<CommandPutOutcome> {
+  let res: Response
+  try {
+    res = await fetch(`${apiBase}/v10/applications/${appId}/guilds/${guildId}/commands`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(command),
+      signal: AbortSignal.timeout(COMMAND_PUT_TIMEOUT_MS),
+    })
+  } catch (error) {
+    return { ok: false, reason: `adding ${guildId} command failed: ${errorText(error)}` }
+  }
+  if (res.ok) return { ok: true }
+  try {
+    const body = (await res.json()) as { message?: string; code?: number }
+    return { ok: false, reason: `adding ${String((command as { name?: string }).name)} in ${guildId}: ${res.status}${body.message ? `: ${body.message}` : ''}`, budget: body.code === 30034 }
+  } catch {
+    return { ok: false, reason: `adding command in ${guildId}: ${res.status}` }
+  }
 }
 
 function errorText(error: unknown): string {
@@ -532,6 +560,34 @@ export function registerSlashCommands(
       void saveSignatures(signaturesFile, registered)
       dynamic.set(guild.id, built.dynamic)
       logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
+      return true
+    }
+    if (outcome.budget) {
+      // Daily create budget exhausted: add the missing commands one by one,
+      // fixed commands and agents first, so the trickle budget registers
+      // progressively instead of the whole list waiting for full headroom.
+      const live = await discord.application?.commands.fetch({ guildId: guild.id }).catch(() => null)
+      const liveNames = new Set(live ? [...live.values()].map((entry) => entry.name) : [])
+      const missing = built.commands.filter((command) => !liveNames.has(command.name))
+      let added = 0
+      for (const command of missing.slice(0, DEGRADED_ADDS_PER_PASS)) {
+        const one = await postGuildCommand(apiBase, token, appId, guild.id, command)
+        if (!one.ok) {
+          logger.warn(one.reason)
+          break
+        }
+        added++
+      }
+      if (missing.length - added > 0) {
+        logger.warn(`daily create budget exhausted: added ${added}/${missing.length} missing commands in ${guild.id}; continuing next pass`)
+        return false
+      }
+      // Content-complete (a stale extra shortcut only clears on a later full
+      // PUT once the budget frees).
+      registered.set(guild.id, signature)
+      void saveSignatures(signaturesFile, registered)
+      dynamic.set(guild.id, built.dynamic)
+      logger.info(`registered ${built.commands.length} commands in guild ${guild.id} (${added} added individually past the daily budget)`)
       return true
     }
     if (outcome.retryAfterMs) suggestedRetryMs = Math.max(suggestedRetryMs ?? 0, outcome.retryAfterMs)
