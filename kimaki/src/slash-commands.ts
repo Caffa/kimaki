@@ -597,7 +597,16 @@ export function registerSlashCommands(
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
-    return interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
+    const mapped = interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
+    if (mapped) return mapped
+    // A command registered outside this process (e.g. a manual single-command
+    // PUT while the daily create budget was exhausted) is not in the map yet:
+    // agent shortcuts are derivable from the name. Fixed commands were looked
+    // up first, and no fixed name ends with '-agent'.
+    if (interaction.guildId && interaction.commandName.endsWith('-agent')) {
+      return { kind: 'agent' as const, name: interaction.commandName.slice(0, -'-agent'.length) }
+    }
+    return undefined
   }
 
   async function runCommand(interaction: ChatInputCommandInteraction) {
