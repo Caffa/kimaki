@@ -32,7 +32,7 @@ let dataDir: string
 
 beforeAll(async () => {
   dataDir = tempDataDir()
-  ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers, agents: { late: { description: 'Late agent', mode: 'primary' } } }), startTwin()])
+  ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers, agents: { 'late-orchestrator': { description: 'Late agent', mode: 'primary' } } }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   bot = await startTestBot({ dataDir, twin, server })
 })
@@ -53,25 +53,25 @@ test('agents loaded after startup get their slash commands', async () => {
   // A cold OpenCode has no user agents when the bot first registers commands;
   // agent.updated fires when the catalog finishes loading; the refresh follows it.
   const deadline = Date.now() + 8_000
-  while (Date.now() < deadline && !(await registeredNames()).includes('late-agent')) {
+  while (Date.now() < deadline && !(await registeredNames()).includes('late-orchestrator-agent')) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  expect(await registeredNames()).toContain('late-agent')
+  expect(await registeredNames()).toContain('late-orchestrator-agent')
 
   const { discord, channelId } = twin
   const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
   await discord
     .channel(channelId)
     .user(TEST_USER_ID)
-    .runSlashCommand({ name: 'late-agent', options: [{ name: 'prompt', type: 3, value: 'Go late-marker' }] })
+    .runSlashCommand({ name: 'late-orchestrator-agent', options: [{ name: 'prompt', type: 3, value: 'Go late-marker' }] })
   const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (found) => !before.has(found.id) })
   await waitForFooter({ discord, threadId: thread.id })
   expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     -# » **tommy:** Go late-marker
-    -# *using deterministic-provider/deterministic-v2 ⋅ late*
+    -# *using deterministic-provider/deterministic-v2 ⋅ late-orchestrator*
     late reply
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ late*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ late-orchestrator*"
   `)
 })
 

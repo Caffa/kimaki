@@ -102,6 +102,8 @@ export function registerStartCommand(cli: Goke) {
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .option('--coordinator [enabled]', wrapJsonSchema<boolean>({ type: 'boolean', default: false, description: 'Channel messages go to one long coordinator session that starts threads for the work. "true" turns it on; default off, threads are created per message (/toggle-coordinator sets one channel)' }))
     .option('--sort-channels', 'Sort the channels of this machine\'s category by the last user message or interaction, latest first')
+    .option('--global-commands', 'Register essential slash commands globally (default: on with direct Discord, off through gateway-proxy)')
+    .option('--no-global-commands', 'Do not register global slash commands (gateway-proxy rejects them)')
     .option('--no-autostart', 'Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -142,6 +144,8 @@ export function registerStartCommand(cli: Goke) {
       // config.json > null (V1 parity). The flag persists, so it is only needed
       // when changing the value.
       if (options.noDefaultAgent && options.defaultAgent) fail(new Error('Cannot use --default-agent and --no-default-agent at the same time'))
+      if (options.noGlobalCommands && options.globalCommands) fail(new Error('Cannot use --global-commands and --no-global-commands at the same time'))
+      const globalCommands = options.noGlobalCommands ? false : options.globalCommands === true ? true : undefined
       const defaultAgent = (() => {
         if (options.noDefaultAgent) {
           clearUserConfigKeys({ dataDir, keys: ['defaultAgent'] })
@@ -256,6 +260,7 @@ export function registerStartCommand(cli: Goke) {
         disabledPrompt,
         coordinator: options.coordinator,
         sortChannels: Boolean(options.sortChannels),
+        ...(globalCommands !== undefined && { globalCommands }),
       })
       if (bot instanceof Error) failStartup(bot)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
@@ -293,6 +298,8 @@ export function registerStartCommand(cli: Goke) {
           ...(options.noAnalytics ? ['--no-analytics'] : []),
           ...(options.coordinator ? [] : ['--coordinator', 'false']),
           ...(options.sortChannels ? ['--sort-channels'] : []),
+          ...(options.globalCommands ? ['--global-commands'] : []),
+          ...(options.noGlobalCommands ? ['--no-global-commands'] : []),
           ...(options.machineName ? ['--machine-name', options.machineName] : []),
         ] })
         if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)

@@ -95,6 +95,11 @@ export type StartBotOptions = {
   sortChannels?: boolean
   // Default SORT_CHANNELS_DELAY_MS. Tests pass a short one.
   sortChannelsDelayMs?: number
+  // `--global-commands` / `--no-global-commands`: register essential slash
+  // commands globally (separate daily budget). Default: on when discordRestUrl
+  // is unset (direct Discord), off when set (gateway-proxy rejects global
+  // application routes). Explicit flag wins.
+  globalCommands?: boolean
 }
 
 export type BotHandle = Bot & {
@@ -284,6 +289,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     globalDirectory: options.opencodeConfigDir,
     signaturesFile: path.join(options.dataDir, 'command-signatures.json'),
     apiBase: options.discordRestUrl ?? 'https://discord.com/api',
+    globalCommands: options.globalCommands ?? !options.discordRestUrl,
   })
   cleanup.defer(() => commands.stop())
   // Awaited so the handle is only returned once every guild has its commands.
