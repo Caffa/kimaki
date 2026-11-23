@@ -178,7 +178,6 @@ async function readCatalog(bot: Pick<Bot, 'opencode' | 'features'>, directory: s
   // bot subscribes), so gate the read on the plugin being active.
   const plugin = await bot.features.waitForPlugin(directory)
   if (plugin instanceof Error) logger.warn('waiting for plugin activation', plugin)
-  logger.log(`plugin active for ${directory}, reading catalog`)
   // Waits for plugin activation, so a cold location returns its full catalog.
   const ready = await catalogReady(bot, directory)
   if (ready instanceof Error) return ready
@@ -191,9 +190,7 @@ async function readCatalog(bot: Pick<Bot, 'opencode' | 'features'>, directory: s
   if (agents instanceof Error) return agents
   if (commands instanceof Error) return commands
   if (skills instanceof Error) return skills
-  const catalog = { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
-  logger.log(`catalog for ${directory}: ${catalog.agents.length} agents, ${catalog.commands.length} commands, ${catalog.skills.length} skills`)
-  return catalog
+  return { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
 }
 
 // Autocomplete keeps the whole project catalog reachable beyond Discord's shortcut limit.
@@ -252,6 +249,7 @@ function catalogRoutes(): InteractionRoutes {
 // on the next catalog event or reconnect.
 const REGISTRATION_TIMEOUT_MS = 120_000
 const REGISTRATION_RETRY_MS = 180_000
+const REGISTRATION_RETRY_MAX_MS = 1_800_000
 const REGISTRATION_RETRY_CHUNK_MS = 5_000
 
 async function raceWithTimeout<T>(promise: Promise<T> | undefined, ms: number): Promise<T | 'timeout' | undefined> {
@@ -492,7 +490,6 @@ export function registerSlashCommands(
       }
       logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
     }
-    logger.log(`registering ${built.commands.length} commands in ${guild.id}`)
     const result = await raceWithTimeout(
       discord.application?.commands.set(built.commands, guild.id).catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e })),
       REGISTRATION_TIMEOUT_MS,
@@ -588,6 +585,9 @@ export function registerSlashCommands(
     if (passes.active) return passes.active
     const pass = (async () => {
       try {
+        // Doubles per failed pass while Discord's daily command-create budget
+        // is exhausted, so a saturated budget does not spam the log all day.
+        let retryDelay = REGISTRATION_RETRY_MS
         while (passes.dirty && !passes.closed) {
           passes.dirty = false
           const read = await readCatalog(bot, globalDirectory)
@@ -611,11 +611,14 @@ export function registerSlashCommands(
           if (timedOut) {
             // Retry without waiting for a catalog event: a PUT that just 429'd
             // succeeds once its window frees. Chunked so shutdown is quick.
-            for (let waited = 0; waited < REGISTRATION_RETRY_MS && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
+            for (let waited = 0; waited < retryDelay && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
               await sleep(REGISTRATION_RETRY_CHUNK_MS)
             }
             if (passes.closed) return
+            retryDelay = Math.min(retryDelay * 2, REGISTRATION_RETRY_MAX_MS)
             passes.dirty = true
+          } else {
+            retryDelay = REGISTRATION_RETRY_MS
           }
         }
       } finally {

@@ -280,7 +280,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   if (failure) return failure
   const refreshed = await refreshCliContext(bot)
   if (refreshed instanceof Error) return refreshed
-  logger.log(`cli context refreshed, registering slash commands`)
   const commands = registerSlashCommands(bot, createInteractionRegistry(), {
     globalDirectory: options.opencodeConfigDir,
     signaturesFile: path.join(options.dataDir, 'command-signatures.json'),
