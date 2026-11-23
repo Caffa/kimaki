@@ -534,9 +534,10 @@ export function registerSlashCommands(
     return saveChain
   }
 
-  // Returns false when the guild did not end up registered (timeout or error),
-  // so the pass can schedule a retry.
-  async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<boolean> {
+  // Returns 'failed' when nothing was registered this pass (the pass then
+  // backs off), 'progress' when the trickle added something (fast retry), and
+  // 'ok' when the guild's list is content-complete.
+  async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<'ok' | 'progress' | 'failed'> {
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
       // Another Kimaki on the same app can overwrite the list, so compare with Discord.
@@ -544,7 +545,7 @@ export function registerSlashCommands(
       const same = !live || (live.size === built.commands.length && built.commands.every((command) => live.some((entry) => entry.name === command.name)))
       if (same) {
         dynamic.set(guild.id, built.dynamic)
-        return true
+        return 'ok'
       }
       logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
     }
@@ -552,7 +553,7 @@ export function registerSlashCommands(
     const appId = discord.application?.id
     if (!token || !appId) {
       logger.warn(`cannot register commands in ${guild.id}: no bot token or application id`)
-      return false
+      return 'failed'
     }
     const outcome = await putGuildCommands(apiBase, token, appId, guild.id, built.commands)
     if (outcome.ok) {
@@ -560,7 +561,7 @@ export function registerSlashCommands(
       void saveSignatures(signaturesFile, registered)
       dynamic.set(guild.id, built.dynamic)
       logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
-      return true
+      return 'ok'
     }
     if (outcome.budget) {
       // Daily create budget exhausted: add the missing commands one by one,
@@ -580,7 +581,7 @@ export function registerSlashCommands(
       }
       if (missing.length - added > 0) {
         logger.warn(`daily create budget exhausted: added ${added}/${missing.length} missing commands in ${guild.id}; continuing next pass`)
-        return false
+        return added > 0 ? 'progress' : 'failed'
       }
       // Content-complete (a stale extra shortcut only clears on a later full
       // PUT once the budget frees).
@@ -588,11 +589,11 @@ export function registerSlashCommands(
       void saveSignatures(signaturesFile, registered)
       dynamic.set(guild.id, built.dynamic)
       logger.info(`registered ${built.commands.length} commands in guild ${guild.id} (${added} added individually past the daily budget)`)
-      return true
+      return 'ok'
     }
     if (outcome.retryAfterMs) suggestedRetryMs = Math.max(suggestedRetryMs ?? 0, outcome.retryAfterMs)
     logger.warn(outcome.reason)
-    return false
+    return 'failed'
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
@@ -688,15 +689,17 @@ export function registerSlashCommands(
           // Serialized, not Promise.all: the bulk-overwrite PUT shares one
           // small bucket across guilds (2 per 30s observed), and parallel PUTs
           // just 429 each other into minute-long retry cycles.
-          let timedOut = false
+          let failed = false
           for (const guild of [...discord.guilds.cache.values()]) {
-            if (!(await registerGuild(guild, built))) timedOut = true
+            if ((await registerGuild(guild, built)) === 'failed') failed = true
           }
-          if (timedOut) {
+          if (failed) {
             // Retry without waiting for a catalog event: a PUT that just 429'd
             // succeeds once its window frees. Discord's 30034 body reports the
             // real daily-budget wait; never wait longer than the cap. Chunked
-            // so shutdown is quick.
+            // so shutdown is quick. A pass that made trickle progress keeps
+            // the fast cadence, so the missing commands fill at one batch per
+            // 3 minutes instead of backing off.
             const wait = Math.min(Math.max(retryDelay, suggestedRetryMs ?? 0), REGISTRATION_RETRY_MAX_MS)
             for (let waited = 0; waited < wait && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
               await sleep(REGISTRATION_RETRY_CHUNK_MS)
