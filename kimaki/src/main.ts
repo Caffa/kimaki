@@ -292,14 +292,20 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     globalCommands: options.globalCommands ?? !options.discordRestUrl,
   })
   cleanup.defer(() => commands.stop())
-  // Awaited so the handle is only returned once every guild has its commands.
-  await commands.registerAll()
-  // After Discord and OpenCode are ready: a due task needs both.
+  // After Discord and OpenCode are ready: a due task needs both. Started
+  // before command registration because registerAll() can wait a long time
+  // (Discord's daily command-create budget makes it retry for hours); routines,
+  // wakes, and the failed-voice scan must not wait on that.
   const scheduling = await scheduler.start()
   if (scheduling instanceof Error) return scheduling
   // Same for the failed voice messages: a retried record needs Discord and
   // OpenCode up, so the scan runs only here.
   await voiceRetry.start()
+  // Awaited so the handle is only returned once every guild has its commands.
+  // Registration may trickle for hours inside Discord's daily create budget;
+  // a functioning bot must not wait on it (everything user-facing is already
+  // wired above).
+  await commands.registerAll()
   logger.info(`bot ready as ${discord.user?.tag} in ${discord.guilds.cache.size} server(s)`)
   const projects = await countUserProjects({ db, dataDir: options.dataDir })
   if (projects instanceof Error) logger.warn(projects)
