@@ -489,12 +489,17 @@ export function buildGlobalEssentials({
 
 const BUDGET_FALLBACK_MS = 3_600_000 // 1 hour
 const BUDGET_FALLBACK_MAX_MS = 21_600_000 // 6 hours
+// retry_after values at or below this are ignored: on a saturated daily budget
+// they do not report the block's true length.
+const BUDGET_TRUST_MIN_MS = BUDGET_FALLBACK_MS // tied to the ladder base so they cannot drift
 
-// Pure: the next registration wait after a budget (30034) failure. Honors
-// Discord's retry_after exactly when present; otherwise falls back to 1h,
-// doubling per consecutive budget failure, capped at 6h.
+// Pure: the next registration wait after a budget (30034) failure. Discord's
+// 30034 retry_after on a saturated daily budget reports minutes while the
+// block demonstrably lasts over a day with zero successful creates, so
+// sub-hour values are not the budget free-time; they are ignored, and a
+// sparse ladder (1h doubling to 6h) paces re-probes.
 export function budgetRetryMs(retryAfterMs: number | null | undefined, consecutiveBudgetFailures: number): number {
-  if (retryAfterMs) return retryAfterMs
+  if (retryAfterMs && retryAfterMs > BUDGET_TRUST_MIN_MS) return retryAfterMs
   const fallback = BUDGET_FALLBACK_MS * 2 ** consecutiveBudgetFailures
   return Math.min(fallback, BUDGET_FALLBACK_MAX_MS)
 }
@@ -617,16 +622,19 @@ export function registerSlashCommands(
   // signaturesFile so a restart also skips the PUT (the fetch-and-compare
   // below still runs, so a list changed outside this bot re-registers).
   const registered = loadSignatures(signaturesFile)
-  // Discord's 30034 daily-budget 429 reports the real wait in its body; the
-  // pass never waits longer than REGISTRATION_RETRY_MAX_MS.
+  // Discord's 30034 body reports a minute-scale wait that does not match the
+  // observed multi-day block; only values above BUDGET_TRUST_MIN_MS are trusted.
   let suggestedRetryMs: number | null = null
   // Separate from suggestedRetryMs: the retry_after from a budget (30034)
   // failure, so non-budget 429s do not shorten the budget backoff.
   let budgetRetryAfterMs: number | null = null
-  // Consecutive budget failures without a retry_after: fallback doubles.
+  // Consecutive fully-blocked budget passes: the fallback ladder doubles (Discord's sub-hour retry_after on a saturated budget is not the free time and is ignored).
   let consecutiveBudgetFailures = 0
   // Set by registerGuild/registerGlobals when a budget failure occurs this pass.
   let passBudgetBlocked = false
+  // Commands the degraded trickle added this pass: any progress keeps the fast
+  // budget cadence; zero adds backs off on the hourly ladder.
+  let passTrickleAdds = 0
   // Serialized: two guilds finishing close together must not interleave writes.
   let saveChain: Promise<void> = Promise.resolve()
   const saveSignatures = (file: string, map: ReadonlyMap<string, string>): Promise<void> => {
@@ -636,8 +644,7 @@ export function registerSlashCommands(
 
   function logBudgetExhaustion(scope: string, retryAfterMs: number | null | undefined) {
     if (retryAfterMs) {
-      const next = new Date(Date.now() + retryAfterMs).toISOString()
-      logger.warn(`daily create budget exhausted ${scope}; next attempt at ${next} (retry_after ${Math.round(retryAfterMs / 1000)}s)`)
+      logger.warn(`daily create budget exhausted ${scope} (discord retry_after ${Math.round(retryAfterMs / 1000)}s)`)
     } else {
       logger.warn(`daily create budget exhausted ${scope}; no retry_after in response, using fallback backoff`)
     }
@@ -701,6 +708,8 @@ export function registerSlashCommands(
         }
         added++
       }
+      // Counts toward the pass either way: any add keeps the fast cadence below.
+      passTrickleAdds += added
       if (missing.length - added > 0) {
         logger.warn(`daily create budget exhausted: added ${added}/${missing.length} missing commands in ${guild.id}; continuing next pass`)
         return added > 0 ? 'progress' : 'failed'
@@ -863,6 +872,7 @@ export function registerSlashCommands(
             logger.log(`${built.dropped} catalog shortcuts do not fit in Discord's 100 commands; all entries remain available through /agent, /command and /skill`)
           }
           passBudgetBlocked = false
+          passTrickleAdds = 0
           // Serialized, not Promise.all: the bulk-overwrite PUT shares one
           // small bucket across guilds (2 per 30s observed), and parallel PUTs
           // just 429 each other into minute-long retry cycles.
@@ -882,27 +892,29 @@ export function registerSlashCommands(
           }
           if (failed) {
             // Retry without waiting for a catalog event: a PUT that just 429'd
-            // succeeds once its window frees. Discord's 30034 body reports the
-            // real daily-budget wait. Budget failures honor retry_after
-            // exactly, or fall back to 1h doubling capped at 6h. Non-budget
-            // failures keep the existing REGISTRATION_RETRY_MS schedule.
-            // Chunked so shutdown is quick. A pass that made trickle progress
-            // keeps retrying, so the missing commands fill at one batch per
-            // pass instead of backing off.
+            // succeeds once its window frees. Non-budget failures keep the
+            // existing REGISTRATION_RETRY_MS schedule. Chunked so shutdown
+            // is quick.
             let wait: number
             if (passBudgetBlocked) {
-              if (budgetRetryAfterMs) {
-                wait = budgetRetryAfterMs
+              if (passTrickleAdds > 0) {
+                // Progress keeps the fast cadence so the trickle fills one
+                // batch per pass.
+                wait = budgetRetryAfterMs ?? budgetRetryMs(null, consecutiveBudgetFailures)
                 consecutiveBudgetFailures = 0
               } else {
-                wait = budgetRetryMs(null, consecutiveBudgetFailures)
+                // With zero progress, stop retrying every few minutes: each
+                // blocked attempt may itself keep the saturated window pinned,
+                // so re-probes happen at 1h, 2h, 4h, 6h...
+                wait = budgetRetryMs(budgetRetryAfterMs, consecutiveBudgetFailures)
                 consecutiveBudgetFailures++
               }
             } else {
               consecutiveBudgetFailures = 0
               wait = Math.min(Math.max(retryDelay, suggestedRetryMs ?? 0), REGISTRATION_RETRY_MAX_MS)
             }
-            for (let waited = 0; waited < wait && !passes.closed; waited += REGISTRATION_RETRY_CHUNK_MS) {
+            // A catalog event during the wait wakes it early; the ladder keeps counting blocked passes.
+            for (let waited = 0; waited < wait && !passes.closed && !passes.dirty; waited += REGISTRATION_RETRY_CHUNK_MS) {
               await sleep(REGISTRATION_RETRY_CHUNK_MS)
             }
             if (passes.closed) return

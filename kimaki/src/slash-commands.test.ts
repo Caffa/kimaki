@@ -163,16 +163,22 @@ test('global essentials: agent, model, queue plus orchestrator shortcuts, respec
   expect(again.commands).toEqual(commands)
 })
 
-test('budgetRetryMs: honors retry_after, fallback doubles capped at 6h', () => {
-  // Honors Discord's retry_after exactly when present.
-  expect(budgetRetryMs(120_000, 0)).toBe(120_000)
-  expect(budgetRetryMs(3_600_000, 3)).toBe(3_600_000)
+test('budgetRetryMs: ignores sub-hour retry_after on a saturated budget, ladder doubles capped at 6h', () => {
+  // Discord's short retry_after is not the budget free-time: the ladder paces re-probes.
+  expect(budgetRetryMs(120_000, 0)).toBe(3_600_000)
+  expect(budgetRetryMs(120_000, 3)).toBe(21_600_000)
+  // A genuinely long retry_after is honored verbatim.
+  expect(budgetRetryMs(3_600_001, 0)).toBe(3_600_001)
+  // Exactly 1h is not trusted either (the threshold is strict).
+  expect(budgetRetryMs(3_600_000, 3)).toBe(21_600_000)
   // Fallback: 1h, doubling, capped at 6h.
   expect(budgetRetryMs(null, 0)).toBe(3_600_000)
   expect(budgetRetryMs(null, 1)).toBe(7_200_000)
   expect(budgetRetryMs(null, 2)).toBe(14_400_000)
   expect(budgetRetryMs(null, 3)).toBe(21_600_000)
   expect(budgetRetryMs(null, 4)).toBe(21_600_000)
+  // Past the cap the ladder stays flat: the counter never resets in here, only in the caller.
+  expect(budgetRetryMs(null, 5)).toBe(21_600_000)
   // undefined treated as absent.
   expect(budgetRetryMs(undefined, 0)).toBe(3_600_000)
   // 0 is falsy: treated as absent (no retry_after).
