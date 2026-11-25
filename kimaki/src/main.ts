@@ -3,7 +3,6 @@
 // in-process and stop it cleanly.
 
 import { setTimeout as sleep } from 'node:timers/promises'
-import path from 'node:path'
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 import * as errore from 'errore'
 
@@ -287,7 +286,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   if (refreshed instanceof Error) return refreshed
   const commands = registerSlashCommands(bot, createInteractionRegistry(), {
     globalDirectory: options.opencodeConfigDir,
-    signaturesFile: path.join(options.dataDir, 'command-signatures.json'),
     apiBase: options.discordRestUrl ?? 'https://discord.com/api',
     globalCommands: options.globalCommands ?? !options.discordRestUrl,
   })

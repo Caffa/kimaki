@@ -101,7 +101,7 @@ test('a skill change adds its command; catalog events with the same catalog writ
   const bulkWrites: string[] = []
   const commandsRoute = Routes.applicationGuildCommands(bot.discord.user!.id, twin.discord.guildId)
   bot.discord.rest.on('response', (request) => {
-    if (request.method === 'PUT' && request.path === commandsRoute) bulkWrites.push(request.path)
+    if (['PUT', 'POST', 'PATCH', 'DELETE'].includes(request.method) && request.path === commandsRoute) bulkWrites.push(request.path)
   })
   const event = nextCatalogEvent()
   fs.writeFileSync(skillFile, skillText)

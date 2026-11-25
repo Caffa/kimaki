@@ -369,12 +369,16 @@ async function deleteGuildCommand(apiBase: string, token: string, appId: string,
   if (res.ok) return { ok: true }
   const retryAfterMs = Number(res.headers.get('retry-after') ?? 0) * 1_000 || null
   let detail = ''
+  let code: number | null = null
   try {
-    const body = (await res.json()) as { message?: string }
+    const body = (await res.json()) as { message?: string; code?: number }
     if (body.message) detail = `: ${body.message}`
+    code = body.code ?? null
   } catch {
     // Non-JSON body (proxy or edge error page): the status line says enough.
   }
+  // Another writer deleted it first (race): 404 / 10063 means it is already gone, so count it as deleted.
+  if (res.status === 404 || code === 10063) return { ok: true }
   return { ok: false, reason: `deleting command ${commandId} in ${guildId}: ${res.status}${detail}`, retryAfterMs }
 }
 
@@ -742,9 +746,6 @@ export function registerSlashCommands(
     // config walk for it (core/src/config/discovery.ts), so its catalog is the
     // global one. Any other directory also loads the config of its ancestors.
     globalDirectory: string
-    // Kept for the CLI surface (main.ts passes it): Discord is the source of
-    // truth since the diff-based port, so nothing is persisted to disk.
-    signaturesFile: string
     // REST root that /v10/... is appended to: discord.com, or a gateway proxy.
     apiBase: string
     // Register essential commands globally (separate daily budget from guild
