@@ -53,6 +53,8 @@ Environment variables:
 - `ASR_HOST` - Host address (default: 127.0.0.1)
 - `PARAKEET_MODEL` - Model to use (default: mlx-community/parakeet-tdt-0.6b-v3)
 - `ASR_FALLBACK_MODEL` - Whisper fallback model (default: mlx-community/whisper-large-v3-turbo)
+- `ASR_FALLBACK_LANGUAGES` - Languages whisper tries on fallback, best pass wins (default: `en,zh`; empty or `none` = one auto-detect pass)
+- `ASR_PARAKEET_CONFIDENCE_THRESHOLD` - Mean parakeet sentence confidence below which whisper also runs (default: 0.8)
 
 ### Available models
 
@@ -65,15 +67,28 @@ Environment variables:
 Parakeet is fast and accurate for English but can fail on Chinese audio — either
 garbling it into fake English or returning empty text for real voice notes. The
 service keeps parakeet as the primary model and automatically falls back to
-`mlx-whisper` when parakeet returns empty text. Whisper auto-detects the language,
-so this path also works for Chinese and other languages.
+`mlx-whisper` when parakeet errors, returns empty text, or returns text with
+low mean sentence confidence (below `ASR_PARAKEET_CONFIDENCE_THRESHOLD`).
+Whisper then runs once per language in `ASR_FALLBACK_LANGUAGES` (English and
+Chinese by default), scores each pass by mean segment `avg_logprob`, and keeps
+the best-scoring non-empty result — so Chinese voice notes transcribe instead
+of coming back as parakeet's fake-English garbage.
 
-- The fallback is triggered only when the primary model returns empty text.
+- The fallback triggers on parakeet errors, empty text, or mean sentence
+  confidence below the threshold (default 0.8). A whisper result only replaces
+  parakeet's non-empty text when whisper returns non-empty text of its own.
+- `ASR_FALLBACK_LANGUAGES` is comma-separated (e.g. `en,zh,ja`); an empty value
+  or `none` runs a single auto-detect pass instead.
+- An explicit `language` parameter on either endpoint (e.g. `?language=zh`) is
+  honored as a preferred forced pass ahead of `ASR_FALLBACK_LANGUAGES`, so it
+  wins ties.
+- Mandarin (`zh*`) whisper passes send a simplified-Mandarin `initial_prompt`
+  ("以下是普通话的句子。") so results come back in simplified characters.
 - Use `force_fallback=1` (`/transcribe` query param or `force_fallback: true` in
   `/transcribe/base64`) to bypass parakeet and run only whisper — useful for
-testing the fallback path directly.
+  testing the fallback path directly.
 - The first whisper call downloads the model (~1.6 GB) to the local HuggingFace
-cache if it is not already present.
+  cache if it is not already present.
 - If `mlx-whisper` fails to install or load, the service logs the error and
   continues in parakeet-only mode.
 

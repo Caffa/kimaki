@@ -2,7 +2,8 @@
 """
 ASR Service - FastAPI wrapper for parakeet-mlx + whisper fallback
 Provides HTTP API for speech-to-text transcription using NVIDIA Parakeet on Apple Silicon,
-with an optional mlx-whisper fallback for Chinese and other languages when parakeet returns empty text.
+with an optional multi-language mlx-whisper fallback (English and Chinese by default,
+best pass wins) when parakeet errors, returns empty text, or returns low-confidence text.
 """
 
 import os
@@ -14,6 +15,17 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from fallback import (
+    mean_sentence_confidence,
+    ordered_fallback_languages,
+    parse_fallback_languages,
+    pick_best_whisper_run,
+    should_whisper_fallback,
+    whisper_pass_kwargs,
+    whisper_run_from_result,
+    whisper_run_language,
+)
 
 # Lazy import parakeet-mlx to allow service to start without model preloaded
 parakeet_model: Optional[object] = None
@@ -102,6 +114,21 @@ def get_fallback_model_name() -> str:
     return os.environ.get("ASR_FALLBACK_MODEL", "mlx-community/whisper-large-v3-turbo")
 
 
+def get_fallback_languages() -> list[Optional[str]]:
+    """Return the whisper fallback passes from ASR_FALLBACK_LANGUAGES; None entries mean auto-detect."""
+    return parse_fallback_languages(os.environ.get("ASR_FALLBACK_LANGUAGES"))
+
+
+def get_parakeet_confidence_threshold() -> float:
+    """Return the parakeet mean-confidence threshold below which whisper fallback runs."""
+    raw = os.environ.get("ASR_PARAKEET_CONFIDENCE_THRESHOLD", "0.8")
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        print(f"Invalid ASR_PARAKEET_CONFIDENCE_THRESHOLD value: {raw!r}; using default 0.8")
+        return 0.8
+
+
 def get_model():
     """Lazy load the parakeet-mlx model."""
     global parakeet_model
@@ -136,38 +163,64 @@ def load_whisper() -> Optional[object]:
         return None
 
 
-def transcribe_with_parakeet(audio_path: str) -> tuple[str, Optional[float], Optional[str]]:
-    """Transcribe with parakeet and return (text, duration, language)."""
+def transcribe_with_parakeet(audio_path: str) -> tuple[str, Optional[float], Optional[str], float]:
+    """Transcribe with parakeet and return (text, duration, language, mean_confidence)."""
     model = get_model()
     result = model.transcribe(audio_path)
     duration = result.sentences[0].end if result.sentences else None
-    return result.text, duration, "en"
+    confidence = mean_sentence_confidence(result.sentences)
+    return result.text, duration, "en", confidence
 
 
-def transcribe_with_whisper(audio_path: str, language: Optional[str] = None) -> tuple[str, Optional[float], Optional[str]]:
-    """Transcribe with mlx_whisper fallback and return (text, duration, detected_language)."""
+def run_whisper_pass(mlx_whisper, model_name: str, audio_path: str, language: Optional[str]) -> dict:
+    """Run one mlx_whisper pass, forcing language when set (None lets whisper auto-detect)."""
+    result = mlx_whisper.transcribe(
+        audio_path,
+        path_or_hf_repo=model_name,
+        language=language,
+        **whisper_pass_kwargs(language),
+    )
+    return whisper_run_from_result(result, language)
+
+
+def transcribe_with_whisper_multilang(
+    audio_path: str,
+    language: Optional[str] = None,
+) -> tuple[str, Optional[float], Optional[str]]:
+    """Run whisper once per configured fallback language and return the best-scoring result.
+
+    Languages come from ASR_FALLBACK_LANGUAGES (default "en,zh"); a None entry is an
+    auto-detect pass, and an explicit request language is prepended so it wins ties.
+    Runs with empty text are discarded and ties keep the earliest pass. When every
+    pass fails or returns empty text, returns empty text.
+    """
     mlx_whisper = load_whisper()
     if mlx_whisper is None:
         raise TranscribeError("mlx_whisper fallback not available")
 
     model_name = get_fallback_model_name()
-    print(f"Running whisper fallback: {model_name}")
-    result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model_name)
-    text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
-    text = text.strip()
-
-    segments = result.get("segments", []) if isinstance(result, dict) else getattr(result, "segments", [])
-    duration = None
-    if segments:
-        last_segment = segments[-1]
-        if isinstance(last_segment, dict):
-            duration = last_segment.get("end")
+    languages = ordered_fallback_languages(get_fallback_languages(), language)
+    print(f"Running whisper fallback: {model_name} (languages: {', '.join(code or 'auto' for code in languages)})")
+    runs: list[dict] = []
+    last_error: Optional[Exception] = None
+    for language in languages:
+        label = language or "auto"
+        try:
+            run = run_whisper_pass(mlx_whisper, model_name, audio_path, language)
+        except Exception as e:
+            last_error = e
+            print(f"Whisper pass (language={label}) failed: {e}")
+            continue
+        if run["text"]:
+            runs.append(run)
         else:
-            duration = getattr(last_segment, "end", None)
-
-    detected_language = result.get("language") if isinstance(result, dict) else getattr(result, "language", None)
-    detected_language = detected_language or language
-    return text, duration, detected_language
+            print(f"Whisper pass (language={label}) returned empty text")
+    if not runs and last_error is not None:
+        raise last_error
+    best = pick_best_whisper_run(runs)
+    if best is None:
+        return "", None, None
+    return best["text"], best["duration"], whisper_run_language(best)
 
 
 def run_transcription(
@@ -175,24 +228,47 @@ def run_transcription(
     language: Optional[str] = None,
     force_fallback: bool = False,
 ) -> tuple[str, Optional[float], Optional[str]]:
-    """Run transcription with optional parakeet -> whisper fallback when text is empty."""
+    """Run transcription with parakeet, falling back to whisper on errors, empty text or low confidence."""
     global _cache_limit_applied
     if not _cache_limit_applied:
         apply_cache_limit()
 
     try:
         if force_fallback:
-            return transcribe_with_whisper(audio_path, language=language)
+            return transcribe_with_whisper_multilang(audio_path, language=language)
 
-        text, duration, detected_language = transcribe_with_parakeet(audio_path)
+        try:
+            text, duration, detected_language, confidence = transcribe_with_parakeet(audio_path)
+        except Exception as parakeet_error:
+            print(f"Parakeet transcription failed: {parakeet_error}; trying whisper fallback")
+            try:
+                return transcribe_with_whisper_multilang(audio_path, language=language)
+            except TranscribeError as e:
+                print(f"Fallback unavailable, re-raising parakeet error: {e}")
+            except Exception as e:
+                print(f"Fallback transcription failed: {e}; re-raising parakeet error")
+            raise parakeet_error
+
         if not text.strip():
             print(f"Parakeet returned empty text; trying whisper fallback")
             try:
-                text, duration, detected_language = transcribe_with_whisper(audio_path, language=language)
+                text, duration, detected_language = transcribe_with_whisper_multilang(audio_path, language=language)
             except TranscribeError as e:
                 print(f"Fallback unavailable, returning empty parakeet result: {e}")
             except Exception as e:
                 print(f"Fallback transcription failed: {e}; returning empty parakeet result")
+        else:
+            threshold = get_parakeet_confidence_threshold()
+            if should_whisper_fallback(confidence, threshold):
+                print(f"Parakeet mean confidence {confidence:.3f} below threshold {threshold:.3f}; trying whisper fallback")
+                try:
+                    whisper_text, whisper_duration, whisper_language = transcribe_with_whisper_multilang(audio_path, language=language)
+                    if whisper_text.strip():
+                        return whisper_text, whisper_duration, whisper_language
+                except TranscribeError as e:
+                    print(f"Fallback unavailable, keeping parakeet result: {e}")
+                except Exception as e:
+                    print(f"Fallback transcription failed: {e}; keeping parakeet result")
 
         return text, duration, detected_language
     finally:
@@ -242,7 +318,7 @@ async def transcribe_audio(
     
     Args:
         file: Audio file (WAV, MP3, OGG, M4A, etc.)
-        language: Optional language hint (e.g., "en")
+        language: Optional language code (e.g., "zh"), honored as a preferred whisper fallback pass
         force_fallback: Skip parakeet and run whisper fallback directly
     
     Returns:
@@ -303,7 +379,7 @@ async def transcribe_audio_base64(
     Args:
         audio_data: Base64-encoded audio data
         media_type: MIME type of the audio (default: audio/wav)
-        language: Optional language hint
+        language: Optional language code (e.g., "zh"), honored as a preferred whisper fallback pass
         force_fallback: Skip parakeet and run whisper fallback directly
     
     Returns:
