@@ -85,4 +85,24 @@ describe('discord.js SDK compatibility', () => {
   test('bot user ID matches', () => {
     expect(client.user?.id).toBe(discord.botUserId)
   })
+
+  // The diff-based slash command registration reads the guild list (GET) and
+  // writes one command per request (POST, PATCH, DELETE).
+  test('application commands: fetch list, create, edit, delete', async () => {
+    const guildId = client.guilds.cache.first()!.id
+    const created = await client.application.commands.create({ name: 'twin-cmd', description: 'Created by the twin test' }, guildId)
+    expect(created.id).toBeTruthy()
+
+    const listed = await client.application.commands.fetch({ guildId })
+    expect(listed.get(created.id)?.name).toBe('twin-cmd')
+    expect(listed.get(created.id)?.description).toBe('Created by the twin test')
+    expect([...listed.values()].every((command) => command.name !== 'never-registered')).toBe(true)
+
+    const edited = await client.application.commands.edit(created.id, { description: 'Edited by the twin test' }, guildId)
+    expect(edited.description).toBe('Edited by the twin test')
+
+    await client.application.commands.delete(created.id, guildId)
+    const afterDelete = await client.application.commands.fetch({ guildId })
+    expect(afterDelete.get(created.id)).toBeUndefined()
+  })
 })

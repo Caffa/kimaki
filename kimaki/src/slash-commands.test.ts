@@ -3,7 +3,8 @@
 
 import { expect, test } from 'vitest'
 
-import { attachCommandIds, buildCommands, buildGlobalEssentials, budgetRetryMs, createInteractionRegistry } from './slash-commands.ts'
+import { attachCommandIds, buildCommands, buildGlobalEssentials, budgetRetryMs, createInteractionRegistry, diffCommands } from './slash-commands.ts'
+import type { LiveCommand, LiveOption } from './slash-commands.ts'
 
 test('catalog names are sanitized, keep their suffix, skip collisions and MCP prompts, and stop at the dynamic cap', () => {
   const fixed = createInteractionRegistry().definitions
@@ -127,6 +128,118 @@ test('attachCommandIds: name match adds id, no match leaves no id', () => {
   ])
   // Empty live map: no ids attached.
   expect(attachCommandIds(commands, new Map())).toEqual(commands)
+})
+
+// Live fixtures as plain objects, like the discord.js ApplicationCommand
+// instances the real registerGuild fetch satisfies structurally.
+function live(name: string, options: LiveOption[]): LiveCommand {
+  return { id: `id-${name}`, name, description: `${name} description`, options }
+}
+
+test('diffCommands: an empty live list creates everything', () => {
+  const wanted = [{ name: 'agent', description: 'Ask anything' }, { name: 'model', description: 'Pick a model' }, { name: 'queue-cmd', description: 'Queue a command' }]
+  const plan = diffCommands({ live: [], wanted })
+  expect(plan.creates).toEqual(wanted)
+  expect(plan.edits).toEqual([])
+  expect(plan.deletes).toEqual([])
+})
+
+test('diffCommands: identical description and options send nothing', () => {
+  const wanted = [{ name: 'x-cmd', description: 'Run /x', options: [{ type: 3, name: 'arguments', description: 'Arguments', required: false }] }]
+  const plan = diffCommands({
+    live: [{ ...wanted[0]!, id: '1' }],
+    wanted,
+  })
+  expect(plan).toEqual({ creates: [], edits: [], deletes: [] })
+})
+
+test('diffCommands: a changed description edits in place with the live id', () => {
+  const wanted = [{ name: 'model', description: 'new' }]
+  const plan = diffCommands({ live: [{ id: 'id-model', name: 'model', description: 'old', options: [] }], wanted })
+  expect(plan.edits).toEqual([{ id: 'id-model', body: wanted[0] }])
+  expect(plan.creates).toEqual([])
+  expect(plan.deletes).toEqual([])
+})
+
+test('diffCommands: live names that are not wanted are deleted', () => {
+  const liveCommands = [live('old-skill', []), live('kept-cmd', [])]
+  const wanted = [{ name: 'kept-cmd', description: 'kept-cmd description' }]
+  const plan = diffCommands({ live: liveCommands, wanted })
+  expect(plan.deletes).toEqual(['id-old-skill'])
+  expect(plan.creates).toEqual([])
+  expect(plan.edits).toEqual([])
+})
+
+// Compares: description + per option, in order — name, type, description,
+// required, autocomplete, choices, min/max value and length bounds.
+test('diffCommands: option shape changes edit; unchanged and normalized shapes do not', () => {
+  // camelCase on live (how discord.js patches) aliases the snake_case bounds
+  // of the wanted REST JSON: max_length 6000 equals maxLength 6000.
+  const liveCommands = [
+    live('merge-worktree', [{ type: 3, name: 'strategy', description: 'Merge strategy', required: false, choices: [{ name: 'Rebase', value: 'rebase' }, { name: 'Squash', value: 'squash' }] }]),
+    live('btw', [{ type: 3, name: 'files', description: 'Files', required: false, maxLength: 6000 }]),
+    live('new-session', [{ type: 3, name: 'with', description: 'With whom', required: false, autocomplete: true }]),
+  ]
+  const wanted = [
+    { name: 'merge-worktree', description: 'merge-worktree description', options: [{ type: 3, name: 'strategy', description: 'Merge strategy', required: false, choices: [{ name: 'Rebase', value: 'rebase' }, { name: 'Squash', value: 'squash' }] }] },
+    { name: 'btw', description: 'btw description', options: [{ type: 3, name: 'files', description: 'Files', required: false, max_length: 6000 }] },
+    { name: 'new-session', description: 'new-session description', options: [{ type: 3, name: 'with', description: 'With whom', required: false, autocomplete: true }] },
+  ]
+  expect(diffCommands({ live: liveCommands, wanted })).toEqual({ creates: [], edits: [], deletes: [] })
+  // Absent and false compare equal for required (falsy normalization).
+  const normalized = diffCommands({
+    live: [{ id: '6', name: 'a', description: 'a', options: [{ type: 3, name: 'x', description: 'x', required: false }] }],
+    wanted: [{ name: 'a', description: 'a', options: [{ type: 3, name: 'x', description: 'x' }] }],
+  })
+  expect(normalized).toEqual({ creates: [], edits: [], deletes: [] })
+  // A changed choice value, a different bound, and a changed option count
+  // (added option) each edit in place — with the live id.
+  const changed = [
+    { name: 'merge-worktree', description: 'merge-worktree description', options: [{ type: 3, name: 'strategy', description: 'Merge strategy', required: false, choices: [{ name: 'Rebase', value: 'rebase' }, { name: 'Squash', value: 'svelte' }] }] },
+    { name: 'btw', description: 'btw description', options: [{ type: 3, name: 'files', description: 'Files', required: false, max_length: 4000 }] },
+    { name: 'new-session', description: 'new-session description', options: [{ type: 3, name: 'with', description: 'With whom', required: true }, { type: 3, name: 'extra', description: 'Extra', required: false }] },
+  ]
+  const plan = diffCommands({ live: liveCommands, wanted: changed })
+  expect(plan.edits).toEqual([
+    { id: 'id-merge-worktree', body: changed[0] },
+    { id: 'id-btw', body: changed[1] },
+    { id: 'id-new-session', body: changed[2] },
+  ])
+  expect(plan.creates).toEqual([])
+  expect(plan.deletes).toEqual([])
+})
+
+// The whole built list matches its own live copy — the unchanged-restart path
+// with the fork's real option shapes (bounds, choices, autocomplete).
+test('diffCommands: the built command list matches its own live copy', () => {
+  const fixed = createInteractionRegistry().definitions
+  const catalog = {
+    agents: [{ id: 'orchestrator', name: 'Orchestrator', mode: 'primary', hidden: false }],
+    commands: [{ name: 'hello', description: 'Say hello' }],
+    skills: [],
+  }
+  const { commands } = buildCommands({ fixed, catalog, agentShortcutFilter: 'orchestrator' })
+  // The REST JSON bounds become the camelCase fields discord.js patches.
+  type OptionJson = { type: number; name: string; description: string; required?: boolean; autocomplete?: boolean; choices?: { name: string; value: string | number }[]; min_value?: number; max_value?: number; min_length?: number; max_length?: number }
+  const toLive = (option: OptionJson): LiveOption => ({
+    type: option.type,
+    name: option.name,
+    description: option.description,
+    required: option.required ?? false,
+    autocomplete: option.autocomplete,
+    choices: option.choices,
+    minValue: option.min_value,
+    maxValue: option.max_value,
+    minLength: option.min_length,
+    maxLength: option.max_length,
+  })
+  const liveCommands: LiveCommand[] = commands.map((command) => ({
+    id: `id-${command.name}`,
+    name: command.name,
+    description: command.description,
+    options: (command.options ?? []).map(toLive),
+  }))
+  expect(diffCommands({ live: liveCommands, wanted: commands })).toEqual({ creates: [], edits: [], deletes: [] })
 })
 
 test('global essentials: agent, model, queue plus orchestrator shortcuts, respects filter', () => {
