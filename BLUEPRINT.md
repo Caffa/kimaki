@@ -2,19 +2,27 @@
 title: Kimaki v2
 one_liner: A collaborative agent orchestrator that runs OpenCode inside Discord — this repo is the local 1.0 port, tracking upstream remorses/kimaki.
 status: active
-updated: 2026-11-21
+updated: 2026-11-25
 discord_channel: https://discord.com/channels/1486966847810043924/1561336480721412188
 ---
 
 ## Where it stands
 
 - Discord orchestrator for OpenCode: each project channel maps to a repo directory, each thread to a coding session; bot and CLI live under `kimaki/`.
-- Local fork on branch kimaki-1.0-port; merged upstream/main through kimaki 1.7.1 on 2026-11-21 (db951871), bot rebuilt, re-linked and healthy on 1.7.1.
+- Local fork on branch kimaki-1.0-port; merged upstream/main through kimaki 1.7.1 (2026-11-21), and the fork now carries a port of upstream 1088155f (shipped upstream as kimaki 1.8.0): guild slash-command registration is diff-based — GET the guild's live command list (free), deletes → PATCH edits (unbudgeted) → POST creates (capped by Discord's daily 200/day create budget, stop at the first 30034, landed creates count as trickle progress). Discord is the source of truth; the persisted signature cache, bulk-overwrite PUT and degraded trickle from the Nov-22 fix are gone. Unchanged catalogs send zero writes; DELETE 404/10063 counts as success.
+- When the create budget is saturated, registration backs off on an hourly ladder (1h doubling to 6h, never reset while blocked; sub-hour retry_after values ignored; a catalog change wakes it for one extra probe). The budget wedge itself looks like a Discord-side stuck counter (discord/discord-api-docs#6188): blocked >24h with zero creates while retry_after oscillated 30–430s.
 - Local features kept: parakeet ASR (`asr-service/`), failed-voice background retry, coordinator off by default, `--default-agent`, `--notify-only`/`--echo-plain`, `KIMAKI_PROJECTS_DIR`.
-- Adopted from upstream in this merge: voice Retry button, `--sort-channels`, subtext-only status lines, opencode-fallback 0.3.0, `/mcp` slash command.
-- OpenCode binary updated to 2.3.2; the running service stays on the old binary until the next bot restart.
+- Adopted from upstream in the 1.7.1 merge: voice Retry button, `--sort-channels`, subtext-only status lines, opencode-fallback 0.3.0, `/mcp` slash command. OpenCode binary at 2.3.2; the running `serve --service` restarted after the 2.3.2 install, so it runs it.
 
 ## Log
+
+### 2026-11-25 — Diff-based slash-command registration and budget backoff ladder
+
+Reworked guild slash-command registration to diff against Discord's live command list instead of bulk-overwriting: GET is free, deletes and PATCH edits don't count against the daily create budget, and only POST creates do — they stop at the first 30034 so landed creates count as trickle progress (commits 40ea805f + 78a2e1c0, port of upstream 1088155f, shipped upstream as kimaki 1.8.0). This retired the Nov-22 signature-cache/bulk-PUT approach whose restarts with a changed catalog (the 1.7.1 merge) burned the 200/day create budget, and whose counter then stayed wedged for days — a block that Discord itself appears to have stuck (retry_after oscillated 30–430s over >24h with zero successful creates, matching discord/discord-api-docs#6188, commit 085c1d7a). Fully-blocked passes now re-probe on an hourly ladder (1h doubling to 6h, never reset while blocked, sub-hour retry_after ignored), unchanged catalogs send zero writes, and the changeset queue lives in root `.changeset/` with two new entries; discord-digital-twin gained guild-command GET/POST/PATCH/DELETE routes so the diff flow is e2e-tested.
+
+Next: confirm the ladder clears the budget wedge and a real restart registers the full catalog with no 30034.
+
+https://discord.com/channels/1486966847810043924/1574864290626801745
 
 ### 2026-11-22 — Fixed missing agent slash commands (Discord daily create budget)
 
