@@ -13,7 +13,9 @@
 // installs. KIMAKI_WHISPER_URL replaces the whole cloud list with a local
 // Whisper server, so audio never reaches a cloud provider. A failing
 // provider falls through to the next one. Parakeet, ChatGPT and Whisper have
-// no tool call: the route is always steer.
+// no tool call: the route is always steer. KIMAKI_DISABLE_CLOUD_TRANSCRIPTION
+// drops the paid OpenAI/ChatGPT/Gemini cloud providers, so only parakeet and
+// Whisper remain and audio never leaves the machine.
 // Plain fetch, no AI SDK: we parse provider bodies ourselves so transient
 // bad responses keep their details and can be retried.
 
@@ -709,6 +711,15 @@ async function parakeetEntry(parakeet: { baseUrl: string; autoStart: boolean } |
   return [{ kind: 'parakeet' as const, baseUrl: parakeet.baseUrl }]
 }
 
+// The cloud kill switch: KIMAKI_DISABLE_CLOUD_TRANSCRIPTION=1|true|yes
+// (case-insensitive, trimmed) drops OpenAI, ChatGPT and Gemini from the chain,
+// so voice audio never leaves the machine; parakeet, local Whisper and the
+// free gateway Whisper stay.
+function cloudTranscriptionDisabled(): boolean {
+  const value = process.env['KIMAKI_DISABLE_CLOUD_TRANSCRIPTION']?.trim().toLowerCase()
+  return value === '1' || value === 'true' || value === 'yes'
+}
+
 // Best first: the local parakeet ASR service (no key, no subscription), then
 // the OpenAI key (routing tool call), the ChatGPT subscription and the Gemini
 // key, then hosted Whisper. Parakeet, ChatGPT and Whisper only transcribe, so
@@ -733,11 +744,12 @@ async function transcribers({ db, token, opencodeDbFile, parakeet }: { db: Kimak
   const gemini = keys.find((key) => key.provider === 'gemini')
   const credentials = row ? credentialsFromRow(row) : null
   const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
+  const allowCloud = !cloudTranscriptionDisabled()
   return [
     ...(await parakeetEntry(parakeet)),
-    ...(openai ? [{ kind: 'openai' as const, apiKey: openai.apiKey }] : []),
-    ...(credential && !(credential instanceof Error) ? [{ kind: 'chatgpt' as const, credential }] : []),
-    ...(gemini ? [{ kind: 'gemini' as const, apiKey: gemini.apiKey }] : []),
+    ...(allowCloud && openai ? [{ kind: 'openai' as const, apiKey: openai.apiKey }] : []),
+    ...(allowCloud && credential && !(credential instanceof Error) ? [{ kind: 'chatgpt' as const, credential }] : []),
+    ...(allowCloud && gemini ? [{ kind: 'gemini' as const, apiKey: gemini.apiKey }] : []),
     ...(clientId && clientSecret ? [{ kind: 'gateway' as const, clientId, clientSecret }] : []),
   ]
 }
@@ -782,6 +794,14 @@ export async function transcribe({
     parakeet: baseUrls.parakeet ? { baseUrl: baseUrls.parakeet, autoStart: asrAutoStart === true } : null,
   })
   if (list instanceof Error) return list
+  // With the kill switch on, an empty chain must not say "get an API key"
+  // (the keys would be ignored anyway): name the flag and the local service.
+  if (list.length === 0 && cloudTranscriptionDisabled()) {
+    return new TranscriptionError({
+      reason:
+        'the local ASR service is not reachable and cloud transcription providers are disabled via KIMAKI_DISABLE_CLOUD_TRANSCRIPTION. Start the local ASR service, or unset the flag to use OpenAI, ChatGPT or Gemini again',
+    })
+  }
   const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
   const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
     ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
